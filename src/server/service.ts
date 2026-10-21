@@ -80,9 +80,9 @@ interface RawResponse {
 }
 interface RawAdjudication { id: string; case_id: string; level: string; decision: Decision | null; status: 'RESOLVED' | 'UNRESOLVED_ESCALATED'; rationale: string; basis: string; reason_code: string; created_at: string; uncertain: boolean; context_note: string; packet_problem: boolean; packet_problem_note: string | null }
 interface RawCase { id: string; kind: 'DESCRIPTOR' | 'TWO_STEP'; packet: EvidencePacket & { title: string; area: string }; trial_packet?: TrialPacket; trialPacket?: TrialPacket; phase: Campaign['state']; responses: RawResponse[]; drafts?: { level: string; amendment_id: string | null; payload: JudgmentInput }[]; amendments?: { id: string; level: string; reason: string }[]; adjudications?: RawAdjudication[]; evidenceHash?: string }
-interface RawWorkspace { phase: Campaign['state']; cases: { id: string; kind: 'DESCRIPTOR' | 'TWO_STEP'; title: string; area: string; status: QueueItem['status'] | 'READY' }[]; tier1Proposal?: 'v1.1' | 'v1.2' | null; summary?: { totalCases: number; totalAssignments: number; submittedAssignments: number; totalLevels: number; adjudicatedLevels: number } }
+interface RawWorkspace { phase: Campaign['state']; cases: { id: string; kind: 'DESCRIPTOR' | 'TWO_STEP'; title: string; area: string; status: QueueItem['status'] | 'READY' }[]; tier1Proposal?: 'v1.1' | 'v1.2' | null | null; summary?: { totalCases: number; totalAssignments: number; submittedAssignments: number; totalLevels: number; adjudicatedLevels: number } }
 
-function configuration(proposal?: 'v1.1' | 'v1.2' | null): Configuration {
+function configuration(proposal?: 'v1.1' | 'v1.2' | null | null): Configuration {
   return { tierVersion: proposal || 'PENDING', tierState: 'PROPOSED', rubricState: 'PROPOSED', sampleState: 'PROPOSED', adjudicationScope: 'ALL_CASE_LEVELS', analysisPlanState: 'PROPOSED' };
 }
 function evidenceHash(c: RawCase): string {
@@ -199,7 +199,7 @@ export async function adminAction(actor: Actor, input: AdminInput): Promise<Work
   await rpc(actor, 'select public.rpc_verify_admin($1::jsonb) as value', [JSON.stringify(payload)]);
   return getWorkspace(actor);
 }
-interface RawExport { state: { phase: Campaign['state']; tier1_proposal: 'v1.1' | 'v1.2' | null; snapshot_hash: string; locked_at: string }; cases: RawCase[]; judgments: RawResponse[]; adjudications: RawAdjudication[]; amendments: unknown[]; audit: unknown[] }
+interface RawExport { state: { phase: Campaign['state']; tier1_proposal: 'v1.1' | 'v1.2' | null | null; snapshot_hash: string; locked_at: string }; cases: RawCase[]; judgments: RawResponse[]; adjudications: RawAdjudication[]; amendments: unknown[]; audit: unknown[] }
 export async function getExportData(actor: Actor): Promise<ExportData> {
   requireRole(actor, 'INVESTIGATOR');
   const raw = await rpc<RawExport>(actor, 'select public.rpc_verify_export() as value');

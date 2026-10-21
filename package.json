@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --hostname 127.0.0.1",
-    "build": "next build",
-    "start": "next start --hostname 127.0.0.1",
+    "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname 127.0.0.1",
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1",
     "setup": "node scripts/setup.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -17,7 +17,8 @@
     "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures",
     "test:analysis": "python3 -m pytest -q analysis",
     "prepare": "git config core.hooksPath .githooks",
-    "test:handoff": "node scripts/test-handoff.mjs"
+    "test:handoff": "node scripts/test-handoff.mjs",
+    "test:e2e:production": "VERIFY_E2E_PRODUCTION=1 playwright test"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -28,7 +28,8 @@ Final answers are locked; the app never suggests or pre-fills clinical judgments
 npm run check
 npm run build
 npx playwright install chromium
-npm run test:e2e
+npm run test:e2e:production
+npm run test:handoff
 ```
 
 Read [READINESS_REPORT.md](READINESS_REPORT.md) for observed results and blocked external-service tests. PGlite success does not establish deployed PostgreSQL/Supabase security. Automated browser tests use a separate ignored database.
@@ -42,3 +43,11 @@ Read [READINESS_REPORT.md](READINESS_REPORT.md) for observed results and blocked
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): staging and invited-team deployment plan.
 
 This public repository must never contain private research handoffs, real case/evidence packets, formal sample IDs, clinician identity, credentials or reviewer responses. Original supplied migrations are preserved; new behavior uses additive migrations. No scientific approvals are inferred from the functioning interface.
+
+## Current build scope
+
+The local synthetic review/adjudication workflow is implemented and browser-tested. This is not yet the complete production/formal-study platform: invited Supabase authentication/MFA, formal campaign/import/freeze UI, actual database-view-to-analysis export integration, and general project/case management remain outstanding. Formal activation is therefore denied in code, not merely hidden. The readiness report names each incomplete acceptance item.
+
+The proposed analysis harness is separately reproducible; install `analysis/requirements.txt` in a Python environment and set `VERIFY_ANALYSIS_PYTHON` to that environment's Python when running `npm run check` to include the cross-language round trip. Otherwise that one test reports SKIP.
+
+![Synthetic reviewer interface](docs/screenshots/reviewer-desktop.png)
