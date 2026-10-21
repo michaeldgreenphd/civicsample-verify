@@ -1,0 +1,47 @@
+{
+  "name": "civicsample-verify",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "setup": "node scripts/setup.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write src tests scripts docs *.md *.json",
+    "format:check": "prettier --check src tests scripts docs *.md *.json",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test:e2e": "playwright test",
+    "check:fixtures": "node scripts/check-fixtures.mjs",
+    "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures",
+    "test:analysis": "python3 -m pytest -q analysis",
+    "prepare": "git config core.hooksPath .githooks",
+    "test:handoff": "node scripts/test-handoff.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.3.16",
+    "next": "^16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.0"
+  }
+}
