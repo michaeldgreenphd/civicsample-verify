@@ -12,7 +12,7 @@ npm run setup
 npm run dev
 ```
 
-Open http://127.0.0.1:3000. Setup generates a local pilot password in ignored `.env.local`. Use it with `investigator`, `reviewer-a`, `reviewer-b`, or `adjudicator`. All accounts are fictional and intended for investigator testing. Storage persists in ignored `.local/pglite`; restarting does not erase decisions. Restart the local server after updating this branch so additive database migrations are applied; keep the data directory intact. Use independent browser profiles or sign out to change roles.
+Open http://127.0.0.1:3000. Setup generates a local pilot password in ignored `.env.local`. Use it with `investigator`, `reviewer-a`, `reviewer-b`, or `adjudicator`. All accounts are fictional and intended for investigator testing. Storage persists in ignored `.local/pglite`; restarting does not erase decisions. Restart the local server after updating this branch so additive database migrations are applied; keep the data directory intact. Migration 0007 refuses an existing locked formal v4 reference, because changing reference selection could reinterpret a frozen result. Preserve that database and its original exports for explicit investigator migration review; do not reset it to bypass the guard. This restriction does not apply to the local synthetic pilot. Use independent browser profiles or sign out to change roles.
 
 1. Review the investigator's campaign and blocked formal gates.
 2. Sign in as each reviewer, save drafts, and submit the same ten cases. A trial case requires a locked descriptor determination before trial evidence appears.

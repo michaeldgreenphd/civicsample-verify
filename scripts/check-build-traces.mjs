@@ -12,6 +12,7 @@ const sqlInputs = new Set([
   'migrations/0004_synthetic_verify_workflow.sql',
   'migrations/0005_review_integrity_fixes.sql',
   'migrations/0006_reference_integrity.sql',
+  'migrations/0007_frozen_contract_guards.sql',
 ]);
 function traces(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

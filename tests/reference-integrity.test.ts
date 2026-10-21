@@ -10,6 +10,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 
 const ATT = 'Synthetic engineering regression attestation only.';
 const MIGRATION = 'migrations/0006_reference_integrity.sql';
+const FROZEN_MIGRATION = 'migrations/0007_frozen_contract_guards.sql';
 const ACTORS = {
   investigator: '00000000-0000-4000-8000-0000000000a1',
   pilotA: '00000000-0000-4000-8000-0000000000a2',
@@ -21,7 +22,7 @@ const ACTORS = {
 type Role = keyof typeof ACTORS;
 const ids = ['HO4-TESTFX-LOCK1', 'HO4-TESTFX-LOCK2'];
 
-async function migratedDb(latest = true, dataDir?: string) {
+async function migratedDb(latest = true, dataDir?: string, through = 7) {
   const db = new PGlite({ dataDir, extensions: { pgcrypto } });
   await db.waitReady;
   const files = [
@@ -33,6 +34,7 @@ async function migratedDb(latest = true, dataDir?: string) {
     'migrations/0005_review_integrity_fixes.sql',
   ];
   if (latest) files.push(MIGRATION);
+  if (latest && through >= 7) files.push(FROZEN_MIGRATION);
   for (const file of files) await db.exec(await readFile(file, 'utf8'));
   return db;
 }
@@ -98,8 +100,15 @@ const freezePayload = {
 
 // The fixture uses the real pilot-signoff, formal-freeze, assignment, submission,
 // close and snapshot RPCs. No scientific gate or database trigger is disabled.
-async function fixture(options: { latest?: boolean; freeze?: boolean } = {}) {
-  const db = await migratedDb(options.latest ?? true);
+async function fixture(
+  options: {
+    latest?: boolean;
+    freeze?: boolean;
+    through?: number;
+    scope?: 'DISAGREEMENTS_ONLY' | 'ALL_CASE_LEVELS';
+  } = {},
+) {
+  const db = await migratedDb(options.latest ?? true, undefined, options.through ?? 7);
   try {
     for (const [role, id] of Object.entries(ACTORS)) {
       const email = `synthetic-${role.toLowerCase()}@example.invalid`;
@@ -204,7 +213,7 @@ async function fixture(options: { latest?: boolean; freeze?: boolean } = {}) {
       );
     await investigator('select public.rpc_activate_design_v4($1,$2,$3)', [
       'SYN-REF-TEST',
-      'DISAGREEMENTS_ONLY',
+      options.scope ?? 'DISAGREEMENTS_ONLY',
       ATT,
     ]);
     for (const id of ids) {
@@ -249,7 +258,7 @@ async function fixture(options: { latest?: boolean; freeze?: boolean } = {}) {
         })),
       ),
     ]);
-    const freeze = async () => {
+    const freeze = async (extra: Record<string, unknown> = {}) => {
       await investigator('select public.rpc_freeze_sample_manifest($1)', [
         j({
           review_module: 'ONTOLOGY_AREA',
@@ -260,7 +269,7 @@ async function fixture(options: { latest?: boolean; freeze?: boolean } = {}) {
           attestation: ATT,
         }),
       ]);
-      return investigator('select public.rpc_freeze_v4($1)', [j(freezePayload)]);
+      return investigator('select public.rpc_freeze_v4($1)', [j({ ...freezePayload, ...extra })]);
     };
     if (options.freeze !== false) {
       await freeze();
@@ -280,11 +289,11 @@ async function fixture(options: { latest?: boolean; freeze?: boolean } = {}) {
           [caseId, pseudo[role]],
         )
       ).rows[0].assignment_id;
-    const submit = async (role: 'reviewerA' | 'reviewerB', caseId: string) =>
+    const submit = async (role: 'reviewerA' | 'reviewerB', caseId: string, decision = 'INCLUDE') =>
       rpc(db, role, 'select public.rpc_submit_review($1,$2)', [
         await assignment(role, caseId),
         j({
-          l1_decision: 'INCLUDE',
+          l1_decision: decision,
           l1_rationale: 'Synthetic formal-path engineering judgment',
           l1_uncertain: false,
         }),
@@ -500,7 +509,7 @@ test('successful freeze prevents subsequent case withdrawal; reference locks rej
   }
 });
 
-async function prepareModuleB(f: Awaited<ReturnType<typeof fixture>>) {
+async function prepareModuleB(f: Awaited<ReturnType<typeof fixture>>, extraUnits: string[] = []) {
   const unit = 'MB4-ROW-TESTFX_LOCK';
   await f.investigator('select public.rpc_import_mb_unit_v4($1)', [
     j({
@@ -527,6 +536,29 @@ async function prepareModuleB(f: Awaited<ReturnType<typeof fixture>>) {
       },
     }),
   ]);
+  for (const extra of extraUnits) {
+    await f.investigator('select public.rpc_import_mb_unit_v4($1)', [
+      j({
+        mb_unit_id: extra,
+        unit_type: 'CONDITION_ROW_BENCHMARK',
+        packet: {
+          schema_version: '1.0',
+          unit: { unit_type: 'CONDITION_ROW_BENCHMARK', unit_id: extra },
+          question: 'Fictional benchmark compatibility?',
+          row: { condition_row: 'Fictional condition' },
+          benchmark_definition: { source: 'Synthetic source' },
+          notices: ['SYNTHETIC ENGINEERING ONLY'],
+        },
+        design: {
+          row_id: `SYN-${extra}`,
+          stratum: 'SYN-MB',
+          frame_n: 2,
+          selection_probability: 0.5,
+          benchmark_id: 'SYN-BENCHMARK',
+        },
+      }),
+    ]);
+  }
   await f.investigator('select public.rpc_freeze_mb_manifest_v4($1)', [ATT]);
   await f.investigator('select public.rpc_mb_phase_v4($1,$2)', ['MB_OPENED', ATT]);
   await f.investigator('select public.rpc_assign_mb_units_v4($1,$2,$3,$4)', [
@@ -617,5 +649,602 @@ test('existing persistent database receives 0006 exactly once across restarts', 
     }
   } finally {
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+async function adjudicationPayload(
+  f: Fixture,
+  caseId: string,
+  status: string,
+  decision: string | null,
+  basis: string,
+  extra: Record<string, unknown> = {},
+) {
+  const considered = (
+    await f.db.query<{ review_id: string }>(
+      'select review_id from public.reviews where case_id=$1',
+      [caseId],
+    )
+  ).rows.map((r) => r.review_id);
+  return {
+    case_id: caseId,
+    determination_level: 'DESCRIPTOR_LEVEL',
+    status,
+    decision,
+    basis,
+    rationale: 'Synthetic adjudication semantics regression.',
+    considered_ids: considered,
+    ...extra,
+  };
+}
+async function adjudication(
+  f: Fixture,
+  caseId: string,
+  status: string,
+  decision: string | null,
+  basis: string,
+  extra: Record<string, unknown> = {},
+) {
+  return rpc<string>(f.db, 'adjudicator', 'select public.rpc_record_adjudication_v3($1)', [
+    j(await adjudicationPayload(f, caseId, status, decision, basis, extra)),
+  ]);
+}
+async function completeReviews(f: Fixture) {
+  for (const id of ids)
+    for (const role of ['reviewerA', 'reviewerB'] as const) await f.submit(role, id);
+  await f.snapshot(true);
+}
+
+test('formal adjudication rejects contradictory status or basis before insertion and accepts justified decisions', async () => {
+  const f = await fixture({ scope: 'ALL_CASE_LEVELS' });
+  try {
+    await f.submit('reviewerA', ids[0]);
+    await f.submit('reviewerB', ids[0]);
+    await f.submit('reviewerA', ids[1]);
+    await f.submit('reviewerB', ids[1], 'EXCLUDE');
+    await f.snapshot(true);
+    const invalid = [
+      [ids[0], 'CONCORDANT_CONFIRMED', 'EXCLUDE', 'NEITHER'],
+      [ids[0], 'CONCORDANT_REVISED', 'INCLUDE', 'BOTH_REVIEWERS'],
+      [ids[0], 'CONCORDANT_REVISED', 'EXCLUDE', 'REVIEWER_1'],
+      [ids[0], 'CONCORDANT_REVISED', 'EXCLUDE', 'REVIEWER_2'],
+      [ids[0], 'CONCORDANT_REVISED', 'EXCLUDE', 'BOTH_REVIEWERS'],
+      [ids[0], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'NEITHER'],
+      [ids[1], 'DISCORDANT_RESOLVED', 'EXCLUDE', 'REVIEWER_1'],
+      [ids[1], 'DISCORDANT_RESOLVED', 'INCLUDE', 'REVIEWER_2'],
+      [ids[1], 'DISCORDANT_RESOLVED', 'INCLUDE', 'BOTH_REVIEWERS'],
+      [ids[1], 'DISCORDANT_RESOLVED', 'INCLUDE', 'NEITHER'],
+    ];
+    for (const [caseId, status, decision, basis] of invalid)
+      await assert.rejects(
+        adjudication(f, caseId, status, decision, basis, { reason_code: 'CONSTRUCT_BOUNDARY' }),
+        /Adjudication semantics/,
+      );
+    assert.equal(
+      (await f.db.query("select * from public.adjudications where mode='FORMAL'")).rows.length,
+      0,
+    );
+    await adjudication(f, ids[0], 'CONCORDANT_REVISED', 'EXCLUDE', 'NEITHER');
+    await adjudication(f, ids[1], 'DISCORDANT_RESOLVED', 'EXCLUDE', 'REVIEWER_2', {
+      reason_code: 'CONSTRUCT_BOUNDARY',
+    });
+    await f.lock();
+    assert.equal(
+      await rpc<number>(
+        f.db,
+        'investigator',
+        'select count(*)::integer from public.v_adjudicated_reference_v4',
+      ),
+      2,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('invalid legacy adjudication blocks lock without rewriting and a valid explicit supersession repairs provenance', async () => {
+  const f = await fixture({ through: 6, scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    const bad = await adjudication(f, ids[0], 'CONCORDANT_CONFIRMED', 'EXCLUDE', 'NEITHER');
+    await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    const before = (
+      await f.db.query(
+        "select * from public.adjudications where mode='FORMAL' order by adjudication_id",
+      )
+    ).rows;
+    await f.db.exec(await readFile(FROZEN_MIGRATION, 'utf8'));
+    await assert.rejects(f.lock(), /Adjudication semantics/);
+    assert.equal((await f.db.query('select * from public.reference_locks')).rows.length, 0);
+    assert.deepEqual(
+      (
+        await f.db.query(
+          "select * from public.adjudications where mode='FORMAL' order by adjudication_id",
+        )
+      ).rows,
+      before,
+    );
+    const corrected = await adjudication(
+      f,
+      ids[0],
+      'CONCORDANT_CONFIRMED',
+      'INCLUDE',
+      'BOTH_REVIEWERS',
+      { supersedes: bad },
+    );
+    await f.lock();
+    assert.equal(
+      await rpc<string>(
+        f.db,
+        'investigator',
+        'select adjudication_id from public.v_adjudicated_reference_v4 where case_id=$1',
+        [ids[0]],
+      ),
+      `ADJ4-${corrected.replaceAll('-', '')}`,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('tied adjudication timestamps select the blinded supersession leaf and later revisions preserve it', async () => {
+  const f = await fixture({ through: 6, scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    const first = await adjudicationPayload(
+      f,
+      ids[0],
+      'CONCORDANT_CONFIRMED',
+      'EXCLUDE',
+      'NEITHER',
+    );
+    const second = await adjudicationPayload(
+      f,
+      ids[0],
+      'CONCORDANT_CONFIRMED',
+      'INCLUDE',
+      'BOTH_REVIEWERS',
+    );
+    const corrected = await rpc<string>(
+      f.db,
+      'adjudicator',
+      "with first as (select public.rpc_record_adjudication_v3($1) as id) select public.rpc_record_adjudication_v3($2::jsonb || jsonb_build_object('supersedes',id)) from first",
+      [j(first), j(second)],
+    );
+    assert.equal(
+      (
+        await f.db.query<{ n: number }>(
+          'select count(distinct decided_at)::integer as n from public.adjudications where case_id=$1',
+          [ids[0]],
+        )
+      ).rows[0].n,
+      1,
+    );
+    await f.db.exec(await readFile(FROZEN_MIGRATION, 'utf8'));
+    await adjudication(f, ids[1], 'UNRESOLVED_ESCALATED', null, 'NONE');
+    await f.lock();
+    assert.equal(
+      await rpc<null>(
+        f.db,
+        'investigator',
+        'select adjudicated_decision from public.v_adjudicated_reference_v4 where case_id=$1',
+        [ids[1]],
+      ),
+      null,
+    );
+    const primary = () =>
+      rpc<string>(
+        f.db,
+        'investigator',
+        'select adjudication_id from public.v_adjudicated_reference_v4 where case_id=$1',
+        [ids[0]],
+      );
+    assert.equal(await primary(), `ADJ4-${corrected.replaceAll('-', '')}`);
+    await adjudication(f, ids[0], 'CONCORDANT_REVISED', 'EXCLUDE', 'NEITHER', {
+      supersedes: corrected,
+    });
+    assert.equal(await primary(), `ADJ4-${corrected.replaceAll('-', '')}`);
+    assert.equal(
+      await rpc<boolean>(
+        f.db,
+        'investigator',
+        'select post_unblinding_revision_exists from public.v_adjudicated_reference_v4 where case_id=$1',
+        [ids[0]],
+      ),
+      true,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('multiple legacy primary adjudication leaves fail closed instead of exporting duplicate references', async () => {
+  const f = await fixture({ through: 6, scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    await adjudication(f, ids[0], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    // Deliberate owner-level corruption fixture models a legacy concurrent fork.
+    // Only this injection disables the supersession checker; ordinary RPC fixtures never do.
+    await f.db.exec('alter table public.adjudications disable trigger adjudications_before_insert');
+    try {
+      await adjudication(f, ids[0], 'CONCORDANT_REVISED', 'EXCLUDE', 'NEITHER');
+    } finally {
+      await f.db.exec(
+        'alter table public.adjudications enable trigger adjudications_before_insert',
+      );
+    }
+    await f.db.exec(await readFile(FROZEN_MIGRATION, 'utf8'));
+    await assert.rejects(f.lock(), /multiple primary adjudication leaves/);
+    assert.equal((await f.db.query('select * from public.reference_locks')).rows.length, 0);
+  } finally {
+    await f.db.close();
+  }
+});
+
+for (const partial of [false, true])
+  test(`Module B lock rejects frozen units with zero responses (${partial ? 'partial' : 'entirely empty'} module)`, async () => {
+    const f = await fixture();
+    try {
+      const mb = await prepareModuleB(f, ['MB4-ROW-TESTFX_EMPTY']);
+      if (partial) await mb.submit();
+      await f.investigator('select public.rpc_mb_phase_v4($1,$2)', ['MB_CLOSED', ATT]);
+      await assert.rejects(
+        f.investigator('select public.rpc_lock_mb_reference_v4($1)', [ATT]),
+        /frozen Module B units have no independent response/,
+      );
+      assert.equal((await f.db.query('select * from public.mb_reference_lock_v4')).rows.length, 0);
+    } finally {
+      await f.db.close();
+    }
+  });
+
+test('Module B single-response unit can lock after its required independent adjudication', async () => {
+  const f = await fixture();
+  try {
+    const mb = await prepareModuleB(f);
+    await mb.submit();
+    await f.investigator('select public.rpc_mb_phase_v4($1,$2)', ['MB_CLOSED', ATT]);
+    await assert.rejects(
+      f.investigator('select public.rpc_lock_mb_reference_v4($1)', [ATT]),
+      /need adjudication/,
+    );
+    await rpc(f.db, 'adjudicator', 'select public.rpc_record_mb_adjudication_v4($1)', [
+      j({
+        mb_unit_id: mb.unit,
+        decision: 'COMPATIBLE',
+        status: 'SINGLE_REVIEW_ADJUDICATED',
+        basis: 'REVIEWER_1',
+        rationale: 'Synthetic single-response adjudication.',
+      }),
+    ]);
+    await f.investigator('select public.rpc_lock_mb_reference_v4($1)', [ATT]);
+    assert.equal(
+      (await f.db.query<{ n_units: number }>('select n_units from public.mb_reference_lock_v4'))
+        .rows[0].n_units,
+      1,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('held-out packet versions are configurable before freeze and immutable afterward even with the same version set', async () => {
+  const f = await fixture({ freeze: false });
+  try {
+    const add = () =>
+      f.investigator('select public.rpc_add_case_version($1,$2,$3,true,false,false,$4)', [
+        ids[0],
+        j(caseInput(ids[0], 'FORMAL').packet),
+        '1.0.0+R-TEST',
+        'Synthetic pre-freeze packet correction.',
+      ]);
+    await add();
+    assert.equal(
+      (
+        await f.db.query<{ n: number }>(
+          'select count(*)::integer as n from public.case_versions where case_id=$1',
+          [ids[0]],
+        )
+      ).rows[0].n,
+      2,
+    );
+    await f.freeze();
+    const before = (
+      await f.db.query('select * from public.case_versions where case_id=$1 order by version', [
+        ids[0],
+      ])
+    ).rows;
+    await assert.rejects(add(), /Frozen held-out evidence packets cannot be versioned/);
+    await assert.rejects(
+      f.db.query(
+        "insert into public.case_versions(case_id,mode,version,version_set_id,l1_applicable,l2_applicable,l3_applicable,packet,packet_sha256,change_reason,created_by) select case_id,mode,version,version_set_id,l1_applicable,l2_applicable,l3_applicable,packet,packet_sha256,'Synthetic direct insert regression',created_by from public.case_versions where case_id=$1 order by version desc limit 1",
+        [ids[0]],
+      ),
+      /Frozen held-out evidence packets cannot be versioned/,
+    );
+    assert.deepEqual(
+      (
+        await f.db.query('select * from public.case_versions where case_id=$1 order by version', [
+          ids[0],
+        ])
+      ).rows,
+      before,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+async function extension(f: Fixture, id: string, amendment: string) {
+  await f.investigator('select public.rpc_import_case($1)', [j(caseInput(id, 'FORMAL'))]);
+  await f.investigator('select public.rpc_set_case_design_v3($1)', [
+    j({
+      case_id: id,
+      mode: 'FORMAL',
+      review_module: 'ONTOLOGY_AREA',
+      analysis_set: 'VALIDATION_HELDOUT',
+      selection_stratum: 'SYN-EXTENSION',
+      variance_stratum: 'SYN-EXTENSION',
+      variance_stratum_size: 20,
+      selection_probability: 0.5,
+      comparison_cell_v11: 'OPOS_CPOS',
+      original_binary: 'INCLUDE',
+      curated_v11_status_raw: 'INCLUDE',
+      curated_v11_binary: 'INCLUDE',
+      two_step_required: false,
+      sampling_design_version: 'SYN-REF-TEST',
+    }),
+  ]);
+  await f.investigator('select public.rpc_record_heldout_case_v4($1)', [
+    j({
+      case_id: id,
+      record_category: 'HELDOUT_EXTENSION_APPROVED',
+      frame_unit_id: `SYN-FRAME-${id}`,
+      provenance_audit_result: 'NO_DEVELOPMENT_FLAG',
+      amendment_id: amendment,
+    }),
+  ]);
+  await f.investigator('select public.rpc_import_frozen_predictions_v4($1)', [
+    j([
+      {
+        prediction_set_id: 'SYN-PREDICTION-REF',
+        case_id: id,
+        determination_level: 'DESCRIPTOR_LEVEL',
+        tier0_binary: 'INCLUDE',
+        tier1_version: 'v1.1',
+        tier1_status_raw: 'INCLUDE',
+        tier1_binary: 'INCLUDE',
+      },
+    ]),
+  ]);
+}
+async function extensionAmendments(f: Fixture) {
+  for (const amendment_id of ['AMD4-TESTFX-EXT-A', 'AMD4-TESTFX-EXT-B'])
+    await f.investigator('select public.rpc_register_amendment_v4($1)', [
+      j({
+        amendment_id,
+        purpose: 'ADOPT_EXTENSION_30',
+        description: 'Synthetic extension authorization for regression only.',
+      }),
+    ]);
+}
+
+test('extension freeze rejects missing or unrelated authorization and accepts the matching amendment', async () => {
+  const f = await fixture({ freeze: false });
+  try {
+    await extensionAmendments(f);
+    await extension(f, 'HO4R-TESTFX-EXT1', 'AMD4-TESTFX-EXT-A');
+    await assert.rejects(f.freeze(), /extension amendment must match/);
+    await assert.rejects(
+      f.investigator('select public.rpc_freeze_v4($1)', [
+        j({ ...freezePayload, extension_amendment_id: 'AMD4-TESTFX-EXT-B' }),
+      ]),
+      /extension amendment must match/,
+    );
+    assert.equal((await f.db.query('select * from public.freeze_manifests_v4')).rows.length, 0);
+    await f.investigator('select public.rpc_freeze_v4($1)', [
+      j({ ...freezePayload, extension_amendment_id: 'AMD4-TESTFX-EXT-A' }),
+    ]);
+    assert.equal(
+      (
+        await f.db.query<{ extension_amendment_id: string }>(
+          'select extension_amendment_id from public.freeze_manifests_v4',
+        )
+      ).rows[0].extension_amendment_id,
+      'AMD4-TESTFX-EXT-A',
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('mixed extension authorizations cannot form one freeze and non-extension samples require null', async () => {
+  for (const mixed of [true, false]) {
+    const f = await fixture({ freeze: false });
+    try {
+      await extensionAmendments(f);
+      if (mixed) {
+        await extension(f, 'HO4R-TESTFX-EXT1', 'AMD4-TESTFX-EXT-A');
+        await extension(f, 'HO4R-TESTFX-EXT2', 'AMD4-TESTFX-EXT-B');
+      }
+      await assert.rejects(
+        f.freeze({ extension_amendment_id: 'AMD4-TESTFX-EXT-A' }),
+        /extension amendment must match/,
+      );
+      assert.equal((await f.db.query('select * from public.freeze_manifests_v4')).rows.length, 0);
+      if (!mixed) await f.investigator('select public.rpc_freeze_v4($1)', [j(freezePayload)]);
+    } finally {
+      await f.db.close();
+    }
+  }
+});
+
+test('persistent 0006 database receives 0007 once and preserves existing synthetic packets', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'verify-frozen-upgrade-'));
+  try {
+    const db = await migratedDb(true, dir, 6);
+    await db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Fictional preserved packet' })],
+    );
+    const before = (await db.query('select * from public.verify_cases')).rows;
+    await db.close();
+    const script = `import {getDb} from './src/server/db.ts'; const db=await getDb(); console.log(JSON.stringify({versions:(await db.query("select count(*)::integer as n from public.app_schema_version where version='4.0.4-frozen-contract'")).rows[0].n,cases:(await db.query('select * from public.verify_cases')).rows})); await db.close();`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await promisify(execFile)(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '-e', script],
+        { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+      );
+      assert.deepEqual(JSON.parse(result.stdout.trim()), { versions: 1, cases: before });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+for (const unresolved of [false, true])
+  test(`0007 refuses an already locked formal reference without changing records or exports (${unresolved ? 'unresolved' : 'confirmed'})`, async () => {
+    const f = await fixture({ through: 6, scope: 'ALL_CASE_LEVELS' });
+    try {
+      await completeReviews(f);
+      await adjudication(
+        f,
+        ids[0],
+        unresolved ? 'UNRESOLVED_ESCALATED' : 'CONCORDANT_CONFIRMED',
+        unresolved ? null : 'INCLUDE',
+        unresolved ? 'NONE' : 'BOTH_REVIEWERS',
+      );
+      await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+      await f.lock();
+      const before = {
+        schema: (await f.db.query('select * from public.app_schema_version order by version')).rows,
+        view: await rpc(
+          f.db,
+          'investigator',
+          'select jsonb_agg(to_jsonb(v) order by v.case_id) from public.v_adjudicated_reference_v4 v',
+        ),
+        lock: (await f.db.query('select * from public.reference_locks')).rows,
+        responses: (await f.db.query('select * from public.adjudications order by adjudication_id'))
+          .rows,
+        definition: (
+          await f.db.query(
+            "select pg_get_viewdef('public.v_adjudicated_reference_v4'::regclass) as text",
+          )
+        ).rows,
+      };
+      await assert.rejects(
+        f.db.exec(await readFile(FROZEN_MIGRATION, 'utf8')),
+        /Existing locked formal reference requires explicit investigator migration review/,
+      );
+      await f.db.exec('rollback');
+      const after = {
+        schema: (await f.db.query('select * from public.app_schema_version order by version')).rows,
+        view: await rpc(
+          f.db,
+          'investigator',
+          'select jsonb_agg(to_jsonb(v) order by v.case_id) from public.v_adjudicated_reference_v4 v',
+        ),
+        lock: (await f.db.query('select * from public.reference_locks')).rows,
+        responses: (await f.db.query('select * from public.adjudications order by adjudication_id'))
+          .rows,
+        definition: (
+          await f.db.query(
+            "select pg_get_viewdef('public.v_adjudicated_reference_v4'::regclass) as text",
+          )
+        ).rows,
+      };
+      assert.deepEqual(after, before);
+    } finally {
+      await f.db.close();
+    }
+  });
+
+test('0007 upgrades a completed locked synthetic pilot without changing recorded responses', async () => {
+  const f = await fixture({ through: 6 });
+  try {
+    await f.db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Fictional local pilot migration case' })],
+    );
+    await f.db.query(
+      "insert into public.verify_assignments(case_id,reviewer_id,position) values('SYN-901',$1,1),('SYN-901',$2,1)",
+      [ACTORS.reviewerA, ACTORS.reviewerB],
+    );
+    const response = {
+      decision: 'INCLUDE',
+      rationale: 'Synthetic pilot upgrade judgment.',
+      uncertain: false,
+      packetProblem: false,
+      context: '',
+    };
+    for (const actor of ['reviewerA', 'reviewerB'] as const)
+      await rpc(f.db, actor, "select public.rpc_verify_submit('SYN-901','DESCRIPTOR_LEVEL',$1)", [
+        j(response),
+      ]);
+    for (const action of ['CLOSE_REVIEW', 'AUTHORIZE_ADJUDICATION'])
+      await f.investigator('select public.rpc_verify_admin($1)', [j({ action, attestation: ATT })]);
+    await rpc(
+      f.db,
+      'adjudicator',
+      "select public.rpc_verify_adjudicate('SYN-901','DESCRIPTOR_LEVEL',$1)",
+      [
+        j({
+          ...response,
+          status: 'RESOLVED',
+          basis: 'Both fictional reviewers.',
+          reasonCode: 'OTHER',
+        }),
+      ],
+    );
+    await f.investigator('select public.rpc_verify_admin($1)', [
+      j({ action: 'LOCK_REFERENCE', attestation: ATT }),
+    ]);
+    const before = await rpc<Record<string, unknown>>(
+      f.db,
+      'investigator',
+      'select public.rpc_verify_export()',
+    );
+    await f.db.exec(await readFile(FROZEN_MIGRATION, 'utf8'));
+    const after = await rpc<Record<string, unknown>>(
+      f.db,
+      'investigator',
+      'select public.rpc_verify_export()',
+    );
+    assert.equal(after.schemaVersion, '4.0.4-frozen-contract');
+    assert.deepEqual({ ...after, schemaVersion: before.schemaVersion }, before);
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('0007 preflight rejects stale-snapshot transaction isolation without applying changes', async () => {
+  const db = await migratedDb(true, undefined, 6);
+  try {
+    const before = (await db.query('select * from public.app_schema_version order by version'))
+      .rows;
+    await db.exec("set default_transaction_isolation = 'repeatable read'");
+    await assert.rejects(
+      db.exec(await readFile(FROZEN_MIGRATION, 'utf8')),
+      /Frozen-contract migration requires READ COMMITTED isolation/,
+    );
+    await db.exec('rollback');
+    await db.exec("set default_transaction_isolation = 'read committed'");
+    assert.deepEqual(
+      (await db.query('select * from public.app_schema_version order by version')).rows,
+      before,
+    );
+    assert.equal(
+      (
+        await db.query<{ definition: string | null }>(
+          "select to_regprocedure('private.assert_adjudication_semantics_v4(text,text,text,text,text,text)')::text as definition",
+        )
+      ).rows[0].definition,
+      null,
+    );
+  } finally {
+    await db.close();
   }
 });

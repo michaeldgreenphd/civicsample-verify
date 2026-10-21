@@ -75,6 +75,25 @@ async function initialize(): Promise<PGlite> {
       await readFile(path.join(process.cwd(), 'migrations/0006_reference_integrity.sql'), 'utf8'),
     );
   }
+  const frozenContract = await db.query<{ present: boolean }>(
+    "select exists(select 1 from public.app_schema_version where version='4.0.4-frozen-contract') as present",
+  );
+  if (!frozenContract.rows[0].present) {
+    try {
+      await db.exec(
+        await readFile(
+          path.join(process.cwd(), 'migrations/0007_frozen_contract_guards.sql'),
+          'utf8',
+        ),
+      );
+    } catch (error) {
+      // PostgreSQL leaves a failed explicit transaction aborted until rollback.
+      // A refused formal upgrade must retain its prior schema and release storage.
+      await db.exec('rollback');
+      await db.close();
+      throw error;
+    }
+  }
   if (
     !(await db.query<{ n: number }>('select count(*)::integer as n from public.verify_cases'))
       .rows[0].n
