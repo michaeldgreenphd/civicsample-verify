@@ -67,6 +67,14 @@ async function initialize(): Promise<PGlite> {
       ),
     );
   }
+  const referenceIntegrity = await db.query<{ present: boolean }>(
+    "select exists(select 1 from public.app_schema_version where version='4.0.3-reference-integrity') as present",
+  );
+  if (!referenceIntegrity.rows[0].present) {
+    await db.exec(
+      await readFile(path.join(process.cwd(), 'migrations/0006_reference_integrity.sql'), 'utf8'),
+    );
+  }
   if (
     !(await db.query<{ n: number }>('select count(*)::integer as n from public.verify_cases'))
       .rows[0].n

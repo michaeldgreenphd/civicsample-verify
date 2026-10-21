@@ -14,4 +14,4 @@ Tier version, sample, rubric, adjudicator, analysis plan and formal authorizatio
 
 The ten fictional SYN- pilot cases are interface tests and never enter performance metrics. Separate explicitly synthetic test bundles exercise analytical code. No displayed engineering result is a clinical finding. CONTEXT_DEPENDENT and INSUFFICIENT_INFORMATION handling in real analysis awaits an approved frozen plan.
 
-Module B is optional, unapproved and separate, with its own cases, rubric, sampling, outcomes, permissions and export.
+Module B is optional, unapproved and separate, with its own cases, rubric, sampling, outcomes, permissions and export. Its stored final responses cannot be resubmitted; a Module B amendment authorization workflow is not implemented or enabled.

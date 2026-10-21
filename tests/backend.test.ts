@@ -65,7 +65,14 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
         'select version from public.app_schema_version order by applied_at',
       )
     ).rows.map((r) => r.version),
-    ['1.0.0', '3.0.0', '4.0.0', '4.0.1-synthetic', '4.0.2-review-integrity'],
+    [
+      '1.0.0',
+      '3.0.0',
+      '4.0.0',
+      '4.0.1-synthetic',
+      '4.0.2-review-integrity',
+      '4.0.3-reference-integrity',
+    ],
   );
   const initialAdmin = await getWorkspace(investigator);
   assert.equal(initialAdmin.configuration.tierVersion, 'PENDING');
@@ -399,7 +406,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
     3,
   );
   assert.equal(exported.provenance.judgmentSnapshotHash.length, 64);
-  assert.equal(exported.provenance.schemaVersion, '4.0.2-review-integrity');
+  assert.equal(exported.provenance.schemaVersion, '4.0.3-reference-integrity');
   assert.equal(exported.configuration.analysisPlanState, 'PROPOSED');
   assert.equal(exported.provenance.analysisPlan, 'PENDING_APPROVAL');
   const storedSnapshot = (

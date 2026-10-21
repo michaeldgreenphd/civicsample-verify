@@ -11,6 +11,7 @@ const sqlInputs = new Set([
   'migrations/0003_v4_record_categories_module_b.sql',
   'migrations/0004_synthetic_verify_workflow.sql',
   'migrations/0005_review_integrity_fixes.sql',
+  'migrations/0006_reference_integrity.sql',
 ]);
 function traces(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -46,5 +47,5 @@ for (const manifest of manifests) {
   }
 }
 console.log(
-  `Production trace check passed: ${manifests.length} manifests, all six SQL inputs, no local runtime files.`,
+  `Production trace check passed: ${manifests.length} manifests, ${sqlInputs.size} SQL inputs, no local runtime files.`,
 );
