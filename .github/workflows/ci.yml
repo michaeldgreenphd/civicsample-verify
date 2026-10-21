@@ -17,6 +17,8 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:handoff
+      - name: Seed synthetic runtime-file packaging probe
+        run: node -e "const fs=require('node:fs'); fs.mkdirSync('.local/pglite',{recursive:true}); fs.writeFileSync('.local/pglite/SYNTHETIC-TRACE-PROBE','Synthetic packaging regression only');"
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: '1'

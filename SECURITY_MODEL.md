@@ -12,7 +12,7 @@ Four synthetic accounts are available: investigator, reviewer-a, reviewer-b and 
 
 All API operations require an actor and use explicit allowlisted response shapes. Database policies and functions independently enforce role boundaries. Unassigned and nonexistent cases have the same public failure. Reviewer sessions cannot access administrative exports, audit events, provenance or classifier predictions. Adjudicators never receive predictions. Error responses contain fixed public messages; logs contain no input payloads, judgments, SQL text or evidence. Responses disable caching.
 
-During independent review the investigator sees aggregate completion only. Adjudication requires both independent final submissions and explicit investigator authorization. Final submissions cannot be overwritten. Trials disclose their context only after locked descriptor review. Campaign locking prevents subsequent changes.
+During independent review the investigator sees aggregate completion only. Adjudication requires both independent final submissions and explicit investigator authorization. Final submissions cannot be overwritten. Trials disclose their context only after locked descriptor review. That pre-context Step 1 cannot subsequently be amended, including through an old pending authorization. A legacy submitted Step 1 amendment blocks reference use without altering the original records. Campaign locking prevents subsequent changes.
 
 ## Deployment gates
 
