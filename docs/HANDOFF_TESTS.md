@@ -6,12 +6,12 @@
 
 Executed on 2026-10-21 with Node.js 26.8.1 and `@electric-sql/pglite` 0.3.16. The database reported PostgreSQL 17.5 compiled to WebAssembly.
 
-| Supplied suite | Schema applied | Observed passing steps | Failures |
-|---|---|---:|---:|
-| v2 | Base schema | 164 / 164 | 0 |
-| v3 | Base + migration 0002 | 262 / 262 | 0 |
-| v3 regression | Base + migrations 0002 and 0003 | 262 / 262 | 0 |
-| v4 | Base + migrations 0002 and 0003 | 356 / 356 | 0 |
+| Supplied suite | Schema applied                  | Observed passing steps | Failures |
+| -------------- | ------------------------------- | ---------------------: | -------: |
+| v2             | Base schema                     |              164 / 164 |        0 |
+| v3             | Base + migration 0002           |              262 / 262 |        0 |
+| v3 regression  | Base + migrations 0002 and 0003 |              262 / 262 |        0 |
+| v4             | Base + migrations 0002 and 0003 |              356 / 356 |        0 |
 
 The separate audit probe reproduced its expected historical distinction: both synthetic trial Step 1 audit rows contained the decision under migration 0002 alone; neither contained the decision after migration 0003. This verifies the demonstrated audit-field correction, not every possible information channel.
 
@@ -34,10 +34,10 @@ The wrapper copies the committed schema, migrations, shim and test runners into 
 
 Only schema-file checksums are recorded here. The committed files match the selected source schema bytes:
 
-| File | SHA-256 |
-|---|---|
-| `schema.sql` | `ed52f666e125e86e951b589d2b432e3b411a6c018751b74b9181fa3c3b72fda1` |
-| `migrations/0002_v3_review_design.sql` | `022ec5415775524ad3b4f6a4190fef6d5a85ccc140be98ae3c654b148b90821e` |
+| File                                                | SHA-256                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------ |
+| `schema.sql`                                        | `ed52f666e125e86e951b589d2b432e3b411a6c018751b74b9181fa3c3b72fda1` |
+| `migrations/0002_v3_review_design.sql`              | `022ec5415775524ad3b4f6a4190fef6d5a85ccc140be98ae3c654b148b90821e` |
 | `migrations/0003_v4_record_categories_module_b.sql` | `66822b00bb8ac079364e02bd8adf19d8f9812d1541fee1325cdcf0c520d35f67` |
 
 Verify with:
