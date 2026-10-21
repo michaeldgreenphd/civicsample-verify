@@ -124,6 +124,10 @@ const publicErrors: Record<string, string> = {
     'Context-dependent decisions require clinical context, inclusion conditions and exclusion conditions.',
   'Review is closed': 'Review is closed. Submitted judgments remain locked.',
   'Final response locked': 'This response is final and locked.',
+  'Pre-context Step 1 integrity requires investigator review':
+    'A prior Step 1 amendment requires investigator review. This campaign cannot proceed to adjudication or export.',
+  'Pre-context Step 1 is permanently locked after submission':
+    'Step 1 cannot be amended after submission because trial context is already available.',
   'Final response locked; an authorized amendment is required':
     'This response is final. An investigator must authorize an audited amendment.',
   'Initial response cannot be an amendment':
@@ -449,12 +453,17 @@ export async function getCase(actor: Actor, id: string): Promise<CaseDetail> {
   if (actor.role === 'REVIEWER') {
     if (step1) result.step1 = step1;
     if (submission) result.submission = submission;
-    result.availableAmendments = raw.amendments || [];
-    result.drafts = (raw.drafts || []).map((d) => ({
-      ...d.payload,
-      level: d.level,
-      ...(d.amendment_id ? { amendmentId: d.amendment_id } : {}),
-    }));
+    // Legacy authorizations remain in the audit record but cannot reopen Step 1.
+    result.availableAmendments = (raw.amendments || []).filter(
+      (amendment) => amendment.level !== 'DESCRIPTOR_LEVEL_IN_TRIAL_CASE',
+    );
+    result.drafts = (raw.drafts || [])
+      .filter((draft) => !(draft.level === 'DESCRIPTOR_LEVEL_IN_TRIAL_CASE' && draft.amendment_id))
+      .map((d) => ({
+        ...d.payload,
+        level: d.level,
+        ...(d.amendment_id ? { amendmentId: d.amendment_id } : {}),
+      }));
     const pendingAmendment = result.availableAmendments.find((a) => a.level === activeLevel);
     const draft = result.drafts.find(
       (d) => d.level === activeLevel && d.amendmentId === pendingAmendment?.id,
@@ -610,6 +619,7 @@ export async function adminAction(actor: Actor, input: AdminInput): Promise<Work
   return getWorkspace(actor);
 }
 interface RawExport {
+  schemaVersion: string;
   state: {
     phase: Campaign['state'];
     tier1_proposal: 'v1.1' | 'v1.2' | null | null;
@@ -654,7 +664,7 @@ export async function getExportData(actor: Actor): Promise<ExportData> {
       level: r.level,
     })),
     provenance: {
-      schemaVersion: '4.0.1-synthetic',
+      schemaVersion: raw.schemaVersion,
       rubricVersion: 'synthetic-v1',
       analysisPlan: 'PENDING_APPROVAL',
       judgmentSnapshotHash: raw.state.snapshot_hash,

@@ -1503,7 +1503,8 @@ function Investigator({
             <div className="panel-body" style={{ paddingTop: 0 }}>
               <p className="muted" style={{ fontSize: 12, marginBottom: 15 }}>
                 An amendment creates a new response version. The original locked judgment remains in
-                the audit record.
+                the audit record. Step 1 in a trial case cannot be amended after submission because
+                submitting it makes the trial context available.
               </p>
               <div className="field">
                 <label className="form-label" htmlFor="amend-case">
@@ -1539,7 +1540,6 @@ function Investigator({
                     onChange={(e) => setAmendment({ ...amendment, level: e.target.value })}
                   >
                     <option value="DESCRIPTOR_LEVEL">Descriptor</option>
-                    <option value="DESCRIPTOR_LEVEL_IN_TRIAL_CASE">Descriptor in trial case</option>
                     <option value="TRIAL_LEVEL">Trial</option>
                   </select>
                 </div>

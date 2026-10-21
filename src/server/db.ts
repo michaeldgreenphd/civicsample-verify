@@ -54,6 +54,19 @@ async function initialize(): Promise<PGlite> {
     ]);
     for (const migration of migrations) await db.exec(migration);
   }
+  // Apply additive upgrades to existing persistent pilots as well as fresh
+  // databases. The migration and its version marker commit atomically.
+  const reviewIntegrity = await db.query<{ present: boolean }>(
+    "select exists(select 1 from public.app_schema_version where version='4.0.2-review-integrity') as present",
+  );
+  if (!reviewIntegrity.rows[0].present) {
+    await db.exec(
+      await readFile(
+        path.join(process.cwd(), 'migrations/0005_review_integrity_fixes.sql'),
+        'utf8',
+      ),
+    );
+  }
   if (
     !(await db.query<{ n: number }>('select count(*)::integer as n from public.verify_cases'))
       .rows[0].n

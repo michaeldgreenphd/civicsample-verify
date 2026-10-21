@@ -19,6 +19,11 @@ const answer = (decision = 'INCLUDE') => ({
   context: '',
   packetProblem: false,
 });
+const structuredContext = JSON.stringify({
+  clinicalContext: 'Fictional context for the pilot regression.',
+  inclusionConditions: 'Include when the fictional condition is studied.',
+  exclusionConditions: 'Exclude incidental fictional findings.',
+});
 const hidden =
   /tier0_binary|tier1_binary|prediction_set|selection_probability|comparison_cell|frame_unit|request\.jwt|service_role|snapshot_hash/;
 
@@ -34,6 +39,19 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
   await signIn(adminPage, 'investigator');
   await expect(adminPage.getByRole('heading', { name: 'Pilot overview' })).toBeVisible();
   await expect(adminPage.getByRole('heading', { name: 'Readiness gates' })).toBeVisible();
+  await adminPage
+    .locator('summary')
+    .filter({ hasText: 'Authorize a documented amendment' })
+    .click();
+  await expect(adminPage.getByLabel('Judgment level').locator('option')).toHaveText([
+    'Descriptor',
+    'Trial',
+  ]);
+  await expect(adminPage.getByText(/Step 1 in a trial case cannot be amended/)).toBeVisible();
+  await adminPage
+    .locator('summary')
+    .filter({ hasText: 'Authorize a documented amendment' })
+    .click();
   await adminPage.screenshot({ path: 'test-results/investigator-desktop.png', fullPage: true });
   for (const [page, account] of [
     [aPage, 'reviewer-a'],
@@ -110,9 +128,27 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
         expect(step.ok(), await step.text()).toBeTruthy();
         const detail = await (await context.request.get(`/api/cases/${id}`)).json();
         expect(detail.trialPacket.registryId).toMatch(/^SYN-NCT/);
+        if (slot === 'A' && i === 9) {
+          const amendment = await post(admin, '/api/admin/action', {
+            action: 'authorize-amendment',
+            caseId: id,
+            reviewerId: '00000000-0000-4000-8000-000000000002',
+            level: 'DESCRIPTOR_LEVEL_IN_TRIAL_CASE',
+            reason: 'Synthetic regression must not revise a pre-context judgment.',
+            attestation: 'Fictional attempted authorization after reveal.',
+          });
+          expect(amendment.status()).toBe(409);
+          expect(await amendment.text()).toContain('Step 1');
+          const unchanged = await (await context.request.get(`/api/cases/${id}`)).json();
+          expect(unchanged.step1.version).toBe(1);
+          expect(unchanged.availableAmendments).toEqual([]);
+        }
       }
       const result = await post(context, `/api/cases/${id}/submit`, {
         ...answer(slot === 'B' && i === 1 ? 'EXCLUDE' : 'INCLUDE'),
+        ...(slot === 'A' && i === 2
+          ? { decision: 'CONTEXT_DEPENDENT', context: structuredContext }
+          : {}),
         ...(i >= 9 ? { descriptorRole: 'DISEASE_STUDIED' } : {}),
       });
       expect(result.ok(), await result.text()).toBeTruthy();
@@ -153,6 +189,14 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
     const id = `SYN-${String(i).padStart(3, '0')}`;
     const detail = await (await adj.request.get(`/api/cases/${id}`)).json();
     expect(JSON.stringify(detail)).not.toMatch(hidden);
+    if (i === 2) {
+      const contextual = detail.humanReviews.find(
+        (r: { decision: string }) => r.decision === 'CONTEXT_DEPENDENT',
+      );
+      expect(contextual.context).toBe(structuredContext);
+      expect(contextual.packetProblem).toBe(false);
+      expect(contextual.packetProblemNote).toBeUndefined();
+    }
     const levels = [...new Set<string>(detail.humanReviews.map((r: { level: string }) => r.level))];
     for (const level of levels) {
       if (i === 1) continue;
@@ -172,7 +216,11 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
   await expect(adminPage.getByRole('link', { name: /Download locked export/ })).toBeVisible();
   const exported = await admin.request.get('/api/admin/export');
   expect(exported.ok(), await exported.text()).toBeTruthy();
-  const bundle = await exported.json();
+  const exportBytes = await exported.text();
+  const repeated = await admin.request.get('/api/admin/export');
+  expect(repeated.ok(), await repeated.text()).toBeTruthy();
+  expect(await repeated.text()).toBe(exportBytes);
+  const bundle = JSON.parse(exportBytes);
   expect(bundle.manifest.analysis_eligible).toBe(false);
   expect(bundle.manifest.clinical_metrics).toBeNull();
   expect(bundle.files.find((f: { role: string }) => f.role === 'independent_judgments').rows).toBe(
