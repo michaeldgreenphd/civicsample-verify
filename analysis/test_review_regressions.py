@@ -384,3 +384,83 @@ def test_loading_refuses_malformed_provenance_before_analysis(tmp_path):
     path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(pa4.ExportError, match="ontology_sha256 must be a 64-character lowercase SHA-256 digest"):
         pa4.load_bundle(str(path))
+
+
+@pytest.mark.parametrize("status", ["EXLCUDE", "unknown", "CONTEXT_DEPENDENT", "include", "0"])
+def test_rehashed_unknown_stage_c_status_cannot_retain_tier0(bundle, tmp_path, status):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    P.loc[row, "stage_c_trial_status"] = status
+    # Without vocabulary validation, this wrong value used the fallback and passed.
+    P.loc[row, "tier1_binary"] = P.loc[row, "tier0_binary"]
+    with pytest.raises(pa4.ExportError, match="stage_c_trial_status must be blank"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+@pytest.mark.parametrize("status", ["", None, "UNRESOLVED", "INCLUDE", "EXCLUDE"])
+def test_known_stage_c_statuses_keep_the_defined_mapping(bundle, tmp_path, status):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    P.loc[row, "stage_c_trial_status"] = status
+    expected = status if status in ("INCLUDE", "EXCLUDE") else P.loc[row, "tier0_binary"]
+    P.loc[row, "tier1_binary"] = expected
+    merged, _ = validate(write_rehashed_bundle(tmp_path, bundle))
+    actual = merged.loc[(merged.case_id == P.loc[row, "case_id"]) &
+                        (merged.determination_level == "TRIAL_LEVEL"), "curated_v11_binary"].iloc[0]
+    assert actual == expected
+
+
+@pytest.mark.parametrize("column,value", [
+    ("selection_stratum", "FX-OTHER-SELECTION"),
+    ("variance_stratum", "FX-OTHER-VARIANCE"),
+    ("variance_stratum_size", "21"),
+    ("selection_probability", "0.200000000000000000000000001"),
+    ("sampling_weight", "5.000000000000000000000000001"),
+    ("comparison_cell", "FX-OTHER-COMPARISON"),
+    ("impact_tier", "HIGH"),
+    ("policy_governed_neoplasm_GEN06", "true"),
+])
+def test_rehashed_sampling_design_cannot_change_between_trial_levels(bundle, tmp_path, column, value):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    assert P.loc[row, column] != value
+    P.loc[row, column] = value
+    with pytest.raises(pa4.ExportError, match=f"{column} must stay consistent"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_rehashed_case_cannot_use_different_valid_probability_weight_pairs(bundle, tmp_path):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    P.loc[row, ["selection_probability", "sampling_weight"]] = ["0.25", "4"]
+    with pytest.raises(pa4.ExportError, match="selection_probability must stay consistent"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_equivalent_numeric_sampling_encodings_are_the_same_design(bundle, tmp_path):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    assert P.loc[row, "selection_probability"] == "0.2"
+    assert float(P.loc[row, "sampling_weight"]) == 5
+    assert int(P.loc[row, "variance_stratum_size"]) == 20
+    P.loc[row, ["selection_probability", "sampling_weight", "variance_stratum_size"]] = ["0.2000", "5e0", "20.00"]
+    merged, _ = validate(write_rehashed_bundle(tmp_path, bundle))
+    case = merged[merged.case_id == P.loc[row, "case_id"]]
+    assert set(case.selection_probability) == {0.2}
+    assert set(case.sampling_weight) == {5.0}
+    assert set(case.variance_stratum_size) == {20.0}
+
+
+def test_nullable_comparison_cell_is_consistent_when_absent_on_both_levels(bundle, tmp_path):
+    P = bundle[0]["frozen_predictions"]
+    case = P.loc[P.determination_level == "TRIAL_LEVEL", "case_id"].iloc[0]
+    P.loc[P.case_id == case, "comparison_cell"] = None
+    validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_missing_comparison_cell_on_only_one_trial_level_is_inconsistent(bundle, tmp_path):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    P.loc[row, "comparison_cell"] = None
+    with pytest.raises(pa4.ExportError, match="comparison_cell must stay consistent"):
+        validate(write_rehashed_bundle(tmp_path, bundle))

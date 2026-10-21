@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sys
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
@@ -22,7 +23,7 @@ except ImportError:  # run from inside analysis/
     import performance_analysis_v3 as pa3  # type: ignore
     import review_codes as rc  # type: ignore
 
-__version__ = "4.0.2"
+__version__ = "4.0.3"
 EXPORT_FORMAT_VERSION_V4 = "4.0"
 POS, NEG = pa3.POS, pa3.NEG
 L1_CODES = pa3.L1_CODES
@@ -239,6 +240,30 @@ def _check_case_metadata(J: pd.DataFrame, A: pd.DataFrame, P: pd.DataFrame) -> N
                 raise ExportError(f"{name}: {column} differs from frozen prediction case metadata")
 
 
+def _check_case_sampling(P: pd.DataFrame) -> None:
+    """Both trial determinations inherit one case design and one case record."""
+    # These are the numeric case_design_v3 columns exported by
+    # v_frozen_predictions_v4. Decimal equality preserves database numeric values
+    # without rejecting equivalent encodings or rounding a real mismatch away.
+    for column in ("selection_probability", "sampling_weight", "variance_stratum_size"):
+        try:
+            values = P[column].map(lambda value: Decimal(str(value)))
+        except InvalidOperation as exc:
+            raise ExportError(f"{column} must contain finite numeric design values") from exc
+        if not values.map(lambda value: value.is_finite()).all():
+            raise ExportError(f"{column} must contain finite numeric design values")
+        if (values.groupby(P.case_id).nunique() != 1).any():
+            raise ExportError(f"{column} must stay consistent across each case's determination levels")
+    # The first three fields also come from case_design_v3; the remaining fields
+    # are case_records_v4 attributes, not level-specific prediction outputs.
+    for column in ("selection_stratum", "variance_stratum", "comparison_cell", "impact_tier",
+                   "provenance_audit_result", "policy_governed_neoplasm_GEN06"):
+        values = (_bool_col(P[column]) if column == "policy_governed_neoplasm_GEN06" else
+                  P[column].map(lambda value: None if _blank(value) else value))
+        if (values.groupby(P.case_id).nunique(dropna=False) != 1).any():
+            raise ExportError(f"{column} must stay consistent across each case's determination levels")
+
+
 def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any], allow_synthetic: bool = False,
                     allow_exposed_reference: bool = False) -> Tuple[pd.DataFrame, List[str]]:
     """Apply every v4 rule. Raises ExportError on any breach.
@@ -318,6 +343,9 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     mism = dl.loc[exp != dl.tier1_binary.to_numpy(dtype=object), "case_id"].tolist()
     if mism:
         raise ExportError(f"tier1_binary disagrees with the deterministic mapping policy for cases: {mism[:10]}")
+    stage_c = P.stage_c_trial_status.map(lambda value: None if _blank(value) else value)
+    if (~(stage_c.isna() | stage_c.isin(("INCLUDE", "EXCLUDE", "UNRESOLVED")))).any():
+        raise ExportError("stage_c_trial_status must be blank, INCLUDE, EXCLUDE or UNRESOLVED")
     tl = P[P.determination_level == "TRIAL_LEVEL"]
     exp_t = np.array([pa3.expected_curated_binary(o, "CONTEXT_DEPENDENT", "TRIAL_LEVEL", None if _blank(sc) else sc)
                       for o, sc in zip(tl.tier0_binary, tl.stage_c_trial_status)], dtype=object)
@@ -333,6 +361,7 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     sizes = pd.to_numeric(P.variance_stratum_size, errors="coerce")
     if not np.isfinite(sizes).all() or (sizes < 1).any() or (sizes % 1 != 0).any() or P.variance_stratum.isna().any():
         raise ExportError("variance stratum sizes must be finite positive integers with named strata")
+    _check_case_sampling(P)
     design = P.assign(_size=sizes)
     for _, group in design.groupby(["determination_level", "variance_stratum"]):
         if group._size.nunique() != 1 or group._size.iloc[0] < len(group):
