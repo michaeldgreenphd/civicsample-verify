@@ -218,3 +218,169 @@ def test_trial_performance_does_not_score_descriptor_status_as_trial_output(bund
     for rule in pa3.DENOMINATOR_RULES:
         assert "curated_v11_four_category_exact_match" not in complete["accuracy"]["TRIAL_LEVEL"][rule]
         assert "curated_v11_four_category_exact_match" in complete["accuracy"]["DESCRIPTOR_LEVEL"][rule]
+
+
+def write_rehashed_bundle(tmp_path, bundle):
+    """Serialize altered synthetic inputs and rehash every file before loading them."""
+    frames, manifest = bundle
+    for entry in manifest["files"]:
+        path = tmp_path / entry["name"]
+        frame = frames[entry["role"]]
+        frame.to_csv(path, index=False, lineterminator="\n")
+        entry["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        entry["rows"] = len(frame)
+        if entry["role"] == "frozen_predictions":
+            manifest["frozen_prediction_set_sha256"] = entry["sha256"]
+    path = tmp_path / fx.MANIFEST_NAME
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    return pa4.load_bundle(str(path))
+
+
+@pytest.mark.parametrize("column,value", [
+    ("unit_type", "TRIAL_AREA"), ("unit_id", "SYN-OTHER-UNIT"),
+    ("nct_id", "SYN-NCT-9999"), ("descriptor_ui", "SYN-OTHER-DESCRIPTOR"),
+    ("area", "respiratory"),
+])
+def test_rehashed_judgment_case_metadata_must_match_predictions(bundle, tmp_path, column, value):
+    J = bundle[0]["independent_judgments"]
+    case = J.iloc[0].case_id
+    assert not J.loc[J.case_id == case, column].eq(value).any()
+    J.loc[J.case_id == case, column] = value
+    changed = write_rehashed_bundle(tmp_path, bundle)
+    with pytest.raises(pa4.ExportError, match=f"{column} differs from frozen prediction"):
+        validate(changed)
+
+
+@pytest.mark.parametrize("column", ["unit_type", "unit_id", "descriptor_ui", "descriptor_name", "area", "nct_id"])
+def test_rehashed_judgments_cannot_disagree_on_case_metadata(bundle, tmp_path, column):
+    J = bundle[0]["independent_judgments"]
+    J.loc[0, column] = "SYN-OTHER-METADATA"
+    changed = write_rehashed_bundle(tmp_path, bundle)
+    with pytest.raises(pa4.ExportError, match=f"{column} must stay consistent"):
+        validate(changed)
+
+
+@pytest.mark.parametrize("column", ["unit_type", "unit_id", "descriptor_ui", "area", "nct_id"])
+def test_metadata_cannot_change_between_trial_determination_levels(bundle, tmp_path, column):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    P.loc[row, column] = "SYN-OTHER-METADATA"
+    changed = write_rehashed_bundle(tmp_path, bundle)
+    with pytest.raises(pa4.ExportError, match=f"{column} must stay consistent"):
+        validate(changed)
+
+
+@pytest.mark.parametrize("missing", ["", "  ", None, "0", "-1", "1.5", "unknown"])
+def test_rehashed_judgments_require_a_positive_case_version(bundle, tmp_path, missing):
+    bundle[0]["independent_judgments"].loc[0, "case_version"] = missing
+    changed = write_rehashed_bundle(tmp_path, bundle)
+    with pytest.raises(pa4.ExportError, match="case_version must be a nonmissing positive integer"):
+        validate(changed)
+
+
+def test_rehashed_judgments_cannot_mix_case_versions_between_reviewers(bundle, tmp_path):
+    bundle[0]["independent_judgments"].loc[0, "case_version"] = "2"
+    with pytest.raises(pa4.ExportError, match="case_version must agree"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_rehashed_judgments_cannot_mix_case_versions_between_trial_steps(bundle, tmp_path):
+    J = bundle[0]["independent_judgments"]
+    case = J.loc[J.determination_level == "TRIAL_LEVEL", "case_id"].iloc[0]
+    J.loc[(J.case_id == case) & (J.determination_level == "TRIAL_LEVEL"), "case_version"] = "2"
+    with pytest.raises(pa4.ExportError, match="case_version must agree"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_case_version_is_preserved_without_inventing_a_frozen_version(bundle, tmp_path):
+    J, P, A = (bundle[0][name] for name in ("independent_judgments", "frozen_predictions", "adjudicated_reference"))
+    case = J.loc[J.determination_level == "TRIAL_LEVEL", "case_id"].iloc[0]
+    J.loc[J.case_id == case, "case_version"] = "7"
+    assert "case_version" not in P.columns and "case_version" not in A.columns
+    merged, _ = validate(write_rehashed_bundle(tmp_path, bundle))
+    assert set(merged.loc[merged.case_id == case, "case_version"]) == {7}
+    # Descriptor cases legitimately have no NCT identifier in either source.
+    descriptors = merged[merged.unit_type == "DESCRIPTOR_AREA"]
+    assert descriptors.nct_id.isna().all()
+
+
+@pytest.mark.parametrize("missing", ["", "  ", None])
+def test_rehashed_predictions_require_nonblank_frame_unit_identity(bundle, tmp_path, missing):
+    bundle[0]["frozen_predictions"].loc[0, "frame_unit_id"] = missing
+    with pytest.raises(pa4.ExportError, match="frame_unit_id must be nonblank"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_rehashed_predictions_cannot_count_one_frame_unit_as_two_cases(bundle, tmp_path):
+    P = bundle[0]["frozen_predictions"]
+    first, second = P.case_id.unique()[:2]
+    frame_unit = P.loc[P.case_id == first, "frame_unit_id"].iloc[0]
+    P.loc[P.case_id == second, "frame_unit_id"] = frame_unit
+    with pytest.raises(pa4.ExportError, match="frame_unit_id must identify only one case"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_rehashed_trial_predictions_cannot_switch_frame_units_between_levels(bundle, tmp_path):
+    P = bundle[0]["frozen_predictions"]
+    row = P.index[P.determination_level == "TRIAL_LEVEL"][0]
+    P.loc[row, "frame_unit_id"] = "FX-OTHER-FRAME-UNIT"
+    with pytest.raises(pa4.ExportError, match="frame_unit_id must stay consistent"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+@pytest.mark.parametrize("status", ["DISCORDANT_RESOLVED", "UNRESOLVED_ESCALATED", "CONCORDANT_ADOPTED_BY_RULE"])
+@pytest.mark.parametrize("missing", ["", "  ", None])
+def test_rehashed_reference_requires_adjudicator_identity(bundle, tmp_path, status, missing):
+    A = bundle[0]["adjudicated_reference"]
+    A.loc[A.index[A.adjudication_status == status][0], "adjudicator_pseudo_id"] = missing
+    with pytest.raises(pa4.ExportError, match="adjudicator_pseudo_id must be nonblank"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+@pytest.mark.parametrize("role", ["", "  ", None, "REVIEWER", "CONCORDANCE_RULE", "unknown"])
+@pytest.mark.parametrize("allow_exposed", [False, True])
+def test_rehashed_human_reference_requires_recognized_role(bundle, tmp_path, role, allow_exposed):
+    A = bundle[0]["adjudicated_reference"]
+    A.loc[A.index[A.adjudication_status == "DISCORDANT_RESOLVED"][0], "adjudicator_role"] = role
+    with pytest.raises(pa4.ExportError, match="non-rule adjudicator_role"):
+        validate(write_rehashed_bundle(tmp_path, bundle), allow_exposed_reference=allow_exposed)
+
+
+def test_investigator_role_cannot_claim_blinded_primary_reference(bundle, tmp_path):
+    A = bundle[0]["adjudicated_reference"]
+    row = A.index[A.adjudication_status == "DISCORDANT_RESOLVED"][0]
+    A.loc[row, "adjudicator_role"] = "INVESTIGATOR"
+    with pytest.raises(pa4.ExportError, match="INVESTIGATOR adjudication must explicitly record exposure"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+    A.loc[row, ["adjudicator_exposed_to_index_labels", "adjudication_blinded"]] = ["true", "false"]
+    changed = write_rehashed_bundle(tmp_path, bundle)
+    with pytest.raises(pa4.ExportError, match="exposed"):
+        validate(changed)
+    merged, _ = validate(changed, allow_exposed_reference=True)
+    assert (merged.adjudicator_role == "INVESTIGATOR").sum() == 1
+
+
+@pytest.mark.parametrize("field", [key for key in pa4.MANIFEST_KEYS_V4 if key.endswith("sha256")])
+@pytest.mark.parametrize("digest", ["unknown", "", None, "a" * 63, "g" * 64, "A" * 64])
+def test_manifest_provenance_hashes_require_sha256_syntax(bundle, field, digest):
+    bundle[1][field] = digest
+    with pytest.raises(pa4.ExportError, match=f"manifest {field} must be a 64-character lowercase SHA-256 digest"):
+        validate(bundle)
+
+
+@pytest.mark.parametrize("role", sorted(pa4.FILE_ROLES))
+@pytest.mark.parametrize("digest", ["unknown", None, "a" * 63, "G" * 64])
+def test_manifest_file_hashes_require_sha256_syntax(bundle, role, digest):
+    entry = next(entry for entry in bundle[1]["files"] if entry["role"] == role)
+    entry["sha256"] = digest
+    with pytest.raises(pa4.ExportError, match="every manifest file sha256"):
+        validate(bundle)
+
+
+def test_loading_refuses_malformed_provenance_before_analysis(tmp_path):
+    manifest = fx.write(tmp_path)
+    manifest["ontology_sha256"] = "unknown"
+    path = tmp_path / fx.MANIFEST_NAME
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(pa4.ExportError, match="ontology_sha256 must be a 64-character lowercase SHA-256 digest"):
+        pa4.load_bundle(str(path))

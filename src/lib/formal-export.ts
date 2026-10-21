@@ -133,6 +133,11 @@ export function buildV4SyntheticBundle(input: V4SyntheticExportInput) {
         : typeof value !== 'string' || (key !== 'amendment_id' && !value)
     )
       throw new Error('Required manifest metadata is absent or has the wrong type');
+    if (
+      key.endsWith('_sha256') &&
+      (typeof value !== 'string' || value.length !== 64 || !/^[0-9a-f]{64}$/.test(value))
+    )
+      throw new Error('Manifest provenance hashes must be 64-character lowercase SHA-256 values');
   }
   if (m.extension_approved_by_amendment !== false)
     throw new Error('Extensions are outside this synthetic engineering writer');

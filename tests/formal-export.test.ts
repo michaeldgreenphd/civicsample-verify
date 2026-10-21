@@ -111,7 +111,7 @@ test('writer refuses pilot/real data, mismatched snapshots, missing metadata and
     delete input.manifest.rubric_sha256;
   }, /metadata/);
   mutate((input) => {
-    input.manifest.frozen_sample_case_list_sha256 = 'changed';
+    input.manifest.frozen_sample_case_list_sha256 = '0'.repeat(64);
   }, /Case list/);
   mutate((input) => {
     input.frozenPredictions[0].tier0_binary = 'INCLUDE';
@@ -132,6 +132,36 @@ test('writer refuses pilot/real data, mismatched snapshots, missing metadata and
   mutate((input) => {
     input.frozenPredictions[0].sampling_weight = 1 as unknown as string;
   }, /database text/);
+});
+
+test('writer rejects malformed provenance hashes without normalizing or substituting values', () => {
+  const keys = [
+    'freeze_manifest_sha256',
+    'frozen_sample_case_list_sha256',
+    'frozen_prediction_set_sha256',
+    'ontology_sha256',
+    'tier1_decision_file_sha256',
+    'tier0_mapping_sha256',
+    'rubric_sha256',
+    'provenance_audit_sha256',
+  ];
+  const malformed = [
+    'unknown',
+    'A'.repeat(64),
+    'g'.repeat(64),
+    'a'.repeat(63),
+    'a'.repeat(65),
+    ' ' + 'a'.repeat(64),
+    'a'.repeat(64) + '\n',
+  ];
+  for (const key of keys) {
+    for (const value of malformed) {
+      const input = fixture();
+      input.manifest[key] = value;
+      assert.throws(() => buildV4SyntheticBundle(input), /64-character lowercase SHA-256/, key);
+      assert.equal(input.manifest[key], value);
+    }
+  }
 });
 
 test(

@@ -22,7 +22,7 @@ except ImportError:  # run from inside analysis/
     import performance_analysis_v3 as pa3  # type: ignore
     import review_codes as rc  # type: ignore
 
-__version__ = "4.0.1"
+__version__ = "4.0.2"
 EXPORT_FORMAT_VERSION_V4 = "4.0"
 POS, NEG = pa3.POS, pa3.NEG
 L1_CODES = pa3.L1_CODES
@@ -99,6 +99,18 @@ def _blank(x: Any) -> bool:
     return x is None or (isinstance(x, float) and np.isnan(x)) or str(x).strip() == ""
 
 
+def _check_manifest_hashes(manifest: Mapping[str, Any]) -> None:
+    """A supplied digest must identify content, never stand in for missing provenance."""
+    for key in (key for key in MANIFEST_KEYS_V4 if key.endswith("sha256")):
+        value = manifest[key]
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ExportError(f"manifest {key} must be a 64-character lowercase SHA-256 digest")
+    for entry in manifest["files"]:
+        value = entry.get("sha256")
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise ExportError("every manifest file sha256 must be a 64-character lowercase SHA-256 digest")
+
+
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
@@ -110,6 +122,7 @@ def load_bundle(manifest_path: str) -> Tuple[Dict[str, pd.DataFrame], Dict[str, 
     missing = [k for k in MANIFEST_KEYS_V4 if k not in manifest]
     if missing:
         raise ExportError(f"manifest lacks required v4 keys: {missing}")
+    _check_manifest_hashes(manifest)
     files = {f["role"]: f for f in manifest["files"]}
     if set(files) != FILE_ROLES or len(manifest["files"]) != len(FILE_ROLES):
         raise ExportError(f"manifest must list exactly one file for each role {sorted(FILE_ROLES)}")
@@ -138,6 +151,7 @@ def load_bundle(manifest_path: str) -> Tuple[Dict[str, pd.DataFrame], Dict[str, 
 # ---------------------------------------------------------------------------
 
 def _check_manifest(manifest: Mapping[str, Any], allow_synthetic: bool) -> None:
+    _check_manifest_hashes(manifest)
     if str(manifest["export_format_version"]) != EXPORT_FORMAT_VERSION_V4:
         raise ExportError(f"export_format_version {manifest['export_format_version']!r} is not {EXPORT_FORMAT_VERSION_V4}")
     if _blank(manifest["export_id"]):
@@ -184,6 +198,45 @@ def _check_categories(nm: str, df: pd.DataFrame, allowed: set, ext_ok: bool, all
         raise ExportError("SYNTHETIC ENGINEERING ONLY: expected fictional TESTFX case identifiers")
     if ids.str.contains(SYNTHETIC_CASE_MARK).any() and not allow_synthetic:
         raise ExportError(f"{nm}: synthetic fixture case IDs found; not study data")
+
+
+def _check_case_metadata(J: pd.DataFrame, A: pd.DataFrame, P: pd.DataFrame) -> None:
+    """Validate source metadata before joining; optional SQL NULLs compare as absent."""
+    shared = ("record_category", "unit_type", "unit_id", "nct_id", "descriptor_ui", "area")
+    # case_version is provided only by the judgment export in format 4.0. It can
+    # be checked for agreement and preserved, but cannot be compared to a frozen
+    # version that the prediction/reference files do not contain.
+    version_text = J.case_version.astype(str)
+    if not version_text.str.fullmatch(r"[0-9]+").all():
+        raise ExportError("case_version must be a nonmissing positive integer in every judgment")
+    versions = version_text.map(int)
+    if (versions < 1).any():
+        raise ExportError("case_version must be a nonmissing positive integer in every judgment")
+    if (versions.groupby(J.case_id).nunique() != 1).any():
+        raise ExportError("case_version must agree across all reviewers and levels of each case")
+    J["case_version"] = versions
+    normalized = {}
+    for name, frame, columns in (("independent_judgments", J, shared + ("descriptor_name",)),
+                                 ("adjudicated_reference", A, ("record_category",)),
+                                 ("frozen_predictions", P, shared)):
+        values = frame[list(columns)].map(lambda value: None if _blank(value) else value)
+        values["case_id"] = frame.case_id
+        for column in columns:
+            if (values.groupby("case_id")[column].nunique(dropna=False) != 1).any():
+                raise ExportError(f"{name}: {column} must stay consistent across each case's rows")
+        if "unit_type" in columns:
+            if not frame.unit_type.isin(("DESCRIPTOR_AREA", "TRIAL_AREA")).all():
+                raise ExportError(f"{name}: unit_type must identify a descriptor-area or trial-area case")
+            if frame.unit_id.map(_blank).any():
+                raise ExportError(f"{name}: unit_id must be nonblank")
+        normalized[name] = values.drop_duplicates("case_id").set_index("case_id")
+    predictions = normalized["frozen_predictions"]
+    for name, columns in (("independent_judgments", shared), ("adjudicated_reference", ("record_category",))):
+        values = normalized[name].reindex(predictions.index)
+        for column in columns:
+            left, right = values[column], predictions[column]
+            if not (left.eq(right) | (left.isna() & right.isna())).all():
+                raise ExportError(f"{name}: {column} differs from frozen prediction case metadata")
 
 
 def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any], allow_synthetic: bool = False,
@@ -237,6 +290,13 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     # ---- frozen predictions --------------------------------------------------
     if P.duplicated(["case_id", "determination_level"]).any():
         raise ExportError("duplicate case x determination level rows in the frozen predictions")
+    _check_case_metadata(J, A, P)
+    if P.frame_unit_id.map(_blank).any():
+        raise ExportError("frame_unit_id must be nonblank for every frozen prediction")
+    if (P.groupby("case_id").frame_unit_id.nunique() != 1).any():
+        raise ExportError("frame_unit_id must stay consistent across each case's determination levels")
+    if (P.groupby("frame_unit_id").case_id.nunique() != 1).any():
+        raise ExportError("frame_unit_id must identify only one case")
     if P.prediction_set_id.map(_blank).any() or P.prediction_set_id.nunique() != 1:
         raise ExportError("frozen predictions must carry one nonblank prediction_set_id")
     if set(P.tier1_version) != {manifest["tier1_version_frozen"]}:
@@ -277,7 +337,8 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     for _, group in design.groupby(["determination_level", "variance_stratum"]):
         if group._size.nunique() != 1 or group._size.iloc[0] < len(group):
             raise ExportError("variance stratum sizes must be consistent and at least the sample count")
-    passed.append("predictions: frozen hash, frozen Tier 1 version, recorded before the freeze, consistent with the mapping "
+    passed.append("predictions: matching case metadata, one case per frame unit, frozen hash and Tier 1 version, "
+                  "recorded before the freeze, consistent with the mapping "
                   "policy, provenance NO_DEVELOPMENT_FLAG, weight = 1 / probability")
 
     # ---- independent judgments ----------------------------------------------
@@ -334,10 +395,18 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
         raise ExportError("adjudicated_decision must be blank exactly when adjudication_status is UNRESOLVED_ESCALATED")
     if ((A.adjudication_basis == "NONE") != unres).any():
         raise ExportError("adjudication_basis must be NONE exactly when adjudication_status is UNRESOLVED_ESCALATED")
+    if A.adjudicator_pseudo_id.map(_blank).any():
+        raise ExportError("adjudicator_pseudo_id must be nonblank for every reference record")
     rule = A.adjudication_status == "CONCORDANT_ADOPTED_BY_RULE"
     if ((A.adjudicator_pseudo_id[rule] != RULE_ADJUDICATOR) | (A.adjudicator_role[rule] != "CONCORDANCE_RULE")).any() or \
             (A.adjudicator_pseudo_id[~rule] == RULE_ADJUDICATOR).any():
         raise ExportError("CONCORDANT_ADOPTED_BY_RULE rows, and only they, carry adjudicator RULE with role CONCORDANCE_RULE")
+    if not A.loc[~rule, "adjudicator_role"].isin(("ADJUDICATOR", "INVESTIGATOR")).all():
+        raise ExportError("non-rule adjudicator_role must be ADJUDICATOR or an explicitly exposed INVESTIGATOR")
+    investigator = A.adjudicator_role == "INVESTIGATOR"
+    if (investigator & ((A.adjudicator_exposed_to_index_labels != True) |  # noqa: E712
+                       (A.adjudication_blinded != False))).any():  # noqa: E712
+        raise ExportError("INVESTIGATOR adjudication must explicitly record exposure and cannot be blinded")
     if manifest["adjudication_scope"] == "ALL_CASE_LEVELS" and rule.any():
         raise ExportError("adjudication_scope ALL_CASE_LEVELS: every case level needs an adjudicator decision, none by rule")
     if set(A.adjudicator_pseudo_id.dropna()) & set(J.reviewer_pseudo_id.dropna()):
@@ -359,11 +428,13 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     # ---- merge into the v3 analysis layout ----------------------------------
     jrec = {(r.case_id, r.determination_level, str(r.reviewer_slot)): r for r in J.itertuples(index=False)}
     arec = {(r.case_id, r.determination_level): r for r in A.itertuples(index=False)}
+    case_versions = J.groupby("case_id").case_version.first().to_dict()
     rows = []
     for r in P.itertuples(index=False):
         key = (r.case_id, r.determination_level)
         out: Dict[str, Any] = {
-            "export_id": manifest["export_id"], "mode": "FORMAL", "is_pilot": False, "case_id": r.case_id, "case_version": 1,
+            "export_id": manifest["export_id"], "mode": "FORMAL", "is_pilot": False, "case_id": r.case_id,
+            "case_version": case_versions[r.case_id],
             "review_module": "ONTOLOGY_AREA", "unit_type": r.unit_type, "unit_id": r.unit_id, "nct_id": r.nct_id,
             "descriptor_ui": r.descriptor_ui, "area": r.area, "determination_level": r.determination_level,
             "layer": "clinical_classification", "analysis_set": "VALIDATION_HELDOUT", "record_category": r.record_category,
