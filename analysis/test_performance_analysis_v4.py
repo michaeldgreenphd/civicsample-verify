@@ -45,6 +45,18 @@ def _rehash_case_list(data, man):
     man["frozen_sample_case_list_sha256"] = pa4.case_list_sha256(data["frozen_predictions"].case_id.unique())
 
 
+def _align_adjudication_bases(data):
+    """Keep intentionally altered test judgments and reference provenance consistent."""
+    J, A = data["independent_judgments"], data["adjudicated_reference"]
+    for i, row in A.iterrows():
+        answers = J[(J.case_id == row.case_id) & (J.determination_level == row.determination_level)]
+        matches = set(answers.loc[answers.decision_effective_preclose == row.adjudicated_decision, "reviewer_slot"])
+        A.loc[i, "adjudication_basis"] = (
+            "NONE" if pd.isna(row.adjudicated_decision) else
+            "BOTH_REVIEWERS" if matches == {"1", "2"} else
+            "REVIEWER_1" if "1" in matches else "REVIEWER_2" if "2" in matches else "NEITHER")
+
+
 def _rename_case(data, old, new, category):
     for df in data.values():
         m = df.case_id == old
@@ -135,6 +147,7 @@ def test_agreement_uses_independent_judgments_not_adjudication(bundle):
     m = A.adjudication_status == "DISCORDANT_RESOLVED"
     A.loc[m, "adjudicated_decision"] = A.loc[m, "adjudicated_decision"].map(
         {"INCLUDE": "EXCLUDE", "EXCLUDE": "INCLUDE", "CONTEXT_DEPENDENT": "INCLUDE", "INSUFFICIENT_INFORMATION": "EXCLUDE"})
+    _align_adjudication_bases(d2)
     r2 = _results(d2, m2)
     assert json.dumps(pa3._jsonable(r2["reviewer_agreement"]), sort_keys=True) == \
         json.dumps(pa3._jsonable(base["reviewer_agreement"]), sort_keys=True)
@@ -151,6 +164,7 @@ def test_agreement_uses_independent_judgments_not_adjudication(bundle):
         m = (J.case_id == cid) & (J.determination_level == lvl) & (J.reviewer_slot == "2")
         J.loc[m, "decision_effective_preclose"] = new
         J.loc[m, "decision_initial"] = new
+    _align_adjudication_bases(d3)
     r3 = _results(d3, m3)
     assert json.dumps(pa3._jsonable(r3["accuracy"]), sort_keys=True) == json.dumps(pa3._jsonable(base["accuracy"]), sort_keys=True)
     assert r3["reviewer_agreement"]["ONTOLOGY_AREA|DESCRIPTOR_LEVEL"]["all_sets"] != \
@@ -161,7 +175,7 @@ def test_initial_submissions_kept_and_counted(bundle):
     data, man = _copy(bundle)
     res = _results(data, man)
     J = data["independent_judgments"]
-    J = J.assign(changed=J.decision_initial != J.decision_effective_preclose)
+    J = J.assign(changed=pd.to_numeric(J.n_revisions_preclose) > 0)
     for level, g in J.groupby("determination_level"):
         hand = int(g.groupby("case_id").changed.any().sum())
         assert res["reviewer_agreement_initial_submissions"][level]["n_case_levels_with_any_revision"] == hand
@@ -511,7 +525,8 @@ def test_single_reviewed_case_level(bundle):
     data["independent_judgments"] = J[~((J.case_id == cid) & (J.determination_level == lvl) & (J.reviewer_slot == "2"))].reset_index(drop=True)
     with pytest.raises(pa3.ExportError, match="SINGLE_REVIEW_ADJUDICATED"):
         _validate(data, man)
-    A.loc[i, ["adjudication_status", "adjudication_basis", "disagreement_reason_code"]] = ["SINGLE_REVIEW_ADJUDICATED", "REVIEWER_1", np.nan]
+    A.loc[i, ["adjudication_status", "disagreement_reason_code"]] = ["SINGLE_REVIEW_ADJUDICATED", np.nan]
+    _align_adjudication_bases(data)
     res = _results(data, man)
     ra = res["reviewer_agreement"][f"ONTOLOGY_AREA|{lvl}"]
     assert ra["n_single_reviewed_excluded"] == 1

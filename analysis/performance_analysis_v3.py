@@ -21,7 +21,7 @@ except ImportError:  # run from inside analysis/
     import agreement_metrics as am  # type: ignore
     import review_codes as rc  # type: ignore
 
-__version__ = "3.0.0"
+__version__ = "3.0.1"
 EXPORT_FORMAT_VERSION_V3 = "3.0"
 
 POS, NEG = "INCLUDE", "EXCLUDE"
@@ -424,10 +424,12 @@ def classifier_vs_reference(df: pd.DataFrame, level: str = "DESCRIPTOR_LEVEL", a
            "reference_counts": ref_counts,
            "original_technical": _binary_metrics_block(d.original_binary.tolist(), ref, w, s, sizes),
            "curated_v11": _binary_metrics_block(d.curated_v11_binary.tolist(), ref, w, s, sizes)}
-    # four-category exact match of the curated status (descriptive): INSUFFICIENT_EVIDENCE maps to INSUFFICIENT_INFORMATION
-    cur4 = d.curated_v11_status_raw.replace({"INSUFFICIENT_EVIDENCE": "INSUFFICIENT_INFORMATION", "NOT_IN_DECISION_FILE": "EXCLUDE"})
-    ok = d.adjudicated_decision.notna()
-    res["curated_v11_four_category_exact_match"] = am.exact_match_accuracy(cur4[ok].tolist(), d.adjudicated_decision[ok].tolist())
+    # The raw status describes the descriptor stage, even on trial rows. Trial
+    # accuracy uses the frozen trial binary above; it cannot use this four-category statistic.
+    if level != "TRIAL_LEVEL":
+        cur4 = d.curated_v11_status_raw.replace({"INSUFFICIENT_EVIDENCE": "INSUFFICIENT_INFORMATION", "NOT_IN_DECISION_FILE": "EXCLUDE"})
+        ok = d.adjudicated_decision.notna()
+        res["curated_v11_four_category_exact_match"] = am.exact_match_accuracy(cur4[ok].tolist(), d.adjudicated_decision[ok].tolist())
     return res
 
 

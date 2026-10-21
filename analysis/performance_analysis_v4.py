@@ -22,7 +22,7 @@ except ImportError:  # run from inside analysis/
     import performance_analysis_v3 as pa3  # type: ignore
     import review_codes as rc  # type: ignore
 
-__version__ = "4.0.0"
+__version__ = "4.0.1"
 EXPORT_FORMAT_VERSION_V4 = "4.0"
 POS, NEG = pa3.POS, pa3.NEG
 L1_CODES = pa3.L1_CODES
@@ -140,6 +140,8 @@ def load_bundle(manifest_path: str) -> Tuple[Dict[str, pd.DataFrame], Dict[str, 
 def _check_manifest(manifest: Mapping[str, Any], allow_synthetic: bool) -> None:
     if str(manifest["export_format_version"]) != EXPORT_FORMAT_VERSION_V4:
         raise ExportError(f"export_format_version {manifest['export_format_version']!r} is not {EXPORT_FORMAT_VERSION_V4}")
+    if _blank(manifest["export_id"]):
+        raise ExportError("manifest export_id must be nonblank")
     if manifest["mode"] != "FORMAL":
         raise ExportError("only FORMAL bundles are analysed; PILOT and CALIBRATION data never enter any statistic")
     if manifest["review_module"] != "ONTOLOGY_AREA":
@@ -207,7 +209,12 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
         bad = set(df.determination_level) - LEVELS_V4
         if bad:
             raise ExportError(f"{nm} has unknown determination levels: {sorted(bad)}")
-    passed.append("columns: every required v4 column present in the three files; determination levels known")
+    for nm, df in (("independent_judgments", J), ("adjudicated_reference", A)):
+        if not df.export_id.eq(manifest["export_id"]).fillna(False).all():
+            raise ExportError(f"{nm}: every export_id must match the manifest export_id")
+    if not J.review_module.eq(manifest["review_module"]).fillna(False).all():
+        raise ExportError("independent_judgments: every review_module must match the manifest review_module")
+    passed.append("columns: every required v4 column present; determination levels known; export IDs and review module match manifest")
 
     # ---- record categories and identifier prefixes --------------------------
     ext_ok = manifest["extension_approved_by_amendment"] is True and not _blank(manifest.get("amendment_id"))
@@ -230,6 +237,8 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     # ---- frozen predictions --------------------------------------------------
     if P.duplicated(["case_id", "determination_level"]).any():
         raise ExportError("duplicate case x determination level rows in the frozen predictions")
+    if P.prediction_set_id.map(_blank).any() or P.prediction_set_id.nunique() != 1:
+        raise ExportError("frozen predictions must carry one nonblank prediction_set_id")
     if set(P.tier1_version) != {manifest["tier1_version_frozen"]}:
         raise ExportError(f"predictions carry Tier 1 versions {sorted(set(P.tier1_version))}; "
                           f"the frozen version is {manifest['tier1_version_frozen']}")
@@ -288,6 +297,10 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     nrev = pd.to_numeric(J.n_revisions_preclose, errors="coerce")
     if nrev.isna().any() or (nrev < 0).any() or (nrev % 1 != 0).any():
         raise ExportError("n_revisions_preclose must be a non-negative integer")
+    J["n_revisions_preclose"] = nrev.astype(int)
+    J["uncertain"] = _bool_col(J.uncertain)
+    if J.uncertain.isna().any():
+        raise ExportError("uncertain must be an explicit boolean for every submitted judgment")
     if ((J.decision_initial != J.decision_effective_preclose) & (nrev == 0)).any():
         raise ExportError("a judgment changed between the initial and effective answer but records no revision")
     opened_at, closed_at = _ts(manifest["formal_phase_opened_at"]), _ts(manifest["formal_phase_closed_at"])
@@ -303,6 +316,8 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     # ---- adjudicated reference ----------------------------------------------
     for c in ("adjudication_blinded", "adjudicator_exposed_to_index_labels", "post_unblinding_revision_exists"):
         A[c] = _bool_col(A[c])
+        if A[c].isna().any():
+            raise ExportError(f"{c} must be an explicit boolean for every adjudication")
     if A.duplicated(["case_id", "determination_level"]).any():
         raise ExportError("more than one primary adjudication per case level (the primary reference is the last blinded adjudication)")
     bad = set(A.adjudicated_decision.dropna().astype(str)) - set(L1_CODES)
@@ -317,6 +332,8 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     unres = A.adjudication_status == "UNRESOLVED_ESCALATED"
     if (A.adjudicated_decision[unres].notna()).any() or (A.adjudicated_decision[~unres].isna()).any():
         raise ExportError("adjudicated_decision must be blank exactly when adjudication_status is UNRESOLVED_ESCALATED")
+    if ((A.adjudication_basis == "NONE") != unres).any():
+        raise ExportError("adjudication_basis must be NONE exactly when adjudication_status is UNRESOLVED_ESCALATED")
     rule = A.adjudication_status == "CONCORDANT_ADOPTED_BY_RULE"
     if ((A.adjudicator_pseudo_id[rule] != RULE_ADJUDICATOR) | (A.adjudicator_role[rule] != "CONCORDANCE_RULE")).any() or \
             (A.adjudicator_pseudo_id[~rule] == RULE_ADJUDICATOR).any():
@@ -362,7 +379,8 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
             out[f"reviewer_{slot}_pseudo_id"] = None if j is None else j.reviewer_pseudo_id
             out[f"reviewer_{slot}_decision"] = None if j is None else j.decision_effective_preclose
             out[f"reviewer_{slot}_decision_initial"] = None if j is None else j.decision_initial
-            out[f"reviewer_{slot}_uncertain"] = None if j is None else pa3._as_bool(j.uncertain)
+            out[f"reviewer_{slot}_uncertain"] = None if j is None else j.uncertain
+            out[f"reviewer_{slot}_n_revisions_preclose"] = None if j is None else j.n_revisions_preclose
             if j is not None:
                 eff.append(j.decision_effective_preclose)
         out["double_reviewed"] = len(eff) == 2
@@ -394,10 +412,27 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     by_rule = st == "CONCORDANT_ADOPTED_BY_RULE"
     if (M.loc[by_rule, "adjudicated_decision"] != M.loc[by_rule, "reviewer_1_decision"]).any():
         raise ExportError("a CONCORDANT_ADOPTED_BY_RULE reference differs from the reviewers' shared answer")
+    same_reference = M.adjudicated_decision == M.reviewer_1_decision
+    if ((st == "CONCORDANT_CONFIRMED") & ~same_reference).any():
+        raise ExportError("a CONCORDANT_CONFIRMED reference must equal the reviewers' shared answer")
+    if ((st == "CONCORDANT_REVISED") & same_reference).any():
+        raise ExportError("a CONCORDANT_REVISED reference must differ from the reviewers' shared answer")
+    for slot in ("1", "2"):
+        adopted = M.adjudication_basis == f"REVIEWER_{slot}"
+        decision = M[f"reviewer_{slot}_decision"]
+        if (adopted & (decision.isna() | (M.adjudicated_decision != decision))).any():
+            raise ExportError(f"adjudication_basis REVIEWER_{slot} must adopt that reviewer's submitted decision")
+    both = M.adjudication_basis == "BOTH_REVIEWERS"
+    if (both & (~agree | ~same_reference)).any():
+        raise ExportError("adjudication_basis BOTH_REVIEWERS must adopt both reviewers' shared decision")
+    neither = M.adjudication_basis == "NEITHER"
+    if (neither & ((M.adjudicated_decision == M.reviewer_1_decision) |
+                   (M.adjudicated_decision == M.reviewer_2_decision))).any():
+        raise ExportError("adjudication_basis NEITHER must differ from every submitted reviewer decision")
     if manifest["adjudication_scope"] == "DISAGREEMENTS_ONLY" and (agree & ~by_rule).any():
         raise ExportError("adjudication_scope DISAGREEMENTS_ONLY: concordant case levels enter the reference by rule only")
     passed.append("merge: judgments, adjudications and predictions joined one to one per case level; reason codes valid; "
-                  "adjudication status consistent with reviewer agreement and the adjudication scope")
+                  "adjudication status and basis consistent with reviewer decisions and the adjudication scope")
     return M, passed
 
 
@@ -410,10 +445,11 @@ def initial_submission_agreement(M: pd.DataFrame) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     for level, g in M.groupby("determination_level"):
         r1i, r2i = g.reviewer_1_decision_initial.fillna(""), g.reviewer_2_decision_initial.fillna("")
-        r1e, r2e = g.reviewer_1_decision.fillna(""), g.reviewer_2_decision.fillna("")
+        revised = ((g.reviewer_1_n_revisions_preclose.fillna(0) > 0) |
+                   (g.reviewer_2_n_revisions_preclose.fillna(0) > 0))
         dr = g[(r1i != "") & (r2i != "")]
         entry: Dict[str, Any] = {"n_double_reviewed": int(len(dr)),
-                                 "n_case_levels_with_any_revision": int(((r1i != r1e) | (r2i != r2e)).sum())}
+                                 "n_case_levels_with_any_revision": int(revised.sum())}
         if len(dr):
             entry["initial_submissions"] = am.agreement_summary(dr.reviewer_1_decision_initial, dr.reviewer_2_decision_initial, L1_CODES)
         out[level] = entry
