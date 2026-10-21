@@ -1,0 +1,180 @@
+import { execFileSync } from 'node:child_process';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+import { extname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const excluded = new Set([
+  '.git',
+  'node_modules',
+  '.next',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.pytest_cache',
+  'test-results',
+  'playwright-report',
+  'coverage',
+  '.data',
+  '.local',
+]);
+/** @type {Array<[string, RegExp]>} */
+const rules = [
+  ['registry identifier', /\bNCT\d{8}\b/i],
+  ['non-fixture held-out identifier', /\bHO4R?-(?!TESTFX(?:-|\b))[A-Z0-9]{2,}(?:-[A-Z0-9]+)*/i],
+  [
+    'private source archive',
+    new RegExp(['claude', 'code', 'handoff'].join('_') + '(?:_v\\d+)?\\.zip', 'i'),
+  ],
+  [
+    'private source filename',
+    /(?:PACKAGE_MANIFEST_v\d+|FROZEN_VERSIONS|reviewer_rubric_redaction_report(?:_v\d+)?|finding_v\d+_\d+_probe|v3_regression_results_with_0003)\.(?:csv|json)/i,
+  ],
+  [
+    'private source location',
+    new RegExp(
+      '(?:/Users/[^\\s"\']+/(?:Library/CloudStorage|One' + 'Drive)|Revision_' + '\\d{8}/)',
+      'i',
+    ),
+  ],
+  ['private key', /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/],
+  [
+    'access credential',
+    /\b(?:AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|sk-[A-Za-z0-9]{24,})\b/,
+  ],
+  ['encoded credential', /\beyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\b/],
+];
+
+/** Never includes matched content in diagnostics. Also scans prospective, untracked source files. */
+export function scanRepository(root) {
+  root = resolve(root);
+  const paths = new Set();
+  const findings = [];
+  const addFinding = (name, rule, source) => {
+    // A forbidden identifier can occur in a filename as well as a file body.
+    const safeName = rules.some(([, pattern]) => pattern.test(name)) ? '[redacted path]' : name;
+    findings.push({ file: safeName, rule, source });
+  };
+  const inspect = (name, content, source) => {
+    if (/^\.env(?:\.|$)/.test(name.split('/').at(-1)) && !name.endsWith('.example'))
+      addFinding(name, 'environment secrets file', source);
+    if (
+      ['.zip', '.xlsx', '.xls', '.sqlite', '.db', '.docx', '.pdf'].includes(
+        extname(name).toLowerCase(),
+      )
+    ) {
+      addFinding(name, 'unreviewed private-data capable binary', source);
+      return;
+    }
+    for (const [rule, pattern] of rules)
+      if (pattern.test(name) || pattern.test(content)) addFinding(name, rule, source);
+    if (/\.(?:csv|jsonl)$/i.test(name) && !/synthetic|TESTFX|SYN-/i.test(content))
+      addFinding(name, 'unmarked tabular data', source);
+  };
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (excluded.has(entry.name)) continue;
+      const path = join(dir, entry.name);
+      if (entry.name === '.env.local') {
+        // setup creates this local runtime secret. A tracked copy is still scanned below.
+        try {
+          execFileSync('git', ['check-ignore', '-q', '--', path], { cwd: root, stdio: 'ignore' });
+          continue;
+        } catch {
+          /* Unignored secrets are prospective source. */
+        }
+      }
+      if (entry.isDirectory()) walk(path);
+      else paths.add(path);
+    }
+  };
+  walk(root);
+  let inRepository = false;
+  try {
+    inRepository =
+      execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim() === 'true';
+  } catch {
+    /* Temporary test fixtures need not be git repositories. */
+  }
+  if (inRepository) {
+    try {
+      // Scan the actual indexed objects, not merely their current working-tree paths.
+      // NUL records and the first tab preserve spaces, tabs and newlines in filenames.
+      const records = execFileSync('git', ['ls-files', '--stage', '-z'], {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      for (const record of records.split('\0').filter(Boolean)) {
+        const separator = record.indexOf('\t');
+        const metadata = record.slice(0, separator).split(' ');
+        const [mode, objectId, stage] = metadata;
+        const name = record.slice(separator + 1);
+        if (
+          separator < 0 ||
+          !/^[0-7]{6}$/.test(mode) ||
+          !/^[a-f0-9]{40,64}$/.test(objectId) ||
+          !/^[0-3]$/.test(stage)
+        ) {
+          addFinding('[git index]', 'unreadable index entry', 'index');
+          continue;
+        }
+        paths.add(join(root, name));
+        if (name.split('/').some((part) => excluded.has(part)))
+          addFinding(name, 'excluded runtime path staged in index', 'index');
+        if (stage !== '0') addFinding(name, 'unresolved index conflict', 'index');
+        if (mode === '120000') {
+          addFinding(name, 'symlink requires explicit review', 'index');
+          continue;
+        }
+        if (mode !== '100644' && mode !== '100755') {
+          addFinding(name, 'non-file index entry requires explicit review', 'index');
+          continue;
+        }
+        try {
+          const content = execFileSync('git', ['cat-file', 'blob', objectId], {
+            cwd: root,
+            maxBuffer: 64 * 1024 * 1024,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          }).toString('utf8');
+          inspect(name, content, 'index');
+        } catch {
+          addFinding(name, 'indexed blob could not be scanned', 'index');
+        }
+      }
+    } catch {
+      addFinding('[git index]', 'Git index could not be scanned', 'index');
+    }
+  }
+  for (const path of [...paths].sort()) {
+    const name = relative(root, path);
+    let stat;
+    try {
+      stat = lstatSync(path);
+    } catch {
+      continue;
+    }
+    if (stat.isSymbolicLink()) {
+      addFinding(name, 'symlink requires explicit review', 'working-tree');
+      continue;
+    }
+    if (!stat.isFile()) continue;
+    inspect(name, readFileSync(path).toString('utf8'), 'working-tree');
+  }
+  return findings;
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const findings = scanRepository(process.argv[2] || process.cwd());
+  for (const finding of findings)
+    console.error(`[${finding.source}] ${finding.file}: ${finding.rule}`);
+  if (findings.length) process.exitCode = 1;
+  else
+    console.log(
+      'Synthetic fixture / source leakage scan passed. Heuristic scan; manual review remains required.',
+    );
+}

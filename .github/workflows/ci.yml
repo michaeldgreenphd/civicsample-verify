@@ -1,0 +1,47 @@
+name: Synthetic verification
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run test:handoff
+      - name: Seed synthetic runtime-file packaging probe
+        run: node -e "const fs=require('node:fs'); fs.mkdirSync('.local/pglite',{recursive:true}); fs.writeFileSync('.local/pglite/SYNTHETIC-TRACE-PROBE','Synthetic packaging regression only');"
+      - run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:production
+      - run: npm audit --audit-level=high
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: analysis/requirements.txt
+      - run: python -m pip install -r analysis/requirements.txt
+      - run: python -m pytest -q analysis
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test tests/formal-export.test.ts
+        env:
+          VERIFY_ANALYSIS_PYTHON: python3
