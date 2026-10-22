@@ -464,3 +464,42 @@ def test_missing_comparison_cell_on_only_one_trial_level_is_inconsistent(bundle,
     P.loc[row, "comparison_cell"] = None
     with pytest.raises(pa4.ExportError, match="comparison_cell must stay consistent"):
         validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+@pytest.mark.parametrize("bad_flag", [None, "", "false", "true", 0, 1])
+def test_manifest_extension_flag_requires_explicit_boolean(bundle, bad_flag):
+    bundle[1]["extension_approved_by_amendment"] = bad_flag
+    with pytest.raises(pa4.ExportError, match="extension_approved_by_amendment must be an explicit boolean"):
+        validate(bundle)
+
+
+def test_manifest_unapproved_extension_rejects_nonblank_amendment_id(bundle):
+    bundle[1]["extension_approved_by_amendment"] = False
+    bundle[1]["amendment_id"] = "AMD4-TESTFX-UNAPPROVED"
+    with pytest.raises(pa4.ExportError, match="amendment_id must be blank when extension_approved_by_amendment is false"):
+        validate(bundle)
+
+
+def test_manifest_approved_extension_requires_extension_records(bundle):
+    bundle[1]["extension_approved_by_amendment"] = True
+    bundle[1]["amendment_id"] = "AMD4-TESTFX-EMPTY"
+    with pytest.raises(pa4.ExportError, match="no HELDOUT_EXTENSION_APPROVED records are present"):
+        validate(bundle)
+
+
+def test_rehashed_descriptor_case_cannot_carry_trial_nct_id(bundle, tmp_path):
+    J, P = bundle[0]["independent_judgments"], bundle[0]["frozen_predictions"]
+    case = P.loc[P.unit_type == "DESCRIPTOR_AREA", "case_id"].iloc[0]
+    J.loc[J.case_id == case, "nct_id"] = "SYN-NCT-9999"
+    P.loc[P.case_id == case, "nct_id"] = "SYN-NCT-9999"
+    with pytest.raises(pa4.ExportError, match="nct_id must be nonblank if and only if unit_type is TRIAL_AREA"):
+        validate(write_rehashed_bundle(tmp_path, bundle))
+
+
+def test_rehashed_trial_case_requires_nonblank_nct_id(bundle, tmp_path):
+    J, P = bundle[0]["independent_judgments"], bundle[0]["frozen_predictions"]
+    case = P.loc[P.unit_type == "TRIAL_AREA", "case_id"].iloc[0]
+    J.loc[J.case_id == case, "nct_id"] = ""
+    P.loc[P.case_id == case, "nct_id"] = ""
+    with pytest.raises(pa4.ExportError, match="nct_id must be nonblank if and only if unit_type is TRIAL_AREA"):
+        validate(write_rehashed_bundle(tmp_path, bundle))

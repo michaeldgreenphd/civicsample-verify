@@ -171,6 +171,12 @@ def _check_manifest(manifest: Mapping[str, Any], allow_synthetic: bool) -> None:
         raise ExportError(f"tier1_version_frozen must be one of {sorted(TIER1_VERSIONS)}")
     if manifest["adjudication_scope"] not in ADJUDICATION_SCOPES:
         raise ExportError(f"adjudication_scope must be one of {sorted(ADJUDICATION_SCOPES)}")
+    if not isinstance(manifest.get("extension_approved_by_amendment"), bool):
+        raise ExportError("extension_approved_by_amendment must be an explicit boolean")
+    if manifest["extension_approved_by_amendment"] is True and _blank(manifest.get("amendment_id")):
+        raise ExportError("amendment_id must be nonblank when extension_approved_by_amendment is true")
+    if manifest["extension_approved_by_amendment"] is False and not _blank(manifest.get("amendment_id")):
+        raise ExportError("amendment_id must be blank when extension_approved_by_amendment is false")
 
 
 def _check_categories(nm: str, df: pd.DataFrame, allowed: set, ext_ok: bool, allow_synthetic: bool) -> None:
@@ -238,6 +244,16 @@ def _check_case_metadata(J: pd.DataFrame, A: pd.DataFrame, P: pd.DataFrame) -> N
             left, right = values[column], predictions[column]
             if not (left.eq(right) | (left.isna() & right.isna())).all():
                 raise ExportError(f"{name}: {column} differs from frozen prediction case metadata")
+    is_trial = P.unit_type == "TRIAL_AREA"
+    nct_blank = P.nct_id.map(_blank)
+    if (is_trial & nct_blank).any() or (~is_trial & ~nct_blank).any():
+        raise ExportError("frozen_predictions: nct_id must be nonblank if and only if unit_type is TRIAL_AREA")
+    for cid, group in P.groupby("case_id"):
+        ut = group.unit_type.iloc[0]
+        lvls = set(group.determination_level.astype(str))
+        expected_lvls = {"DESCRIPTOR_LEVEL_IN_TRIAL_CASE", "TRIAL_LEVEL"} if ut == "TRIAL_AREA" else {"DESCRIPTOR_LEVEL"}
+        if lvls != expected_lvls:
+            raise ExportError(f"frozen_predictions: case {cid} with unit_type {ut} must have determination levels {sorted(expected_lvls)}, found {sorted(lvls)}")
 
 
 def _check_case_sampling(P: pd.DataFrame) -> None:
@@ -299,6 +315,8 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     allowed = {"HELDOUT_FORMAL"} | ({"HELDOUT_EXTENSION_APPROVED"} if ext_ok else set())
     for nm, df in (("independent_judgments", J), ("adjudicated_reference", A), ("frozen_predictions", P)):
         _check_categories(nm, df, allowed, ext_ok, allow_synthetic)
+    if ext_ok and not (P.record_category == "HELDOUT_EXTENSION_APPROVED").any():
+        raise ExportError("extension_approved_by_amendment is true, but no HELDOUT_EXTENSION_APPROVED records are present")
     passed.append("record categories: only held-out formal records (plus an amendment-approved extension, if any); prefixes match")
 
     # ---- case lists ----------------------------------------------------------
