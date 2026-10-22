@@ -21,6 +21,7 @@ const sqlInputs = new Set([
   'migrations/0013_v5_independent_finality_guards.sql',
   'migrations/0014_legacy_pilot_and_packet_guards.sql',
   'migrations/0015_v5_review_fixes.sql',
+  'migrations/0016_mapping_confirmation.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {

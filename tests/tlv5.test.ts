@@ -228,12 +228,13 @@ test('design v5 lifecycle: pilot, sign-off, activation, training, synthetic form
       'select version from public.app_schema_version order by applied_at',
     )
   ).rows.map((r) => r.version);
-  assert.deepEqual(versions.slice(-5), [
+  assert.deepEqual(versions.slice(-6), [
     '5.0.0',
     '5.1.0',
     '5.1.1-independent-finality',
     '5.1.2-legacy-pilot-packet-guards',
     '5.1.3-v5-review-fixes',
+    '6.0.0-mapping-confirmation',
   ]);
   assert.equal(versions.includes('4.0.7-investigator-judgment-boundary'), true);
 

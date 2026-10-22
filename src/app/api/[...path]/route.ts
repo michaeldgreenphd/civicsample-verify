@@ -15,6 +15,10 @@ import { buildPilotExport } from '@/lib/export';
 import { authorSyntheticPilotCase, evaluateApprovalGates } from '@/server/admin-workflows';
 import * as service from '@/server/service';
 import * as tlv5 from '@/server/tlv5';
+import * as mapconf from '@/server/mapconf';
+import { mcManifestText } from '@/lib/mapconf-export';
+import { MC_RUBRIC, MC_RUBRIC_VERSION, renderMcRubric } from '@/lib/mapconf-types';
+import { mcAdjudicationSchema, mcAdminSchema, mcSubmissionSchema } from '@/lib/mapconf-validation';
 import { manifestText } from '@/lib/tlv5-export';
 import { renderRubric, TLV5_RUBRIC, TLV5_RUBRIC_VERSION } from '@/lib/tlv5-codes';
 import {
@@ -75,7 +79,9 @@ async function handle(request: Request) {
     }
     const actor = requireActor(request);
     if (
-      (path.startsWith('/api/admin/') || path.startsWith('/api/tlv5/admin/')) &&
+      (path.startsWith('/api/admin/') ||
+        path.startsWith('/api/tlv5/admin/') ||
+        path.startsWith('/api/mc/admin/')) &&
       actor.role !== 'INVESTIGATOR'
     )
       throw new HttpError(403, 'This action requires an investigator account.');
@@ -141,6 +147,50 @@ async function handle(request: Request) {
           await tlv5.submitTlv5(actor, id, tlv5SubmissionSchema.parse(await body(request))),
         );
     }
+    // Mapping confirmation (visible existing assignment): separate routes, same session rules.
+    if (path === '/api/mc/workspace' && request.method === 'GET')
+      return json(await mapconf.getMcWorkspace(actor));
+    if (path === '/api/mc/rubric' && request.method === 'GET')
+      return json({ version: MC_RUBRIC_VERSION, sections: MC_RUBRIC, text: renderMcRubric() });
+    if (path === '/api/mc/adjudicate' && request.method === 'POST')
+      return json(
+        await mapconf.recordMcAdjudication(actor, mcAdjudicationSchema.parse(await body(request))),
+      );
+    if (path === '/api/mc/admin/action' && request.method === 'POST')
+      return json(await mapconf.mcAdminAction(actor, mcAdminSchema.parse(await body(request))));
+    const mcExport = /^\/api\/mc\/admin\/export(?:\/([a-z0-9_.]+\.(?:csv|json)))?$/.exec(path);
+    if (mcExport && request.method === 'GET') {
+      const bundle = await mapconf.exportMcBundle(actor);
+      if (!mcExport[1]) return json(bundle);
+      const file =
+        mcExport[1] === bundle.manifestName
+          ? { name: bundle.manifestName, content: mcManifestText(bundle), type: 'application/json' }
+          : bundle.files
+              .filter((f) => f.name === mcExport[1])
+              .map((f) => ({ name: f.name, content: f.content, type: 'text/csv' }))[0];
+      if (!file) throw new HttpError(404, 'Resource not available.');
+      return new Response(file.content, {
+        status: 200,
+        headers: {
+          ...jsonHeaders,
+          'Content-Type': `${file.type}; charset=utf-8`,
+          'Content-Disposition': `attachment; filename="${file.name}"`,
+        },
+      });
+    }
+    const mcAssignment = /^\/api\/mc\/assignments\/([0-9a-f-]{36})(?:\/(submit))?$/.exec(path);
+    if (mcAssignment) {
+      const [, id, action] = mcAssignment;
+      if (request.method === 'GET' && !action)
+        return json(await mapconf.getMcReviewerCase(actor, id));
+      if (request.method === 'POST' && action === 'submit')
+        return json(
+          await mapconf.submitMc(actor, id, mcSubmissionSchema.parse(await body(request))),
+        );
+    }
+    const mcCase = /^\/api\/mc\/cases\/(MC-[A-Z]{3,4}-[A-Z0-9][A-Z0-9-]{1,40})$/.exec(path);
+    if (mcCase && request.method === 'GET')
+      return json(await mapconf.getMcAdjudicatorCase(actor, mcCase[1]));
     const match = /^\/api\/cases\/(SYN-[0-9]{3})(?:\/(draft|submit|step1|adjudicate))?$/.exec(path);
     if (match) {
       const [, caseId, action] = match;
