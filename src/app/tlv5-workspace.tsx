@@ -465,8 +465,11 @@ function TrialForm({
           )}
           {locked && (
             <div className="notice locked-notice">
-              <strong>Submissions are closed for this trial.</strong> Your recorded answers are
-              shown read-only.
+              <strong>Submissions are closed for this trial.</strong>{' '}
+              {detail.rubricMismatch
+                ? 'The rubric text changed since this review began; the investigator must reconcile the rubric before review activity continues. '
+                : ''}
+              Your recorded answers are shown read-only.
             </div>
           )}
           <div className="section-label">
@@ -822,9 +825,9 @@ function AdjudicationCase({
     : [];
   const details = DETAIL_CODES[`${item}/${decision}`];
   // Under DISAGREEMENTS_ONLY a concordant item enters the reference by rule and the database refuses
-  // an explicit adjudication, so it is not offered; under ALL_CASE_LEVELS every item is adjudicated.
+  // an explicit adjudication, so it is not offered; under ALL_ITEMS every item is adjudicated.
   const adjudicable = (row: Tlv5QueueRow) =>
-    !row.adjudicated && (detail.adjudicationScope === 'ALL_CASE_LEVELS' || row.needsAdjudication);
+    !row.adjudicated && (detail.adjudicationScope === 'ALL_ITEMS' || row.needsAdjudication);
   const selectedRow = detail.items.find((row) => row.itemCode === item);
   // The basis names whose latest answer (and detail code) the decision adopts; the database checks
   // the same rule (migration 0015), so only consistent choices are offered.
@@ -955,7 +958,7 @@ function AdjudicationCase({
                         ? ' (locked)'
                         : row.needsAdjudication
                           ? ' (needs adjudication)'
-                          : detail.adjudicationScope === 'ALL_CASE_LEVELS'
+                          : detail.adjudicationScope === 'ALL_ITEMS'
                             ? ' (concordant)'
                             : ' (by rule; not adjudicated)'}
                     </option>

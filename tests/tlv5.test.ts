@@ -228,12 +228,13 @@ test('design v5 lifecycle: pilot, sign-off, activation, training, synthetic form
       'select version from public.app_schema_version order by applied_at',
     )
   ).rows.map((r) => r.version);
-  assert.deepEqual(versions.slice(-6), [
+  assert.deepEqual(versions.slice(-7), [
     '5.0.0',
     '5.1.0',
     '5.1.1-independent-finality',
     '5.1.2-legacy-pilot-packet-guards',
     '5.1.3-v5-review-fixes',
+    '5.1.4-v5-rubric-binding',
     '6.0.0-mapping-confirmation',
   ]);
   assert.equal(versions.includes('4.0.7-investigator-judgment-boundary'), true);
@@ -687,6 +688,32 @@ test('design v5 lifecycle: pilot, sign-off, activation, training, synthetic form
     true,
     'calibration is open before the freeze',
   );
+  // Rubric binding (migration 0017): a mode whose first review activity recorded a different
+  // rubric refuses later activity under the runtime rubric instead of mixing instructions.
+  await withActor(investigator, (tx) =>
+    tx.query("select public.rpc_tlv5_bind_rubric('CALIBRATION', 'REVIEW_RUBRIC_SUPERSEDED', $1)", [
+      'f'.repeat(64),
+    ]),
+  );
+  const drifted = await getTlv5ReviewerCase(stagingOne, 'CAL5-TESTFX-01');
+  assert.equal(drifted.rubricMismatch, true);
+  assert.equal(drifted.submissionsOpen, false, 'a drifted rubric closes the form');
+  await denied(
+    submitTlv5(
+      stagingOne,
+      'CAL5-TESTFX-01',
+      submission(answers({ areas: ['ONCOLOGY'], rows: ['CAN_ALL'] })),
+    ),
+    409,
+  );
+  // The pilot binding was fixed by the first pilot submission and matches the runtime rubric.
+  const pilotBinding = await withActor(investigator, (tx) =>
+    tx.query<{ rubric_sha256: string; rubric_version: string }>(
+      "select rubric_sha256, rubric_version from public.tlv5_rubric_bindings where mode = 'PILOT'",
+    ),
+  );
+  assert.equal(pilotBinding.rows[0]?.rubric_sha256, rubricSha256());
+  assert.equal(pilotBundle.manifest.rubric_sha256, rubricSha256());
   await freezeTlv5(investigator, {
     labelFileSha256: 'a'.repeat(64),
     frozenItems: { label_file: 'a'.repeat(64), rubric: rubricSha256() },
