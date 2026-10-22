@@ -82,7 +82,7 @@ test(
         ),
         /ADJUDICATOR role is needed/,
       );
-      await assert.rejects(phase('LOCKED'), /disagreeing mappings have no adjudication/);
+      await assert.rejects(phase('LOCKED'), /disagreeing .*mappings have no adjudication/);
       await guardActor(db, 'adjudicator', () =>
         db.query('select public.rpc_mc_adjudicate($1::jsonb)', [
           JSON.stringify(mcGuardAdjudication),
