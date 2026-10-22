@@ -16,7 +16,7 @@
  "formal_phase_closed_at": "2026-11-21T17:00:00Z",
  "formal_phase_status": "CLOSED_INCOMPLETE",
  "snapshot_taken_at": "2026-11-21T17:30:00Z",
- "snapshot_sha256": "5b77343bd881a4f425bde1ec9979946ec1add11de02010d4c63159977bac4de8",
+ "snapshot_sha256": "90579c76be8b5b9849b5ebed3d62dc493a0a6a90b45c74e7d2ba63858c779c2b",
  "snapshot_rows": 1463,
  "reference_locked": true,
  "reference_lock_id": "00000000-0000-4000-8000-00000000c0de",

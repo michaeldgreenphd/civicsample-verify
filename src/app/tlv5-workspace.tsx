@@ -27,6 +27,7 @@ import type {
   Tlv5ItemInput,
   Tlv5Mode,
   Tlv5QueueItem,
+  Tlv5QueueRow,
   Tlv5ReviewerCase,
   Tlv5ReviewerWorkspace,
   Tlv5TrialPacket,
@@ -464,8 +465,11 @@ function TrialForm({
           )}
           {locked && (
             <div className="notice locked-notice">
-              <strong>Submissions are closed for this trial.</strong> Your recorded answers are
-              shown read-only.
+              <strong>Submissions are closed for this trial.</strong>{' '}
+              {detail.rubricMismatch
+                ? 'The rubric text changed since this review began; the investigator must reconcile the rubric before review activity continues. '
+                : ''}
+              Your recorded answers are shown read-only.
             </div>
           )}
           <div className="section-label">
@@ -771,6 +775,10 @@ function AdjudicationCase({
       setError('Select an item and give a rationale.');
       return;
     }
+    if (status !== 'UNRESOLVED_ESCALATED' && !effectiveBasis) {
+      setError('Select a decision; the basis follows from the reviewer answers it adopts.');
+      return;
+    }
     setBusy(true);
     try {
       await api('/api/tlv5/adjudicate', {
@@ -781,7 +789,7 @@ function AdjudicationCase({
           decision: status === 'UNRESOLVED_ESCALATED' ? null : decision,
           ...(detailCode ? { detailCode } : {}),
           status,
-          basis: status === 'UNRESOLVED_ESCALATED' ? 'NONE' : basis,
+          basis: status === 'UNRESOLVED_ESCALATED' ? 'NONE' : effectiveBasis,
           rationale: rationale.trim(),
           ...(reason ? { disagreementReasonCode: reason } : {}),
         }),
@@ -816,6 +824,31 @@ function AdjudicationCase({
     ? [...(SCALES[family] ?? []), ...(family.startsWith('SG_') ? ['NOT_APPLICABLE'] : [])]
     : [];
   const details = DETAIL_CODES[`${item}/${decision}`];
+  // Under DISAGREEMENTS_ONLY a concordant item enters the reference by rule and the database refuses
+  // an explicit adjudication, so it is not offered; under ALL_ITEMS every item is adjudicated.
+  const adjudicable = (row: Tlv5QueueRow) =>
+    !row.adjudicated && (detail.adjudicationScope === 'ALL_ITEMS' || row.needsAdjudication);
+  const selectedRow = detail.items.find((row) => row.itemCode === item);
+  // The basis names whose latest answer (and detail code) the decision adopts; the database checks
+  // the same rule (migration 0015), so only consistent choices are offered.
+  const matches = (answer: string | null, detailValue: string | null) =>
+    answer !== null && answer === decision && (detailValue ?? '') === (detailCode || '');
+  const validBases =
+    selectedRow && decision
+      ? [
+          matches(selectedRow.reviewer1Answer, selectedRow.reviewer1Detail) ? 'REVIEWER_1' : null,
+          matches(selectedRow.reviewer2Answer, selectedRow.reviewer2Detail) ? 'REVIEWER_2' : null,
+          matches(selectedRow.reviewer1Answer, selectedRow.reviewer1Detail) &&
+          matches(selectedRow.reviewer2Answer, selectedRow.reviewer2Detail)
+            ? 'BOTH_REVIEWERS'
+            : null,
+          !matches(selectedRow.reviewer1Answer, selectedRow.reviewer1Detail) &&
+          !matches(selectedRow.reviewer2Answer, selectedRow.reviewer2Detail)
+            ? 'NEITHER'
+            : null,
+        ].filter((b): b is string => b !== null)
+      : [];
+  const effectiveBasis = validBases.includes(basis) ? basis : (validBases[0] ?? '');
   return (
     <section className="panel">
       <header className="case-header">
@@ -898,7 +931,7 @@ function AdjudicationCase({
             </ul>
           </>
         )}
-        {detail.adjudicationOpen && detail.items.some((row) => !row.adjudicated) && (
+        {detail.adjudicationOpen && detail.items.some(adjudicable) && (
           <form onSubmit={submit}>
             <div className="section-label">
               <span className="section-index">03</span>Record an adjudication
@@ -919,13 +952,15 @@ function AdjudicationCase({
                 >
                   <option value="">Select…</option>
                   {detail.items.map((row) => (
-                    <option key={row.itemCode} value={row.itemCode} disabled={row.adjudicated}>
+                    <option key={row.itemCode} value={row.itemCode} disabled={!adjudicable(row)}>
                       {row.itemCode}
                       {row.adjudicated
                         ? ' (locked)'
                         : row.needsAdjudication
                           ? ' (needs adjudication)'
-                          : ''}
+                          : detail.adjudicationScope === 'ALL_ITEMS'
+                            ? ' (concordant)'
+                            : ' (by rule; not adjudicated)'}
                     </option>
                   ))}
                 </select>
@@ -988,8 +1023,13 @@ function AdjudicationCase({
                   <label className="form-label" htmlFor="adj-basis">
                     Basis
                   </label>
-                  <select id="adj-basis" value={basis} onChange={(e) => setBasis(e.target.value)}>
-                    {ADJUDICATION_BASES.filter((b) => b !== 'NONE').map((b) => (
+                  <select
+                    id="adj-basis"
+                    value={effectiveBasis}
+                    onChange={(e) => setBasis(e.target.value)}
+                  >
+                    {!validBases.length && <option value="">Select a decision first</option>}
+                    {ADJUDICATION_BASES.filter((b) => validBases.includes(b)).map((b) => (
                       <option key={b} value={b}>
                         {readable(b)}
                       </option>
@@ -1194,6 +1234,24 @@ function Tlv5Investigator({
                   Snapshot verify: {workspace.verification.snapshot.matches ? 'match' : 'MISMATCH'}{' '}
                   ({workspace.verification.snapshot.currentRows} rows).
                 </p>
+              )}
+              <p className="muted" style={{ fontSize: 12 }} data-testid="tlv5-rubric-bindings">
+                Rubric bindings:{' '}
+                {workspace.rubricBindings.length
+                  ? workspace.rubricBindings
+                      .map(
+                        (b) =>
+                          `${b.mode}: ${b.unreconciled ? 'UNRECONCILED (judgments predate rubric binding)' : `${b.rubricVersion}${b.matchesRuntime ? '' : ' (differs from the runtime rubric; activity blocked)'}`}`,
+                      )
+                      .join('; ')
+                  : 'none yet (the first review activity of a mode binds the runtime rubric)'}
+                .
+              </p>
+              {workspace.rubricBindings.some((b) => b.unreconciled) && (
+                <RubricReconciliation
+                  modes={workspace.rubricBindings.filter((b) => b.unreconciled).map((b) => b.mode)}
+                  onReconcile={(input) => act(input, 'Rubric reconciliation')}
+                />
               )}
             </div>
           </section>
@@ -1603,5 +1661,81 @@ function Tlv5Investigator({
         </div>
       </div>
     </>
+  );
+}
+
+/** Investigator-only: name the rubric that judgments recorded before rubric binding were made
+ *  under. Recorded once per mode, append-only and audited (migration 0019). */
+function RubricReconciliation({
+  modes,
+  onReconcile,
+}: {
+  modes: Tlv5Mode[];
+  onReconcile: (input: Tlv5AdminAction) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<Tlv5Mode>(modes[0]);
+  const [version, setVersion] = useState('');
+  const [sha, setSha] = useState('');
+  const [attestation, setAttestation] = useState('');
+  const ready =
+    version.trim().length >= 3 && /^[0-9a-fA-F]{64}$/.test(sha) && attestation.trim().length >= 20;
+  return (
+    <form
+      className="notice warning"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (ready)
+          void onReconcile({
+            action: 'reconcile-rubric',
+            mode,
+            rubricVersion: version.trim(),
+            rubricSha256: sha.toLowerCase(),
+            attestation,
+          });
+      }}
+    >
+      <strong>Rubric reconciliation required</strong>
+      Judgments in {modes.join(', ')} were recorded before rubric binding existed. Record the rubric
+      version and SHA-256 they were made under; review activity and exports for that mode stay
+      blocked until then. This is a one-time, audited investigator record.
+      <div className="context-grid">
+        <label className="field">
+          <span className="form-label">Mode</span>
+          <select value={mode} onChange={(e) => setMode(e.target.value as Tlv5Mode)}>
+            {modes.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="form-label">Rubric version</span>
+          <input value={version} onChange={(e) => setVersion(e.target.value)} maxLength={80} />
+        </label>
+        <label className="field">
+          <span className="form-label">Rubric SHA-256</span>
+          <input
+            value={sha}
+            onChange={(e) => setSha(e.target.value)}
+            maxLength={64}
+            className="mono"
+          />
+        </label>
+        <label className="field">
+          <span className="form-label">Attestation (20 characters or more)</span>
+          <input
+            value={attestation}
+            onChange={(e) => setAttestation(e.target.value)}
+            maxLength={2000}
+          />
+        </label>
+      </div>
+      <div className="button-row">
+        <button className="button" type="submit" disabled={!ready}>
+          Record rubric reconciliation
+        </button>
+      </div>
+    </form>
   );
 }

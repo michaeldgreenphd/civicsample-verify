@@ -224,7 +224,7 @@ def build(seed: int = SEED, scenario: str = "mixed") -> Tuple[pd.DataFrame, pd.D
         "label_set_id": LABEL_SET, "frozen_at": TS["frozen_at"],
         "frozen_case_list_sha256": pa5.case_list_sha256(L.case_id.unique()), "frozen_label_rows_sha256": pa5.label_rows_sha256(L),
         "formal_phase_opened_at": TS["opened"], "formal_phase_closed_at": TS["closed"], "formal_phase_status": "CLOSED_INCOMPLETE",
-        "snapshot_taken_at": TS["snapshot"], "snapshot_sha256": hashlib.sha256(b"synthetic snapshot").hexdigest(),
+        "snapshot_taken_at": TS["snapshot"], "snapshot_sha256": pa5.judgments_snapshot_sha256(J),
         "snapshot_rows": int(len(J)), "reference_locked": True, "reference_lock_id": LOCK_ID, "reference_locked_at": TS["locked"],
         "rubric_version": "REVIEW_RUBRIC_v5-DRAFT", "rubric_sha256": hashlib.sha256(b"synthetic rubric").hexdigest(), "files": [],
     }

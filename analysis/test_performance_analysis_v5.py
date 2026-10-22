@@ -460,3 +460,46 @@ def test_export_columns_match_the_database_views():
     assert strip(cols["v_tlv5_independent_judgments"]) == pa5.JUDGMENT_COLUMNS_V5
     assert strip(cols["v_tlv5_adjudicated_reference"]) == pa5.REFERENCE_COLUMNS_V5
     assert strip(cols["v_tlv5_frozen_labels"]) == pa5.LABEL_COLUMNS_V5
+
+
+# ---------------------------------------------------------------------------
+# PR #4 review findings: the snapshot hash and the judgment flags are verified
+# ---------------------------------------------------------------------------
+
+def test_refuses_judgments_that_do_not_reproduce_the_snapshot(bundle):
+    # A judgment edited after the close with the file digest regenerated: the file hash matches the
+    # manifest, but the rows no longer reproduce the snapshot the database took at the close.
+    J = _df(bundle, "independent_judgments")
+    i = J.index[(J.item_code == "AREA_ONCOLOGY") & (J.answer_effective_preclose == "YES")][0]
+    J.loc[i, "answer_effective_preclose"] = "NO"
+    J.loc[i, "answer_initial"] = "NO"
+    _rewrite(bundle, "independent_judgments", df=J)
+    with pytest.raises(pa5.ExportError, match="do not reproduce snapshot_sha256"):
+        pa5.run(str(bundle), allow_synthetic=True)
+
+
+def test_snapshot_hash_follows_the_database_procedure():
+    # private.tlv5_judgments_text(): fields joined by '|', NULL detail as '', uncertain as true/false,
+    # rows in byte order of case_id, item_code, then slot, joined by newlines.
+    rows = pd.DataFrame([
+        {"case_id": "TLV5-TESTFX-0002", "item_code": "AREA_ONCOLOGY", "reviewer_slot": "2", "reviewer_pseudo_id": "R-SYN2",
+         "answer_initial": "NO", "answer_effective_preclose": "NO", "detail_initial": None, "detail_effective": None,
+         "n_revisions_preclose": "0", "uncertain": "false", "packet_issue_flag": "false",
+         "first_submitted_at": "2026-11-20T10:00:00.000000Z", "last_submitted_at": "2026-11-20T10:00:00.000000Z"},
+        {"case_id": "TLV5-TESTFX-0001", "item_code": "SG_DIABETES_TYPE", "reviewer_slot": "1", "reviewer_pseudo_id": "R-SYN1",
+         "answer_initial": "TYPE_2", "answer_effective_preclose": "OTHER", "detail_initial": None, "detail_effective": "LADA_OR_AUTOIMMUNE",
+         "n_revisions_preclose": "1", "uncertain": "true", "packet_issue_flag": "false",
+         "first_submitted_at": "2026-11-20T09:00:00.000000Z", "last_submitted_at": "2026-11-20T09:30:00.000000Z"},
+    ])
+    text = ("TLV5-TESTFX-0001|SG_DIABETES_TYPE|1|R-SYN1|TYPE_2|OTHER||LADA_OR_AUTOIMMUNE|1|true|2026-11-20T09:00:00.000000Z|2026-11-20T09:30:00.000000Z\n"
+            "TLV5-TESTFX-0002|AREA_ONCOLOGY|2|R-SYN2|NO|NO|||0|false|2026-11-20T10:00:00.000000Z|2026-11-20T10:00:00.000000Z")
+    assert pa5.judgments_snapshot_sha256(rows) == hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("column", ["uncertain", "packet_issue_flag"])
+def test_refuses_blank_judgment_flags(bundle, column):
+    J = _df(bundle, "independent_judgments")
+    J.loc[J.index[0], column] = ""
+    _rewrite(bundle, "independent_judgments", df=J)
+    with pytest.raises(pa5.ExportError, match=f"{column} must be an explicit boolean"):
+        pa5.run(str(bundle), allow_synthetic=True)

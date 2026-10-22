@@ -77,6 +77,8 @@ export interface Tlv5State {
   snapshot: { rows: number; sha256: string; takenAt: string } | null;
   /** Readable by every role through the database helper. */
   snapshotTaken: boolean;
+  /** Readable by every role through private.tlv5_scope() (migration 0015). */
+  adjudicationScope: 'DISAGREEMENTS_ONLY' | 'ALL_ITEMS';
   locks: Partial<Record<'PILOT' | 'TRAINING' | 'FORMAL', { lockedAt: string; items: number }>>;
   /** Submissions are accepted for this mode right now (the database enforces this independently). */
   submissionsOpen: Record<Tlv5Mode, boolean>;
@@ -133,6 +135,14 @@ export interface Tlv5InvestigatorWorkspace {
     manifestSha256: string;
     appGitSha: string;
   }[];
+  /** Rubric bound to each mode (migrations 0017/0019); an unreconciled mode blocks activity. */
+  rubricBindings: {
+    mode: Tlv5Mode;
+    rubricVersion: string;
+    rubricSha256: string;
+    unreconciled: boolean;
+    matchesRuntime: boolean;
+  }[];
   verification: {
     frozenLabels: { matches: boolean; frozenRows: number; currentRows: number } | null;
     snapshot: { matches: boolean; snapshotRows: number; currentRows: number } | null;
@@ -151,6 +161,8 @@ export interface Tlv5ReviewerCase {
   packet: Tlv5TrialPacket;
   submissions: Tlv5Submission[];
   submissionsOpen: boolean;
+  /** The runtime rubric differs from the rubric bound to this mode's first review activity. */
+  rubricMismatch: boolean;
   /** TRAINING only, and only after this reviewer's own practice submission exists. */
   workedAnswer?: { items: Tlv5ItemInput[]; note: string } | null;
 }
@@ -188,6 +200,8 @@ export interface Tlv5AdjudicatorCaseDetail {
   items: Tlv5QueueRow[];
   adjudications: Tlv5AdjudicationRecord[];
   adjudicationOpen: boolean;
+  /** The active adjudication scope; under DISAGREEMENTS_ONLY concordant items enter by rule. */
+  adjudicationScope: 'DISAGREEMENTS_ONLY' | 'ALL_ITEMS';
 }
 export interface Tlv5AdjudicationInput {
   caseId: string;
@@ -215,7 +229,14 @@ export type Tlv5AdminAction =
       attestation: string;
     }
   | { action: 'snapshot' }
-  | { action: 'provision-staging-accounts' };
+  | { action: 'provision-staging-accounts' }
+  | {
+      action: 'reconcile-rubric';
+      mode: Tlv5Mode;
+      rubricVersion: string;
+      rubricSha256: string;
+      attestation: string;
+    };
 
 export interface Tlv5BundleFile {
   role: 'independent_judgments' | 'adjudicated_reference' | 'frozen_labels';

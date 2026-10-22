@@ -1,6 +1,10 @@
 import type { NextConfig } from 'next';
+import { resolveBuildIdentity } from './scripts/build-identity.mjs';
 const config: NextConfig = {
   poweredByHeader: false,
+  // The source commit is captured when the build starts and inlined into the artifact; a
+  // deployment may still supply VERIFY_APP_GIT_SHA explicitly (see src/server/tlv5.ts).
+  env: { VERIFY_BUILD_GIT_SHA: resolveBuildIdentity() },
   // Local runtime state is never part of a deployable application package.
   outputFileTracingExcludes: {
     '**': [

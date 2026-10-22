@@ -204,6 +204,23 @@ def _bool(x: Any) -> Optional[bool]:
     return pa3._as_bool(x)
 
 
+def judgments_snapshot_sha256(J: pd.DataFrame) -> str:
+    """Recompute the hash the database stored at the close (private.tlv5_judgments_text, migration 0011):
+    one line per judgment row, fields joined by '|', a missing detail code as '', the uncertainty flag as
+    true/false, timestamps exactly as exported, ordered by case_id and item_code in byte order, then slot."""
+    lines = []
+    for r in J.itertuples(index=False):
+        u = pa3._as_bool(r.uncertain)
+        if u is None:
+            raise ExportError("uncertain must be an explicit boolean for every submitted judgment")
+        lines.append((str(r.case_id).encode("utf-8"), str(r.item_code).encode("utf-8"), int(r.reviewer_slot), "|".join([
+            str(r.case_id), str(r.item_code), str(int(r.reviewer_slot)), str(r.reviewer_pseudo_id), str(r.answer_initial),
+            str(r.answer_effective_preclose), _s(r.detail_initial) or "", _s(r.detail_effective) or "",
+            str(int(r.n_revisions_preclose)), "true" if u else "false", str(r.first_submitted_at), str(r.last_submitted_at)])))
+    lines.sort(key=lambda t: (t[0], t[1], t[2]))
+    return hashlib.sha256("\n".join(t[3] for t in lines).encode("utf-8")).hexdigest()
+
+
 def case_list_sha256(case_ids: Sequence[str]) -> str:
     """SHA-256 of the sorted, LF-joined case IDs (code-point order); the freeze records this value."""
     return hashlib.sha256("\n".join(sorted(map(str, case_ids))).encode("utf-8")).hexdigest()
@@ -464,6 +481,9 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
         raise ExportError("a judgment changed between the initial and effective answer but records no revision")
     J["uncertain"] = J.uncertain.map(_bool)
     J["packet_issue_flag"] = J.packet_issue_flag.map(_bool)
+    for c in ("uncertain", "packet_issue_flag"):
+        if J[c].isna().any():
+            raise ExportError(f"{c} must be an explicit boolean for every submitted judgment")
     jf, jl = _ts_col(J.first_submitted_at, "first_submitted_at"), _ts_col(J.last_submitted_at, "last_submitted_at")
     if mode == "FORMAL":
         opened, closed = _ts(manifest["formal_phase_opened_at"], "formal_phase_opened_at"), _ts(manifest["formal_phase_closed_at"], "formal_phase_closed_at")
@@ -473,6 +493,9 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
             raise ExportError("an independent judgment falls outside the formal phase (before the opening or after the close)")
         if int(manifest["snapshot_rows"]) != len(J):
             raise ExportError("the judgment file row count differs from the snapshot taken at the close")
+        if judgments_snapshot_sha256(J) != str(manifest["snapshot_sha256"]):
+            raise ExportError("the judgment rows do not reproduce snapshot_sha256: the independent judgments changed after the "
+                              "snapshot taken at the close, or the bundle was assembled from other rows")
     passed.append("independent judgments: 19 items per reviewer and case, item scales and detail codes, subgroup items shown "
                   "exactly after a YES row answer, two different reviewers, revisions recorded, inside the formal phase")
 
