@@ -76,6 +76,10 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
       '4.0.5-trial-packet-concurrency-guards',
       '4.0.6-canonical-packet-lock-state',
       '4.0.7-investigator-judgment-boundary',
+      '5.0.0',
+      '5.1.0',
+      '5.1.1-independent-finality',
+      '5.1.2-legacy-pilot-packet-guards',
     ],
   );
   const initialAdmin = await getWorkspace(investigator);

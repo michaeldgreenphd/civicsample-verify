@@ -70,7 +70,7 @@ test('native driver adaptation preserves all supplied SQL and assertions byte fo
   const first = "import { PGlite } from '@electric-sql/pglite';";
   const second = "import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';";
   const adapter = 'file:///synthetic/native-adapter.mjs';
-  for (const suite of ['v2', 'v3', 'v4']) {
+  for (const suite of ['v2', 'v3', 'v4', 'v5', 'v5_1']) {
     const original = readFileSync(`tests/handoff/${suite}.mjs`, 'utf8');
     const adapted = adaptPreservedSuite(original, adapter);
     const restored = adapted

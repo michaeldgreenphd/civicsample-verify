@@ -16,4 +16,4 @@ Formal activation is blocked in this build. A proposal is not an approval; appro
 | Analysis           | Approved frozen plan and tested export/analysis compatibility                               |
 | Operations         | Hosting region, retention, backup/restore, invited access and monitoring                    |
 
-No formal sample import, clinician invitations, production freeze or deployment is authorized by running the pilot. Module B requires its own approval process.
+No formal sample import, clinician invitations, production freeze or deployment is authorized by running the pilot. Module B requires its own approval process. Design v5 adds its own database-enforced sequence (docs/design_v5/APP_MAPPING_v5_1.md, section 4): pilot lock, pilot export, pilot sign-off with the signed checklist's SHA-256, activation with the adjudication scope, formal enrolment, calibration and training, import and freeze, formal opening, close, snapshot, adjudication, lock, export. The investigator's decisions of docs/design_v5/REVIEW_RUBRIC_v5_1.md section 2 precede the freeze.

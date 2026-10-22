@@ -14,7 +14,7 @@
     "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:e2e": "playwright test",
     "check:fixtures": "node scripts/check-fixtures.mjs",
-    "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures && npm run check:leakage:v4",
+    "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures && npm run check:leakage:v4 && npm run check:leakage:v5",
     "test:analysis": "python3 -m pytest -q analysis",
     "prepare": "git config core.hooksPath .githooks",
     "test:handoff": "node scripts/test-handoff.mjs",
@@ -24,7 +24,10 @@
     "staging:accounts": "node scripts/staging-accounts.mjs",
     "staging:preflight": "node --import tsx scripts/staging-import.ts",
     "check:leakage:v4": "python3 tools/check_public_repo_leakage_v4.py --tree",
-    "test:supabase:staging": "node scripts/test-supabase-staging.mjs"
+    "test:supabase:staging": "node scripts/test-supabase-staging.mjs",
+    "check:leakage:v5": "python3 tools/check_public_repo_leakage_v5.py --tree",
+    "generate:tlv5-pilot": "node scripts/generate-tlv5-pilot-cases.mjs",
+    "tlv5:staging-dryrun": "node --import tsx scripts/tlv5-staging-dryrun.ts"
   },
   "engines": {
     "node": ">=22.0.0"

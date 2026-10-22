@@ -55,10 +55,18 @@ This is a Next.js server application. GitHub Pages cannot host its authenticatio
 
 ![Synthetic reviewer interface](docs/screenshots/reviewer-desktop.png)
 
+![Design v5 trial verification form](docs/screenshots/tlv5-reviewer-desktop.png)
+
+## Design v5: trial-level label verification
+
+The proposed handoff v5 adds a separate trial-level verification module. Adoption of its scientific design is awaiting an explicit investigator approval record; it does not activate or replace the existing study automatically. The supplied migrations `0004_v5_trial_label_verification.sql` and `0005_v5_training_examples.sql` are committed byte-identical as `migrations/0011_...` and `migrations/0012_...` (renumbered only because this repository already holds additive migrations 0004 to 0010; SHA-256 values in [docs/HANDOFF_TESTS.md](docs/HANDOFF_TESTS.md)). The "Trial verification" tab gives every role its design v5 workspace: the reviewer form with 7 area items, 10 condition-row items and the two subgroup items shown only after the reviewer's own Yes, the training view, the adjudicator queue, and the investigator's gated actions (pilot import and assignment, lock, bundle export and registration, sign-off, activation, formal enrolment, freeze, phase events, snapshot). The supplied schema is followed by additive strict-boundary guards. The public application refuses formal activation, enrollment, imports, freeze and opening while protocol and hosted-identity acceptance are pending.
+
+Two synthetic FORMAL-scope accounts, `staging-reviewer-1` and `staging-reviewer-2`, exist for training examples and synthetic formal dry runs; they are provisioned into an older persistent pilot only by an explicit investigator action. The private v5 transfer files are never read by the web application; The historical `npm run tlv5:staging-dryrun` implementation uses external hashed files and a disposable database; it is currently blocked pending protocol reconciliation ([docs/STAGING_PREFLIGHT.md](docs/STAGING_PREFLIGHT.md)). Bundle format 5.0 feeds `analysis/performance_analysis_v5.py`; the pilot bundle is analysed only with `--allow-pilot`. Design documents: [docs/design_v5/](docs/design_v5/). Acceptance: [docs/PILOT_ACCEPTANCE_CHECKLIST_v5.md](docs/PILOT_ACCEPTANCE_CHECKLIST_v5.md).
+
 ## Staging preparation
 
-See [the staging preflight guide](docs/STAGING_PREFLIGHT.md) for external-file hash validation, the offline five-account plan, and native PostgreSQL checks. These tools do not create accounts or import records. The investigator's three shared examples will be calibration records excluded from formal outcomes; their identities are still awaited. Tier 1 remains awaiting approval.
+See [the staging preflight guide](docs/STAGING_PREFLIGHT.md) for external-file hash validation, the offline five-account plan, and native PostgreSQL checks. These tools do not create accounts or import records. The investigator's three shared examples will be calibration records excluded from formal outcomes; private training materials have been supplied but are not loaded into the persistent app. Tier 1 and v5 design adoption remain awaiting verified approval.
 
-`npm run check` now includes the adapted upstream v4 leakage scan, also enforced by the pre-commit hook. `--tree` scans public source and indexed objects; ignored local runtime artifacts are excluded only while ignored. It is not a scan of the private study folder. All original content rules remain active. Python 3 and Node are required.
+`npm run check` now includes the adapted upstream v4 and v5 leakage scans, also enforced by the pre-commit hook. `--tree` scans public source and indexed objects; ignored local runtime artifacts are excluded only while ignored. It is not a scan of the private study folder. All original content rules remain active. Python 3 and Node are required.
 
 The upstream Python validation suite was executed unchanged from an isolated external copy; maintained application analysis tests live under `analysis/`, so run `.venv/bin/python -m pytest -q analysis` here. No private handoff files are needed to clone, run or test this repository.

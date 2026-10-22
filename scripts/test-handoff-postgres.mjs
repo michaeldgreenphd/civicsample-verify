@@ -10,7 +10,7 @@ import { Client } from 'pg';
 import {
   adaptPreservedSuite,
   inspectSuiteResult,
-  withDisposableHandoffDatabase,
+  withDisposableHandoffDatabases,
 } from './test-handoff-postgres-helpers.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,15 +63,38 @@ try {
     const schema = join(root, 'schema.sql');
     const m2 = join(root, 'migrations/0002_v3_review_design.sql');
     const m3 = join(root, 'migrations/0003_v4_record_categories_module_b.sql');
-    const combined = join(scratch, 'combined.sql');
-    await writeFile(combined, (await readFile(m2, 'utf8')) + (await readFile(m3, 'utf8')), {
-      mode: 0o600,
-    });
+    // Byte-identical copies of the supplied v5 migrations 0004 and 0005.
+    const m11 = join(root, 'migrations/0011_v5_trial_label_verification.sql');
+    const m12 = join(root, 'migrations/0012_v5_training_examples.sql');
+    // This application's own additive migrations; never run with the v3/v4
+    // suites, because 0010 refuses investigator pilot adjudications by design.
+    const app = [
+      'migrations/0004_synthetic_verify_workflow.sql',
+      'migrations/0005_review_integrity_fixes.sql',
+      'migrations/0006_reference_integrity.sql',
+      'migrations/0007_frozen_contract_guards.sql',
+      'migrations/0008_trial_packet_and_concurrency_guards.sql',
+      'migrations/0009_canonical_packet_and_lock_state_guards.sql',
+      'migrations/0010_investigator_judgment_boundary.sql',
+    ].map((file) => join(root, file));
+    const concat = async (name, files) => {
+      const target = join(scratch, name);
+      let text = '';
+      for (const file of files) text += await readFile(file, 'utf8');
+      await writeFile(target, text, { mode: 0o600 });
+      return target;
+    };
+    const combined = await concat('combined.sql', [m2, m3]);
+    const combinedV5 = await concat('combined_0002_0003_0011_0012.sql', [m2, m3, m11, m12]);
+    const combinedV5From3 = await concat('combined_0003_0011_0012.sql', [m3, m11, m12]);
+    const combinedApp = await concat('combined_app_0003_to_0010.sql', [m3, ...app]);
     report.schema_sha256 = {};
     for (const [label, file] of [
       ['base', schema],
       ['0002', m2],
       ['0003', m3],
+      ['0011', m11],
+      ['0012', m12],
     ]) {
       report.schema_sha256[label] = createHash('sha256')
         .update(await readFile(file))
@@ -79,11 +102,25 @@ try {
     }
     const audits = {};
     try {
-      for (const [name, sourceName, inputs, expected] of [
-        ['v2', 'v2', [shim, schema], 164],
-        ['v3', 'v3', [shim, schema, m2], 262],
-        ['v3-on-v4', 'v3', [shim, schema, combined], 262],
-        ['v4', 'v4', [shim, schema, m2, m3], 356],
+      // [name, preserved source, inputs, expected steps, databases the suite
+      // opens, step IDs documented as expected differences]
+      for (const [name, sourceName, inputs, expected, databases, allowed] of [
+        ['v2', 'v2', [shim, schema], 164, 1, []],
+        ['v3', 'v3', [shim, schema, m2], 262, 1, []],
+        ['v3-on-v4', 'v3', [shim, schema, combined], 262, 1, []],
+        ['v4', 'v4', [shim, schema, m2, m3], 356, 1, []],
+        ['v3-on-v5', 'v3', [shim, schema, combinedV5], 262, 1, []],
+        ['v4-on-v5', 'v4', [shim, schema, m2, combinedV5From3], 356, 1, ['V4-SCHEMA-01']],
+        ['v5', 'v5', [shim, schema, m2, m3, m11], 457, 3, []],
+        ['v5_1', 'v5_1', [shim, schema, m2, m3, m11, m12], 534, 3, []],
+        [
+          'v5_1-on-app-through-0012',
+          'v5_1',
+          [shim, schema, m2, combinedApp, m11, m12],
+          534,
+          3,
+          ['V5-SCHEMA-01'],
+        ],
       ]) {
         report.stage = name;
         const source = await readFile(join(root, `tests/handoff/${sourceName}.mjs`), 'utf8');
@@ -98,7 +135,7 @@ try {
           ),
           { mode: 0o600 },
         );
-        await withDisposableHandoffDatabase(baseUrl, async (target) => {
+        await withDisposableHandoffDatabases(baseUrl, databases, async (targets) => {
           await promisify(execFile)(
             process.execPath,
             [scriptPath, ...inputs, outputPath, join(scratch, `${name}.sql`)],
@@ -106,16 +143,16 @@ try {
               cwd: root,
               env: {
                 ...process.env,
-                VERIFY_HANDOFF_DISPOSABLE_URL: target,
+                VERIFY_HANDOFF_DISPOSABLE_URLS: JSON.stringify(targets),
                 VERIFY_HANDOFF_AUDIT_OUTPUT: name === 'v3' || name === 'v3-on-v4' ? auditPath : '',
               },
-              timeout: 120000,
-              maxBuffer: 4 * 1024 * 1024,
+              timeout: 300000,
+              maxBuffer: 8 * 1024 * 1024,
             },
           );
         });
         const output = JSON.parse(await readFile(outputPath, 'utf8'));
-        const result = inspectSuiteResult(output, expected);
+        const result = inspectSuiteResult(output, expected, allowed);
         report.engine = output.summary.engine;
         report.suites.push({
           name,
@@ -124,7 +161,7 @@ try {
           ...result,
         });
         console.log(
-          `${name}: ${result.pass}/${result.count} native PostgreSQL steps passed; ${result.fail} failed.`,
+          `${name}: ${result.pass}/${result.count} native PostgreSQL steps passed; ${result.fail} failed (${result.unexpectedFail} outside the documented differences).`,
         );
         if (result.fail) console.log(`${name} failed step IDs: ${result.failedStepIds.join(', ')}`);
         if (name === 'v3' || name === 'v3-on-v4')
@@ -135,7 +172,7 @@ try {
       report.stage = 'audit-probe';
       report.audit_probe = { v3: audits.v3, v4: audits['v3-on-v4'] };
       console.log('Native audit probe: v3 exposed 2/2 synthetic decisions; v4 exposed 0/2.');
-      report.status = report.suites.every((suite) => suite.fail === 0) ? 'PASS' : 'FAIL';
+      report.status = report.suites.every((suite) => suite.unexpectedFail === 0) ? 'PASS' : 'FAIL';
       if (report.status === 'FAIL') process.exitCode = 1;
     } finally {
       assert.deepEqual(

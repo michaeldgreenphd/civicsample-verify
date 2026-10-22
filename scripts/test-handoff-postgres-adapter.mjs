@@ -4,9 +4,17 @@ import { writeFile } from 'node:fs/promises';
 import { Client } from 'pg';
 
 export const pgcrypto = {};
+// The parent harness supplies one owned disposable database per database the
+// preserved suite opens (the v5 suites open three). Each create() consumes the
+// next URL in order; a suite that opens more databases than supplied fails closed.
+const supplied = process.env.VERIFY_HANDOFF_DISPOSABLE_URLS
+  ? JSON.parse(process.env.VERIFY_HANDOFF_DISPOSABLE_URLS)
+  : [];
+let consumed = 0;
 export const PGlite = {
   async create() {
-    const connectionString = process.env.VERIFY_HANDOFF_DISPOSABLE_URL;
+    assert.ok(Array.isArray(supplied), 'The parent harness must supply disposable databases');
+    const connectionString = supplied[consumed++];
     assert.ok(connectionString, 'The parent harness must supply a disposable database');
     const expectedDatabase = new URL(connectionString).pathname.slice(1);
     assert.match(expectedDatabase, /^verify_handoff_[0-9]+_[0-9a-f]{16}$/);

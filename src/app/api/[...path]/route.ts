@@ -14,6 +14,14 @@ import { adminSchema, adjudicationSchema, draftSchema, judgmentSchema } from '@/
 import { buildPilotExport } from '@/lib/export';
 import { authorSyntheticPilotCase, evaluateApprovalGates } from '@/server/admin-workflows';
 import * as service from '@/server/service';
+import * as tlv5 from '@/server/tlv5';
+import { manifestText } from '@/lib/tlv5-export';
+import { renderRubric, TLV5_RUBRIC, TLV5_RUBRIC_VERSION } from '@/lib/tlv5-codes';
+import {
+  tlv5AdjudicationSchema,
+  tlv5AdminSchema,
+  tlv5SubmissionSchema,
+} from '@/lib/tlv5-validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -66,7 +74,10 @@ async function handle(request: Request) {
       }
     }
     const actor = requireActor(request);
-    if (path.startsWith('/api/admin/') && actor.role !== 'INVESTIGATOR')
+    if (
+      (path.startsWith('/api/admin/') || path.startsWith('/api/tlv5/admin/')) &&
+      actor.role !== 'INVESTIGATOR'
+    )
       throw new HttpError(403, 'This action requires an investigator account.');
     if (request.method === 'GET' && path === '/api/workspace')
       return json(await service.getWorkspace(actor));
@@ -82,6 +93,54 @@ async function handle(request: Request) {
       return json(await evaluateApprovalGates(actor));
     if (request.method === 'POST' && path === '/api/admin/cases')
       return json(await authorSyntheticPilotCase(actor, await body(request)));
+    // Design v5 (trial-level label verification): separate routes, same session and origin rules.
+    if (path === '/api/tlv5/workspace' && request.method === 'GET')
+      return json(await tlv5.getTlv5Workspace(actor));
+    if (path === '/api/tlv5/rubric' && request.method === 'GET')
+      return json({ version: TLV5_RUBRIC_VERSION, sections: TLV5_RUBRIC, text: renderRubric() });
+    if (path === '/api/tlv5/adjudicate' && request.method === 'POST')
+      return json(
+        await tlv5.recordTlv5Adjudication(actor, tlv5AdjudicationSchema.parse(await body(request))),
+      );
+    if (path === '/api/tlv5/admin/action' && request.method === 'POST')
+      return json(await tlv5.tlv5AdminAction(actor, tlv5AdminSchema.parse(await body(request))));
+    const exportMatch =
+      /^\/api\/tlv5\/admin\/export\/(PILOT|FORMAL)(?:\/([a-z0-9_.]+\.(?:csv|json)))?$/.exec(path);
+    if (exportMatch && request.method === 'GET') {
+      const bundle = await tlv5.exportTlv5Bundle(actor, exportMatch[1] as 'PILOT' | 'FORMAL');
+      if (!exportMatch[2]) return json(bundle);
+      const file =
+        exportMatch[2] === bundle.manifestName
+          ? { name: bundle.manifestName, content: manifestText(bundle), type: 'application/json' }
+          : bundle.files
+              .filter((f) => f.name === exportMatch[2])
+              .map((f) => ({ name: f.name, content: f.content, type: 'text/csv' }))[0];
+      if (!file) throw new HttpError(404, 'Resource not available.');
+      return new Response(file.content, {
+        status: 200,
+        headers: {
+          ...jsonHeaders,
+          'Content-Type': `${file.type}; charset=utf-8`,
+          'Content-Disposition': `attachment; filename="${file.name}"`,
+        },
+      });
+    }
+    const tlv5Case = /^\/api\/tlv5\/cases\/([A-Za-z0-9][A-Za-z0-9_.:-]{2,80})(?:\/(submit))?$/.exec(
+      path,
+    );
+    if (tlv5Case) {
+      const [, id, action] = tlv5Case;
+      if (request.method === 'GET' && !action)
+        return json(
+          actor.role === 'REVIEWER'
+            ? await tlv5.getTlv5ReviewerCase(actor, id)
+            : await tlv5.getTlv5AdjudicatorCase(actor, id),
+        );
+      if (request.method === 'POST' && action === 'submit')
+        return json(
+          await tlv5.submitTlv5(actor, id, tlv5SubmissionSchema.parse(await body(request))),
+        );
+    }
     const match = /^\/api\/cases\/(SYN-[0-9]{3})(?:\/(draft|submit|step1|adjudicate))?$/.exec(path);
     if (match) {
       const [, caseId, action] = match;

@@ -17,7 +17,20 @@ export const DEMO_ACTORS: Actor[] = [
     role: 'ADJUDICATOR',
     displayName: 'Pilot adjudicator',
   },
+  // Design v5 staging reviewers: synthetic FORMAL-scope test accounts (never pilot test accounts)
+  // used only for training examples and synthetic formal dry runs on a disposable database.
+  {
+    id: '00000000-0000-4000-8000-000000000005',
+    role: 'REVIEWER',
+    displayName: 'Staging reviewer slot 1',
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000006',
+    role: 'REVIEWER',
+    displayName: 'Staging reviewer slot 2',
+  },
 ];
+export const PILOT_TEST_ACCOUNT_IDS = new Set([DEMO_ACTORS[1].id, DEMO_ACTORS[2].id]);
 
 // Share one initialization across Next development-module reloads. Never expose
 // this owner connection outside server code. Requests use withActor below.
@@ -112,6 +125,7 @@ async function initialize(): Promise<PGlite> {
         throw error;
       }
     }
+    await applyTrialLabelVerification(db);
   } catch (error) {
     // Upgrade refusal must leave the original persisted database available.
     await db.close();
@@ -123,6 +137,70 @@ async function initialize(): Promise<PGlite> {
   )
     await seedSynthetic(db);
   return db;
+}
+
+// Apply the preserved supplied v5 migrations, followed by the stricter additive
+// application guards. Each migration and its marker commit in one transaction.
+async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void> {
+  // Keep each path literal (see initialize): the server-file tracer must list exactly these files.
+  const trialLabelVerification = await readFile(
+    path.join(process.cwd(), 'migrations/0011_v5_trial_label_verification.sql'),
+    'utf8',
+  );
+  const trainingExamples = await readFile(
+    path.join(process.cwd(), 'migrations/0012_v5_training_examples.sql'),
+    'utf8',
+  );
+  const independentFinality = await readFile(
+    path.join(process.cwd(), 'migrations/0013_v5_independent_finality_guards.sql'),
+    'utf8',
+  );
+  const legacyPilotGuards = await readFile(
+    path.join(process.cwd(), 'migrations/0014_legacy_pilot_and_packet_guards.sql'),
+    'utf8',
+  );
+  for (const [version, migration] of [
+    ['5.0.0', trialLabelVerification],
+    ['5.1.0', trainingExamples],
+    ['5.1.1-independent-finality', independentFinality],
+    ['5.1.2-legacy-pilot-packet-guards', legacyPilotGuards],
+  ] as const) {
+    const present = await db.query<{ present: boolean }>(
+      `select exists(select 1 from public.app_schema_version where version='${version}') as present`,
+    );
+    if (present.rows[0].present) continue;
+    try {
+      await db.exec(migration);
+    } catch (error) {
+      await db.exec('rollback');
+      throw error;
+    }
+  }
+}
+
+// Older persistent pilots were seeded with four accounts. The two synthetic staging reviewer
+// accounts are added only by an explicit investigator action (never as a silent upgrade side
+// effect), idempotently, so a preserved database keeps its audit history unchanged on restart.
+export async function provisionStagingAccounts(): Promise<number> {
+  const db = await getDb();
+  const before = (
+    await db.query<{ n: number }>(
+      `select count(*)::integer as n from public.users where user_id in ('${DEMO_ACTORS[4].id}','${DEMO_ACTORS[5].id}')`,
+    )
+  ).rows[0].n;
+  await ensureStagingAccounts(db);
+  return 2 - before;
+}
+async function ensureStagingAccounts(db: MigrationDatabase): Promise<void> {
+  for (const actor of DEMO_ACTORS.slice(4)) {
+    const email = `pilot-${actor.id.slice(-1)}@example.invalid`;
+    await db.exec(
+      `insert into auth.users(id,email) select '${actor.id}','${email}' where not exists (select 1 from auth.users where id='${actor.id}')`,
+    );
+    await db.exec(
+      `insert into public.users(user_id,auth_uid,email,display_name,role,is_pilot_test_account) select '${actor.id}','${actor.id}','${email}','${actor.displayName}','${actor.role}',false where not exists (select 1 from public.users where user_id='${actor.id}')`,
+    );
+  }
 }
 
 interface MigrationDatabase {
@@ -205,7 +283,7 @@ async function seedSynthetic(db: PGlite): Promise<void> {
       await tx.query('insert into auth.users(id,email) values($1,$2)', [actor.id, email]);
       await tx.query(
         'insert into public.users(user_id,auth_uid,email,display_name,role,is_pilot_test_account) values($1,$1,$2,$3,$4,$5)',
-        [actor.id, email, actor.displayName, actor.role, actor.role === 'REVIEWER'],
+        [actor.id, email, actor.displayName, actor.role, PILOT_TEST_ACCOUNT_IDS.has(actor.id)],
       );
     }
     const areas = [

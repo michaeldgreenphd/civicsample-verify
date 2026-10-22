@@ -2,3 +2,4 @@
 set -eu
 node scripts/check-fixtures.mjs
 python3 tools/check_public_repo_leakage_v4.py --tree
+python3 tools/check_public_repo_leakage_v5.py --tree

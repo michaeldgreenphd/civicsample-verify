@@ -71,3 +71,24 @@ freeze_manifest_v4*
 MODULE_B_SAMPLE*
 SAMPLING_DESIGN_v4*
 SAMPLING_PRECISION_MEMO_v4*
+
+# Explicit upstream v5 private-source exclusions.
+REVIEW_SAMPLE_v5*
+FROZEN_LABELS_v5*
+CALIBRATION_TRIALS_v5*
+freeze_manifest_v5*
+FREEZE_MANIFEST_v5*
+FRAME_v5*
+SAMPLING_DESIGN_v5*
+REVIEW_DESIGN_v5_SUMMARY*
+numbers_trace_v5*
+numbers_trace_worked_examples_v5*
+independent_judgments_v5*
+adjudicated_reference_v5*
+frozen_labels_v5*
+bundle_v5*.manifest.json
+performance_results_v5*
+performance_estimates_v5*
+clinical_review_results_block_v5*
+WORKED_EXAMPLES_v5*
+worked_examples_v5*

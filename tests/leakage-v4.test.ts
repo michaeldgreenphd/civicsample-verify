@@ -76,6 +76,24 @@ test('upstream v2 and v3 content protections remain active alongside v4 headers'
     });
 });
 
+test('SVG text is scanned in both working files and indexed blobs', () => {
+  workspace((root) => {
+    const name = 'diagram.svg';
+    put(
+      root,
+      name,
+      `<svg xmlns="http://www.w3.org/2000/svg"><text>${markers.heldout}</text></svg>`,
+    );
+    assert.equal(scan(root).status, 1);
+    execFileSync('git', ['add', name], { cwd: root });
+    put(root, name, '<svg xmlns="http://www.w3.org/2000/svg"><text>Synthetic</text></svg>');
+    const result = scan(root);
+    assert.equal(result.status, 1);
+    assert.match(result.output, /FORBIDDEN_CONTENT/);
+    assert.equal(result.output.includes(markers.heldout), false);
+  });
+});
+
 test('only ignored runtime content is excluded; ignored study files still fail tree scan', () => {
   workspace((root) => {
     put(root, '.local/state.txt', markers.development);

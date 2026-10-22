@@ -592,9 +592,9 @@ export async function loadV4SyntheticExportInputFromDb(
          where pt.event_type in ('FORMAL_CLOSED_COMPLETE', 'FORMAL_CLOSED_INCOMPLETE')
        ) as formal_phase_closed_at,
        (
-         select ${ISO_UTC_TS_SQL('coalesce(min(a.assigned_at), fm.frozen_at)')}
-         from public.assignments a
-         where a.mode = 'FORMAL' and a.withdrawn_at is null
+         select ${ISO_UTC_TS_SQL('min(pt.occurred_at)')}
+         from public.review_phase_events pt
+         where pt.event_type = 'FORMAL_UNLOCKED'
        ) as formal_phase_opened_at,
        (
          select v.version
@@ -612,7 +612,17 @@ export async function loadV4SyntheticExportInputFromDb(
     throw new Error('No v4 freeze manifest exists in the database');
   }
 
-  const exportId = options.exportId ?? '00000000-0000-4000-8000-0000000000f4';
+  if (!meta.formal_phase_opened_at)
+    throw new Error('A recorded FORMAL_UNLOCKED event is required for export');
+  if (!meta.freeze_manifest_id || !meta.reference_lock_id)
+    throw new Error('A frozen sample and locked reference are required for export');
+  // A deterministic UUIDv8 identifies this frozen evaluation/reference pair.
+  // Repeated exports are stable, while separate databases/campaigns cannot all
+  // inherit the same fixture identifier.
+  const identity = sha256(`v4-bundle|${meta.freeze_manifest_id}|${meta.reference_lock_id}`);
+  const exportId =
+    options.exportId ??
+    `${identity.slice(0, 8)}-${identity.slice(8, 12)}-8${identity.slice(13, 16)}-a${identity.slice(17, 20)}-${identity.slice(20, 32)}`;
   const createdAt = options.createdAt ?? meta.reference_locked_at ?? new Date().toISOString();
   const frozenItems = meta.frozen_items ?? {};
 

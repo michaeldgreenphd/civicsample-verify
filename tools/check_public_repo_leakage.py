@@ -55,7 +55,7 @@ NAME_EXCEPTIONS = {"validation/fixtures/synthetic_formal_analysis_export.csv",
                    "validation/fixtures/synthetic_formal_analysis_export.manifest.json"}
 DATA_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".sql", ".txt"}
 # Binary formats: content is not scanned (no meaningful text); data containers are flagged for review.
-BINARY_SUFFIXES = {".png", ".pdf", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".otf"}
+BINARY_SUFFIXES = {".png", ".pdf", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".otf"}
 DATA_CONTAINER_SUFFIXES = {".xlsx", ".xls", ".parquet", ".feather", ".gz", ".zip", ".sqlite", ".db", ".rds", ".dta", ".sav"}
 
 # (label, pattern, scope): scope "all" = every text file, "data" = data-like files only.

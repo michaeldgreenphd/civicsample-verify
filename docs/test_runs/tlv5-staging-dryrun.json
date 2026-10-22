@@ -1,0 +1,8 @@
+{
+  "notice": "Historical author-reported private-file dry run on a disposable in-memory database. Private study counts and hashes are intentionally omitted from this public record. This is not a deployed staging test or investigator approval. The stricter current application guards require a fresh authorized dry run.",
+  "environment": "in-memory PGlite (disposable)",
+  "author_reported_hash_validation": true,
+  "author_reported_reference_comparison": true,
+  "current_revision_rerun": "NOT TESTED",
+  "supabase_acceptance": "UNTESTED"
+}

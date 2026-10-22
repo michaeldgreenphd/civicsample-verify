@@ -13,6 +13,7 @@ import type {
   Workspace,
 } from '@/lib/types';
 import { Icon } from '@/components/icons';
+import { Tlv5Panel } from './tlv5-workspace';
 
 const decisions: { value: Decision; label: string; description: string }[] = [
   {
@@ -350,6 +351,9 @@ export default function Home() {
                 <span className="count-pill">{workspace.queue.length}</span>
               )}
             </button>
+            <button className={tab === 'tlv5' ? 'active' : ''} onClick={() => setTab('tlv5')}>
+              Trial verification <span className="count-pill">Design v5</span>
+            </button>
             <button
               className={tab === 'module-b' ? 'active' : ''}
               onClick={() => setTab('module-b')}
@@ -380,6 +384,8 @@ export default function Home() {
                 Loading assigned workspace…
               </div>
             )
+          ) : tab === 'tlv5' ? (
+            <Tlv5Panel user={user} />
           ) : tab === 'module-b' ? (
             <ModuleB />
           ) : user.role === 'INVESTIGATOR' ? (

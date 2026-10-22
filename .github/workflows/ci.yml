@@ -42,7 +42,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/formal-export.test.ts
+      - run: node --import tsx --test tests/formal-export.test.ts tests/tlv5.test.ts
         env:
           VERIFY_ANALYSIS_PYTHON: python3
   postgres:
@@ -70,6 +70,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run test:postgres
+        env:
+          VERIFY_PG_REQUIRE: '1'
+          VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
+      - name: Current v5 database boundaries and concurrency
+        run: node --import tsx --test tests/tlv5-postgres.test.ts
         env:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test

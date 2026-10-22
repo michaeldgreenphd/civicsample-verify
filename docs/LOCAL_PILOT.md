@@ -30,6 +30,18 @@ Use a separate browser profile for each role on the **same computer** that runs 
 
 Final submissions are immutable. Any permitted amendment needs explicit investigator authorization and preserves the original record. A locked campaign cannot be reopened through ordinary editing. If a second pilot campaign is needed, keep the original data and exports and arrange an explicit separate synthetic test environment; do not delete the database to start over.
 
+## Proposed v5 pilot (trial verification tab)
+
+This synthetic engineering workflow is not the newly requested 100-mapping confirmation review. Its formal web actions and private-file dry run remain blocked.
+
+The "Trial verification" tab runs the design v5 synthetic pilot with the same four accounts (the two reviewer accounts are the pilot test accounts). As `investigator`: import the 10 synthetic pilot trials, then assign them to both pilot accounts. As `reviewer-a` and `reviewer-b`, in separate profiles: open each trial, answer the 7 area items and the 10 condition-row items; the diabetes-type and malignancy items appear only while your own row answer is Yes and disappear when you change it. Follow the pilot script in `docs/design_v5/SYNTHETIC_PILOT_CASES_v5.csv` (account 2 plants two disagreements and one packet-problem flag; the old revision example must be completed before final submission because ordinary final revisions are now refused). As `adjudicator`: the queue lists trials after both independent reviewers submit; resolve the planted disagreements with a status, basis, reason code and rationale (a concordant item is refused under the disagreements-only scope). As `investigator`: lock the pilot reference, preview the bundle, download the four files, register the export, then run
+
+```sh
+.venv/bin/python -m analysis.performance_analysis_v5 --manifest <folder>/pilot_bundle_v5.manifest.json --out <new folder> --allow-pilot
+```
+
+and sign off the pilot with the SHA-256 of your signed checklist. Activation, formal enrolment, freeze and formal assignment through the web app remain blocked pending an approved design; `staging-reviewer-1` and `staging-reviewer-2` are synthetic FORMAL-scope identities for training examples and dry runs only.
+
 ## Record useful feedback
 
 Record the synthetic case ID, role, action, expected behavior, and observed behavior. Check keyboard access, visible focus, narrow-screen layout, draft status, errors, evidence readability, and whether the preview matches the reviewer packet. Keep actual responses and exported audit records private. A sanitized issue may describe a reproducible software defect without including credentials or response text.

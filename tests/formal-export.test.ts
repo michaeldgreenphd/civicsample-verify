@@ -787,6 +787,46 @@ test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB
     assert.equal(bundle.files[1].rows, 5); // 5 case levels
     assert.equal(bundle.files[2].rows, 5); // 5 prediction rows
 
+    const opening = await investigatorQueryable.query<{ opened_at: Date | string }>(
+      "select occurred_at as opened_at from public.review_phase_events where event_type='FORMAL_UNLOCKED'",
+    );
+    assert.equal(opening.rows.length, 1);
+    assert.equal(
+      new Date(String(bundle.manifest.formal_phase_opened_at)).toISOString(),
+      new Date(opening.rows[0].opened_at).toISOString(),
+    );
+    assert.ok(
+      new Date(String(bundle.manifest.formal_phase_opened_at)) <
+        new Date(String(bundle.manifest.frozen_at)),
+      'the actual unlock precedes freeze; the export must not substitute assignment time',
+    );
+    assert.notEqual(bundle.manifest.export_id, '00000000-0000-4000-8000-0000000000f4');
+
+    // Adapt metadata in memory only, representing another frozen evaluation or
+    // an incomplete legacy source without modifying immutable database records.
+    const withMetadata = (patch: Record<string, unknown>): V4DbQueryable => ({
+      async query<T = Record<string, unknown>>(sql: string, params?: unknown[]) {
+        const result = await investigatorQueryable.query<T>(sql, params);
+        return sql.includes('fm.freeze_id::text as freeze_manifest_id')
+          ? { rows: result.rows.map((row) => ({ ...row, ...patch })) }
+          : result;
+      },
+    });
+    const otherEvaluation = await exportV4SyntheticBundleFromDb(
+      withMetadata({ freeze_manifest_id: '00000000-0000-4000-8000-0000000000e5' }),
+      exportOptions,
+    );
+    assert.notEqual(otherEvaluation.manifest.export_id, bundle.manifest.export_id);
+    assert.equal(
+      (await exportV4SyntheticBundleFromDb(investigatorQueryable, exportOptions)).manifest
+        .export_id,
+      bundle.manifest.export_id,
+    );
+    await assert.rejects(
+      exportV4SyntheticBundleFromDb(withMetadata({ formal_phase_opened_at: null }), exportOptions),
+      /recorded FORMAL_UNLOCKED event/,
+    );
+
     // A later development version is legitimate, but cannot relabel the evaluated cases.
     await asRole('investigator', 'select public.rpc_register_ontology_version($1)', [
       j({

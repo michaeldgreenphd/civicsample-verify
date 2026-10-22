@@ -16,6 +16,10 @@ const sqlInputs = new Set([
   'migrations/0008_trial_packet_and_concurrency_guards.sql',
   'migrations/0009_canonical_packet_and_lock_state_guards.sql',
   'migrations/0010_investigator_judgment_boundary.sql',
+  'migrations/0011_v5_trial_label_verification.sql',
+  'migrations/0012_v5_training_examples.sql',
+  'migrations/0013_v5_independent_finality_guards.sql',
+  'migrations/0014_legacy_pilot_and_packet_guards.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {

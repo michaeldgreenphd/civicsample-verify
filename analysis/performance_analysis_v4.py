@@ -23,7 +23,7 @@ except ImportError:  # run from inside analysis/
     import performance_analysis_v3 as pa3  # type: ignore
     import review_codes as rc  # type: ignore
 
-__version__ = "4.0.4"
+__version__ = "4.0.5"
 EXPORT_FORMAT_VERSION_V4 = "4.0"
 POS, NEG = pa3.POS, pa3.NEG
 L1_CODES = pa3.L1_CODES
@@ -412,14 +412,18 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
     if ((J.decision_initial != J.decision_effective_preclose) & (nrev == 0)).any():
         raise ExportError("a judgment changed between the initial and effective answer but records no revision")
     opened_at, closed_at = _ts(manifest["formal_phase_opened_at"]), _ts(manifest["formal_phase_closed_at"])
-    if opened_at < frozen_at:
-        raise ExportError("the formal phase opened before the freeze")
+    # FORMAL_UNLOCKED authorizes enrolment; the preserved database freeze RPC
+    # requires that event first. Review readiness requires BOTH events.
+    ready_at = max(opened_at, frozen_at)
+    lock_at = _ts(manifest["reference_locked_at"])
+    if closed_at < ready_at or lock_at < closed_at:
+        raise ExportError("the formal phase close and reference lock must follow both opening and freeze")
     jf = _ts_col(J.first_submitted_at, "first_submitted_at")
     jl = _ts_col(J.last_submitted_at, "last_submitted_at")
-    if (jf < opened_at).any() or (jl > closed_at).any() or (jl < jf).any():
-        raise ExportError("an independent judgment falls outside the formal phase (before the opening or after the close)")
+    if (jf < ready_at).any() or (jl > closed_at).any() or (jl < jf).any():
+        raise ExportError("an independent judgment falls outside the formal phase (before opening or freeze, or after the close)")
     passed.append("independent judgments: layer-1 codes, two different reviewers per case level, revisions recorded, "
-                  "submitted inside the formal phase")
+                  "submitted after opening and freeze and before the formal phase close")
 
     # ---- adjudicated reference ----------------------------------------------
     for c in ("adjudication_blinded", "adjudicator_exposed_to_index_labels", "post_unblinding_revision_exists"):
@@ -464,7 +468,6 @@ def validate_bundle(data: Mapping[str, pd.DataFrame], manifest: Mapping[str, Any
         raise ExportError("the primary reference includes adjudications exposed to classifier outputs; "
                           "pass allow_exposed_reference=True only for a labelled secondary analysis")
     at = _ts_col(A.adjudicated_at, "adjudicated_at")
-    lock_at = _ts(manifest["reference_locked_at"])
     if (at < closed_at).any() or (at > lock_at).any():
         raise ExportError("a primary adjudication falls outside the window between the close and the reference lock")
     if set(A.reference_lock_id.astype(str)) != {str(manifest["reference_lock_id"])}:
