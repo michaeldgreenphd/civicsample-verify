@@ -82,6 +82,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
       '5.1.2-legacy-pilot-packet-guards',
       '5.1.3-v5-review-fixes',
       '5.1.4-v5-rubric-binding',
+      '5.1.5-v5-rubric-reconciliation',
       '6.0.0-mapping-confirmation',
       '6.0.1-mapping-confirmation-review-fixes',
     ],

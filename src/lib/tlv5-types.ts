@@ -135,6 +135,14 @@ export interface Tlv5InvestigatorWorkspace {
     manifestSha256: string;
     appGitSha: string;
   }[];
+  /** Rubric bound to each mode (migrations 0017/0019); an unreconciled mode blocks activity. */
+  rubricBindings: {
+    mode: Tlv5Mode;
+    rubricVersion: string;
+    rubricSha256: string;
+    unreconciled: boolean;
+    matchesRuntime: boolean;
+  }[];
   verification: {
     frozenLabels: { matches: boolean; frozenRows: number; currentRows: number } | null;
     snapshot: { matches: boolean; snapshotRows: number; currentRows: number } | null;
@@ -221,7 +229,14 @@ export type Tlv5AdminAction =
       attestation: string;
     }
   | { action: 'snapshot' }
-  | { action: 'provision-staging-accounts' };
+  | { action: 'provision-staging-accounts' }
+  | {
+      action: 'reconcile-rubric';
+      mode: Tlv5Mode;
+      rubricVersion: string;
+      rubricSha256: string;
+      attestation: string;
+    };
 
 export interface Tlv5BundleFile {
   role: 'independent_judgments' | 'adjudicated_reference' | 'frozen_labels';

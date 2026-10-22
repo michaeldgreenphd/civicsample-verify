@@ -22,6 +22,7 @@ const sqlInputs = new Set([
   'migrations/0014_legacy_pilot_and_packet_guards.sql',
   'migrations/0015_v5_review_fixes.sql',
   'migrations/0017_v5_rubric_binding.sql',
+  'migrations/0019_v5_rubric_binding_reconciliation.sql',
   'migrations/0016_mapping_confirmation.sql',
   'migrations/0018_mapping_confirmation_review_fixes.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',

@@ -1235,6 +1235,24 @@ function Tlv5Investigator({
                   ({workspace.verification.snapshot.currentRows} rows).
                 </p>
               )}
+              <p className="muted" style={{ fontSize: 12 }} data-testid="tlv5-rubric-bindings">
+                Rubric bindings:{' '}
+                {workspace.rubricBindings.length
+                  ? workspace.rubricBindings
+                      .map(
+                        (b) =>
+                          `${b.mode}: ${b.unreconciled ? 'UNRECONCILED (judgments predate rubric binding)' : `${b.rubricVersion}${b.matchesRuntime ? '' : ' (differs from the runtime rubric; activity blocked)'}`}`,
+                      )
+                      .join('; ')
+                  : 'none yet (the first review activity of a mode binds the runtime rubric)'}
+                .
+              </p>
+              {workspace.rubricBindings.some((b) => b.unreconciled) && (
+                <RubricReconciliation
+                  modes={workspace.rubricBindings.filter((b) => b.unreconciled).map((b) => b.mode)}
+                  onReconcile={(input) => act(input, 'Rubric reconciliation')}
+                />
+              )}
             </div>
           </section>
           <section className="panel" style={{ marginTop: 24 }}>
@@ -1643,5 +1661,81 @@ function Tlv5Investigator({
         </div>
       </div>
     </>
+  );
+}
+
+/** Investigator-only: name the rubric that judgments recorded before rubric binding were made
+ *  under. Recorded once per mode, append-only and audited (migration 0019). */
+function RubricReconciliation({
+  modes,
+  onReconcile,
+}: {
+  modes: Tlv5Mode[];
+  onReconcile: (input: Tlv5AdminAction) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<Tlv5Mode>(modes[0]);
+  const [version, setVersion] = useState('');
+  const [sha, setSha] = useState('');
+  const [attestation, setAttestation] = useState('');
+  const ready =
+    version.trim().length >= 3 && /^[0-9a-fA-F]{64}$/.test(sha) && attestation.trim().length >= 20;
+  return (
+    <form
+      className="notice warning"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (ready)
+          void onReconcile({
+            action: 'reconcile-rubric',
+            mode,
+            rubricVersion: version.trim(),
+            rubricSha256: sha.toLowerCase(),
+            attestation,
+          });
+      }}
+    >
+      <strong>Rubric reconciliation required</strong>
+      Judgments in {modes.join(', ')} were recorded before rubric binding existed. Record the rubric
+      version and SHA-256 they were made under; review activity and exports for that mode stay
+      blocked until then. This is a one-time, audited investigator record.
+      <div className="context-grid">
+        <label className="field">
+          <span className="form-label">Mode</span>
+          <select value={mode} onChange={(e) => setMode(e.target.value as Tlv5Mode)}>
+            {modes.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="form-label">Rubric version</span>
+          <input value={version} onChange={(e) => setVersion(e.target.value)} maxLength={80} />
+        </label>
+        <label className="field">
+          <span className="form-label">Rubric SHA-256</span>
+          <input
+            value={sha}
+            onChange={(e) => setSha(e.target.value)}
+            maxLength={64}
+            className="mono"
+          />
+        </label>
+        <label className="field">
+          <span className="form-label">Attestation (20 characters or more)</span>
+          <input
+            value={attestation}
+            onChange={(e) => setAttestation(e.target.value)}
+            maxLength={2000}
+          />
+        </label>
+      </div>
+      <div className="button-row">
+        <button className="button" type="submit" disabled={!ready}>
+          Record rubric reconciliation
+        </button>
+      </div>
+    </form>
   );
 }
