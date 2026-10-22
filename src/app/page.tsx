@@ -14,6 +14,7 @@ import type {
 } from '@/lib/types';
 import { Icon } from '@/components/icons';
 import { Tlv5Panel } from './tlv5-workspace';
+import { McPanel } from './mapconf-workspace';
 
 const decisions: { value: Decision; label: string; description: string }[] = [
   {
@@ -354,6 +355,9 @@ export default function Home() {
             <button className={tab === 'tlv5' ? 'active' : ''} onClick={() => setTab('tlv5')}>
               Trial verification <span className="count-pill">Design v5</span>
             </button>
+            <button className={tab === 'mapconf' ? 'active' : ''} onClick={() => setTab('mapconf')}>
+              Mapping confirmation <span className="count-pill">Synthetic</span>
+            </button>
             <button
               className={tab === 'module-b' ? 'active' : ''}
               onClick={() => setTab('module-b')}
@@ -386,6 +390,8 @@ export default function Home() {
             )
           ) : tab === 'tlv5' ? (
             <Tlv5Panel user={user} />
+          ) : tab === 'mapconf' ? (
+            <McPanel user={user} />
           ) : tab === 'module-b' ? (
             <ModuleB />
           ) : user.role === 'INVESTIGATOR' ? (

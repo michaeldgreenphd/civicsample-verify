@@ -1,6 +1,6 @@
 # Decisions and integration work still open
 
-The latest direct decisions are in [REVIEW_WORKFLOW_DECISIONS.md](REVIEW_WORKFLOW_DECISIONS.md): 100 individual trial-to-condition mappings, three excluded training examples, and visible existing assignments. This is a mapping-confirmation review; the proposed v5 100-trial workflow is not the requested final design. Prior open questions below are historical context where superseded.
+The latest direct decisions are in [REVIEW_WORKFLOW_DECISIONS.md](REVIEW_WORKFLOW_DECISIONS.md): 100 individual trial-to-condition mappings, three excluded training examples, and visible existing assignments. This is a mapping-confirmation review; the proposed v5 100-trial workflow is not the requested final design. The synthetic implementation of that design, the proposed ten-condition list with its flagged discrepancies, and the items that still need an investigator decision are in [MAPPING_CONFIRMATION.md](MAPPING_CONFIRMATION.md). Prior open questions below are historical context where superseded.
 
 ## Investigator decisions
 
