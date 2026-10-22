@@ -89,6 +89,41 @@ def test_end_to_end_counts_and_labels(bundle):
     assert any("Tier 1 additions" in s for s in res["not_estimable_by_design"])
 
 
+def test_removal_only_labels_do_not_change_paired_values_or_denominators(bundle):
+    data, man = _copy(bundle)
+    merged, passed = _validate(data, man)
+    results = pa4.build_results(merged, man, passed)
+    # The adversarial fixture includes both directions; interpretation must not silently
+    # discard additions or redefine a sensitivity/specificity denominator.
+    predictions = data["frozen_predictions"]
+    assert ((predictions.tier0_binary == "EXCLUDE") & (predictions.tier1_binary == "INCLUDE")).any()
+    assert ((predictions.tier0_binary == "INCLUDE") & (predictions.tier1_binary == "EXCLUDE")).any()
+    for level in ("DESCRIPTOR_LEVEL", "TRIAL_LEVEL"):
+        expected = pa3.paired_comparison(merged, level, "VALIDATION_HELDOUT", "R0_primary")
+        actual = copy.deepcopy(results["paired_comparison"][level])
+        assert actual.pop("interpretation_scope") == "REMOVAL_ONLY"
+        assert actual.pop("tier1_addition_accuracy_estimable") is False
+        assert "does not filter" in actual.pop("interpretation_notice")
+        for metric in ("sensitivity", "specificity"):
+            for suffix in ("", "_weighted"):
+                quantity = actual[f"{metric}_difference_curated_minus_original{suffix}"]
+                assert quantity.pop("label").startswith(f"Removal-only {metric} difference:")
+                assert quantity.pop("interpretation_scope") == "REMOVAL_ONLY"
+        assert pa3._jsonable(actual) == pa3._jsonable(expected)
+    assert "additions is not estimable" in results["labels"]["paired_differences"]
+
+
+@pytest.mark.parametrize("phrase", [
+    "Tier 1 sensitivity gain", "TIER 1 SENSITIVITY GAIN", "Tier-1 sensitivity gain",
+    "Tier 1's sensitivity gain", "Tier 1’s sensitivity gain", "Tier 1 **sensitivity gain**",
+])
+def test_render_refuses_addition_gain_claim(bundle, phrase):
+    data, man = _copy(bundle)
+    results = _results(data, man)
+    with pytest.raises(pa4.ExportError, match="unsupported improvement from additions"):
+        pa4.render_manuscript_block(results, phrase + ": fictional test output", allow_synthetic=True)
+
+
 def test_hand_computed_confusion_and_discordant_counts(bundle):
     data, man = _copy(bundle)
     res = _results(data, man)
@@ -242,11 +277,21 @@ def test_manuscript_block_refuses_synthetic_and_traces_every_number(bundle, tmp_
         pa4.render_manuscript_block(res2, template, allow_synthetic=True)
 
 
-def test_cli_writes_outputs(tmp_path):
+def test_cli_writes_outputs(tmp_path, capsys):
     rc = pa4.main(["--manifest", str(MANIFEST), "--out", str(tmp_path / "out"), "--template", str(TEMPLATE), "--allow-synthetic"])
     assert rc == 0
     for f in ("performance_results_v4.json", "clinical_review_results_block_v4.md", "clinical_review_results_block_v4_trace.csv"):
         assert (tmp_path / "out" / f).exists()
+    result = json.loads((tmp_path / "out" / "performance_results_v4.json").read_text())
+    for level in ("DESCRIPTOR_LEVEL", "TRIAL_LEVEL"):
+        for metric in ("sensitivity", "specificity"):
+            for suffix in ("", "_weighted"):
+                quantity = result["paired_comparison"][level][f"{metric}_difference_curated_minus_original{suffix}"]
+                assert quantity["interpretation_scope"] == "REMOVAL_ONLY"
+                assert "Removal-only" in quantity["label"]
+    block = (tmp_path / "out" / "clinical_review_results_block_v4.md").read_text()
+    assert pa4.REMOVAL_ONLY_NOTICE in block
+    assert "Tier 1 sensitivity gain" not in block + capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

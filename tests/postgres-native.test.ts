@@ -490,6 +490,26 @@ test(
               }),
             ],
           );
+          // Preserve historical pilot bootstrap, then enforce the new boundary on
+          // every subsequent insert; the native concurrent ADJ paths below stay valid.
+          await admin.exec(
+            await readFile('migrations/0010_investigator_judgment_boundary.sql', 'utf8'),
+          );
+          for (const table of ['adjudications', 'mb_adjudications_v4']) {
+            for (const decidedBy of [ACTORS.investigator, ACTORS.adjudicator]) {
+              await assert.rejects(
+                admin.transaction(async (tx) => {
+                  await tx.query("select set_config('request.jwt.claims',$1,true)", [
+                    j({ sub: ACTORS.investigator, aal: 'aal2' }),
+                  ]);
+                  return tx.query(`insert into public.${table}(decided_by) values($1)`, [
+                    decidedBy,
+                  ]);
+                }),
+                /investigators cannot enter judgments/,
+              );
+            }
+          }
           await asRole('investigator', 'select public.rpc_unlock_formal_review($1,$2,$3,$4,$5)', [
             'SYN-PILOT-CHECKLIST',
             '1'.repeat(64),
@@ -831,6 +851,23 @@ test(
               [descId],
             )
           ).rows.map((r) => r.review_id);
+
+          await assert.rejects(
+            asRole('investigator', 'select public.rpc_record_adjudication_v3($1)', [
+              j({
+                case_id: descId,
+                determination_level: 'DESCRIPTOR_LEVEL',
+                layer: 'clinical_classification',
+                decision: 'INCLUDE',
+                status: 'DISCORDANT_RESOLVED',
+                basis: 'REVIEWER_1',
+                reason_code: 'CONSTRUCT_BOUNDARY',
+                rationale: 'Synthetic forbidden investigator judgment.',
+                considered_ids: consideredDesc,
+              }),
+            ]),
+            /investigators cannot enter judgments/,
+          );
 
           await conn1.exec('begin');
           await conn1.exec('set local role authenticated');

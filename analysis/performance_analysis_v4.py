@@ -23,7 +23,7 @@ except ImportError:  # run from inside analysis/
     import performance_analysis_v3 as pa3  # type: ignore
     import review_codes as rc  # type: ignore
 
-__version__ = "4.0.3"
+__version__ = "4.0.4"
 EXPORT_FORMAT_VERSION_V4 = "4.0"
 POS, NEG = pa3.POS, pa3.NEG
 L1_CODES = pa3.L1_CODES
@@ -574,6 +574,31 @@ def initial_submission_agreement(M: pd.DataFrame) -> Dict[str, Any]:
     return out
 
 
+REMOVAL_ONLY_NOTICE = (
+    "The paired sensitivity and specificity differences are removal-only quantities: "
+    "interpret them as a comparison of Tier 1 removals with Tier 0 on the same adjudicated cases. "
+    "Accuracy of Tier 1 additions is not estimable under this review design. "
+    "The estimators retain all eligible paired cases; this label does not filter to removed cases "
+    "or change the denominator."
+)
+
+
+def removal_only_paired_comparison(M: pd.DataFrame, level: str) -> Dict[str, Any]:
+    """Attach the investigator-requested claim boundary without changing the paired estimators or their inputs."""
+    result = pa3.paired_comparison(M, level, "VALIDATION_HELDOUT", "R0_primary")
+    result["interpretation_scope"] = "REMOVAL_ONLY"
+    result["interpretation_notice"] = REMOVAL_ONLY_NOTICE
+    result["tier1_addition_accuracy_estimable"] = False
+    for metric in ("sensitivity", "specificity"):
+        for suffix, weighting in (("", "sample-restricted"), ("_weighted", "design-weighted")):
+            quantity = result[f"{metric}_difference_curated_minus_original{suffix}"]
+            quantity["label"] = (
+                f"Removal-only {metric} difference: Tier 1 minus Tier 0 ({weighting})"
+            )
+            quantity["interpretation_scope"] = "REMOVAL_ONLY"
+    return result
+
+
 def build_results(M: pd.DataFrame, manifest: Mapping[str, Any], passed: List[str]) -> Dict[str, Any]:
     if manifest.get("is_synthetic_fixture") is not True or not M.case_id.astype(str).str.fullmatch(r"HO4R?-TESTFX-[0-9]+").all():
         raise ExportError("SYNTHETIC ENGINEERING ONLY: real-data and pilot analysis disabled")
@@ -614,9 +639,10 @@ def build_results(M: pd.DataFrame, manifest: Mapping[str, Any], passed: List[str
                                "linearization, Wilson interval at the effective size capped at the domain count; "
                                "the uncapped interval is also reported)",
             "agreement": "reviewer-reviewer agreement is consistency between two clinicians, not accuracy",
+            "paired_differences": REMOVAL_ONLY_NOTICE,
         },
         "not_estimable_by_design": [
-            "accuracy of Tier 1 additions: requires an adequate identifiable denominator in an approved design",
+            "accuracy of Tier 1 additions: not estimable under this removal-only review; requires a separate approved design",
             "sensitivity, specificity, PPV and NPV within a therapeutic area unless the denominator reaches the prespecified threshold",
             "trial-level accuracy beyond a description of the sampled context-dependent trial cases",
             "performance on development, calibration or pilot cases (never computed from formal data)",
@@ -627,7 +653,7 @@ def build_results(M: pd.DataFrame, manifest: Mapping[str, Any], passed: List[str
     for level in ("DESCRIPTOR_LEVEL", "TRIAL_LEVEL"):
         res["accuracy"][level] = {rule: pa3.classifier_vs_reference(M, level, "VALIDATION_HELDOUT", rule)
                                   for rule in pa3.DENOMINATOR_RULES}
-        res["paired_comparison"][level] = pa3.paired_comparison(M, level, "VALIDATION_HELDOUT", "R0_primary")
+        res["paired_comparison"][level] = removal_only_paired_comparison(M, level)
         res["per_area"][level] = pa3.per_area(M, level, "VALIDATION_HELDOUT")
     return res
 
@@ -666,6 +692,8 @@ def render_manuscript_block(results: Mapping[str, Any], template: str, allow_syn
         raise ExportError("SYNTHETIC ENGINEERING ONLY: clinical result rendering disabled")
     if results.get("is_synthetic_fixture") and not allow_synthetic:
         raise ExportError("results come from a synthetic fixture; refusing to render a manuscript block")
+    if re.search(r"\btier[\s_-]*1(?:['’]s)?[\s_*]+sensitivity[\s_*]+gain\b", template, re.IGNORECASE):
+        raise ExportError("Template claims an unsupported improvement from additions; use removal-only difference labels")
     slots = sorted(set(re.findall(r"\{\{([A-Z0-9_]+)\}\}", template)))
     trace, filled = [], template
     for slot in slots:
@@ -679,7 +707,7 @@ def render_manuscript_block(results: Mapping[str, Any], template: str, allow_syn
     if re.search(r"\{\{[A-Z0-9_]+\}\}", filled):
         raise pa3.MissingResultError("unfilled slots remain")
     if results.get("is_synthetic_fixture"):
-        filled = "SYNTHETIC TEST OUTPUT. NOT STUDY RESULTS.\n\n" + filled
+        filled = "SYNTHETIC TEST OUTPUT. NOT STUDY RESULTS.\n\n" + REMOVAL_ONLY_NOTICE + "\n\n" + filled
     return filled, pd.DataFrame(trace)
 
 
