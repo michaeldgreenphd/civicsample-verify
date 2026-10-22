@@ -641,10 +641,9 @@ test(
         const concurrentVersionPromise = asRoleOn(
           conn3,
           'investigator',
-          'select public.rpc_version_case($1,$2,$3,$4,$5,$6,$7)',
+          'select public.rpc_add_case_version($1,$2::jsonb,$3,$4,$5,$6,$7)',
           [
             descId,
-            '1.0.0+R-TEST',
             j({
               schema_version: '1.0',
               case_title: `Fictional ${descId} v2`,
@@ -657,6 +656,7 @@ test(
               mesh: { scope_note: 'SYNTHETIC ENGINEERING ONLY', tree_numbers: ['SYN.001'] },
               area: { key: 'infectious', label: 'Fictional infectious' },
             }),
+            '1.0.0+R-TEST',
             true,
             false,
             false,
@@ -762,7 +762,7 @@ test(
         await conn1.query("select set_config('request.jwt.claims',$1,true)", [
           j({ sub: ACTORS.reviewerA, aal: 'aal2' }),
         ]);
-        await conn1.query('select public.rpc_amend_review($1,$2)', [
+        await conn1.query('select public.rpc_submit_review($1,$2)', [
           reviewerADescAssignmentId,
           j({
             l1_decision: 'INCLUDE',
@@ -774,7 +774,7 @@ test(
         const concurrentAmendPromise = asRoleOn(
           conn2,
           'reviewerA',
-          'select public.rpc_amend_review($1,$2)',
+          'select public.rpc_submit_review($1,$2)',
           [
             reviewerADescAssignmentId,
             j({
