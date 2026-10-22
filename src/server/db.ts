@@ -167,6 +167,10 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     path.join(process.cwd(), 'migrations/0017_v5_rubric_binding.sql'),
     'utf8',
   );
+  const rubricReconciliation = await readFile(
+    path.join(process.cwd(), 'migrations/0019_v5_rubric_binding_reconciliation.sql'),
+    'utf8',
+  );
   for (const [version, migration] of [
     ['5.0.0', trialLabelVerification],
     ['5.1.0', trainingExamples],
@@ -174,6 +178,7 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ['5.1.2-legacy-pilot-packet-guards', legacyPilotGuards],
     ['5.1.3-v5-review-fixes', reviewFixes],
     ['5.1.4-v5-rubric-binding', rubricBinding],
+    ['5.1.5-v5-rubric-reconciliation', rubricReconciliation],
   ] as const) {
     const present = await db.query<{ present: boolean }>(
       `select exists(select 1 from public.app_schema_version where version='${version}') as present`,

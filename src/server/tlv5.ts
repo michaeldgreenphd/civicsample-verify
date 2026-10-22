@@ -79,6 +79,21 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
     'The rubric text changed since this review began; review activity is blocked until the investigator reconciles the rubric.',
   ],
   [
+    /rubric is unreconciled: judgments exist from before rubric binding/,
+    409,
+    'This mode holds judgments made before rubric binding; the investigator must record the rubric they were made under before review activity continues.',
+  ],
+  [
+    /only an investigator or a reviewer assigned in .* review may bind its rubric|sentinel cannot be bound/,
+    403,
+    'Only the investigator or an assigned reviewer may bind the rubric for this mode.',
+  ],
+  [
+    /has no binding to reconcile|already bound to .* and cannot be rebound|names a real rubric version/,
+    409,
+    'The rubric reconciliation does not apply to this mode in its current state.',
+  ],
+  [
     /basis (REVIEWER_1|REVIEWER_2|BOTH_REVIEWERS|NEITHER) does not match the reviewer answers|basis NONE applies only/,
     400,
     'The basis does not match the reviewer answers for this item.',
@@ -447,12 +462,21 @@ async function bindRubric(tx: Tx, mode: Tlv5Mode): Promise<void> {
     rubricSha256(),
   ]);
 }
+/** The effective binding of a mode: a reconciliation when one exists, else the binding row. */
 async function rubricBinding(tx: Tx, mode: Tlv5Mode) {
-  const row = await tx.query<{ rubric_version: string; rubric_sha256: string }>(
-    'select rubric_version, rubric_sha256 from public.tlv5_rubric_bindings where mode = $1',
-    [mode],
-  );
-  return row.rows[0] ?? null;
+  const row = await tx.query<{
+    rubric_version: string | null;
+    rubric_sha256: string | null;
+    unreconciled: boolean | null;
+  }>('select * from private.tlv5_effective_rubric($1)', [mode]);
+  const r = row.rows[0];
+  return r?.rubric_version && r.rubric_sha256
+    ? {
+        rubric_version: r.rubric_version,
+        rubric_sha256: r.rubric_sha256,
+        unreconciled: !!r.unreconciled,
+      }
+    : null;
 }
 async function myAssignment(tx: Tx, id: string) {
   const row = await tx.query<{ assignment_id: string; mode: Tlv5Mode; packet: Tlv5TrialPacket }>(
@@ -473,7 +497,9 @@ export async function getTlv5ReviewerCase(actor: Actor, id: string): Promise<Tlv
     const bound = await rubricBinding(tx, a.mode);
     const rubricMismatch =
       bound !== null &&
-      (bound.rubric_sha256 !== rubricSha256() || bound.rubric_version !== TLV5_RUBRIC_VERSION);
+      (bound.unreconciled ||
+        bound.rubric_sha256 !== rubricSha256() ||
+        bound.rubric_version !== TLV5_RUBRIC_VERSION);
     const detail: Tlv5ReviewerCase = {
       caseId: id,
       mode: a.mode,
@@ -798,6 +824,21 @@ async function getInvestigatorWorkspace(actor: Actor): Promise<Tlv5InvestigatorW
     }>(
       `select export_id, mode, ${TS('created_at')} as created_at, manifest_sha256, app_git_sha from public.tlv5_exports order by created_at`,
     );
+    const rubricBindings: Tlv5InvestigatorWorkspace['rubricBindings'] = [];
+    for (const mode of ['PILOT', 'CALIBRATION', 'TRAINING', 'FORMAL'] as const) {
+      const bound = await rubricBinding(tx, mode);
+      if (bound)
+        rubricBindings.push({
+          mode,
+          rubricVersion: bound.rubric_version,
+          rubricSha256: bound.rubric_sha256,
+          unreconciled: bound.unreconciled,
+          matchesRuntime:
+            !bound.unreconciled &&
+            bound.rubric_sha256 === rubricSha256() &&
+            bound.rubric_version === TLV5_RUBRIC_VERSION,
+        });
+    }
     const verification: Tlv5InvestigatorWorkspace['verification'] = {
       frozenLabels: null,
       snapshot: null,
@@ -848,6 +889,7 @@ async function getInvestigatorWorkspace(actor: Actor): Promise<Tlv5InvestigatorW
         manifestSha256: e.manifest_sha256,
         appGitSha: e.app_git_sha,
       })),
+      rubricBindings,
       verification,
       rubricVersion: TLV5_RUBRIC_VERSION,
       rubricSha256: rubricSha256(),
@@ -1199,6 +1241,16 @@ export async function tlv5AdminAction(
     case 'snapshot':
       await run(actor, (tx) => tx.query('select public.rpc_tlv5_snapshot()'));
       break;
+    case 'reconcile-rubric':
+      await run(actor, (tx) =>
+        tx.query('select public.rpc_tlv5_reconcile_rubric($1, $2, $3, $4)', [
+          input.mode,
+          input.rubricVersion,
+          input.rubricSha256.toLowerCase(),
+          input.attestation,
+        ]),
+      );
+      break;
     case 'provision-staging-accounts':
       // Synthetic FORMAL-scope test identities for training examples and formal dry runs only.
       await provisionStagingAccounts();
@@ -1272,10 +1324,16 @@ export async function exportTlv5Bundle(
     // The export reports the rubric bound to the mode's first review activity and refuses to
     // attest a runtime rubric that differs from it (migration 0017).
     const bound = await rubricBinding(tx, mode);
-    if (
-      bound &&
-      (bound.rubric_sha256 !== exportedRubricHash || bound.rubric_version !== TLV5_RUBRIC_VERSION)
-    )
+    // No binding means no review activity in this mode: there is nothing to export. An
+    // unreconciled or different binding never acquires the runtime rubric's metadata.
+    if (!bound)
+      throw new ServiceError(409, 'No review activity is bound to this mode; nothing to export.');
+    if (bound.unreconciled)
+      throw new ServiceError(
+        409,
+        'This mode holds judgments made before rubric binding; the investigator must record the rubric they were made under before an export.',
+      );
+    if (bound.rubric_sha256 !== exportedRubricHash || bound.rubric_version !== TLV5_RUBRIC_VERSION)
       throw new ServiceError(
         409,
         'The rubric text changed since this review began; the export is blocked until the investigator reconciles the rubric.',
