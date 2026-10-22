@@ -67,6 +67,8 @@ Two synthetic FORMAL-scope accounts, `staging-reviewer-1` and `staging-reviewer-
 
 The "Mapping confirmation" tab implements the revised review design with synthetic fixtures: one trial-to-condition mapping per item, the existing assignment visible, the trial title and brief summary from the source record (a missing summary stays missing), Yes/No with an annotation, Insufficient information recorded as a proposed rubric addition, isolated reviewers with immutable final answers, a separate adjudicator after both finals and investigator authorization, and a typed export (`mapping-confirmation-1.0`) that records the review mode, assignment visibility, evidence and rubric hashes and build commit, and carries no weights or accuracy statistics. Additive migration 0016 holds the `mc_*` tables, policies and RPCs. The proposed ten-condition list, its flagged discrepancies (Pain, the Neoplasms label), the training-example compatibility note and the open scientific items are in [docs/MAPPING_CONFIRMATION.md](docs/MAPPING_CONFIRMATION.md). Evaluation import is disabled in the application until those items are approved.
 
+To try the workflow locally on a separate synthetic database with private role passwords, follow [docs/LOCAL_MAPPING_DEMO.md](docs/LOCAL_MAPPING_DEMO.md).
+
 ![Mapping confirmation reviewer view (synthetic)](docs/screenshots/mapconf-reviewer-desktop.png)
 
 ## Staging preparation
