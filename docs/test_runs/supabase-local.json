@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-10-22T13:19:26.325Z",
+  "status": "BLOCKED",
+  "scope": "Read-only Auth/PostgREST preflight against declared staging; not full Supabase acceptance.",
+  "reason": "PRIVATE_STAGING_CONFIG_UNAVAILABLE",
+  "mutationsPerformed": false,
+  "accountsCreated": 0,
+  "invitationsSent": 0,
+  "checks": [
+    {
+      "id": "existing_staging_sessions",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    },
+    {
+      "id": "prediction_table_blinding",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    },
+    {
+      "id": "independent_review_isolation",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    },
+    {
+      "id": "audit_table_blinding",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    },
+    {
+      "id": "development_registry_blinding",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    },
+    {
+      "id": "unassigned_calibration_blinding",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    },
+    {
+      "id": "unassigned_pilot_blinding",
+      "status": "UNTESTED",
+      "reason": "PREREQUISITES_UNAVAILABLE"
+    }
+  ],
+  "fullSupabaseAcceptance": "UNTESTED",
+  "untested": [
+    "Investigator judgment-write denial and all other mutation paths",
+    "Complete RPC/view/API/export and browser leakage coverage",
+    "Adjudication authorization timing, lock and concurrency behavior",
+    "MFA enrollment, token revocation and refresh behavior",
+    "Deployed schema checksum and external project staging designation verification"
+  ]
+}

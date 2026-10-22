@@ -41,3 +41,9 @@ VERIFY_PG_REQUIRE=1 npm run test:handoff:postgres -- --report docs/test_runs/nat
 Set `VERIFY_PG_TEST_URL` to a disposable development PostgreSQL 16 service with database-creation privileges. The harness rejects Supabase origins, creates fresh owned databases, replaces only the preserved suites' driver imports, and checks the source database's table catalog before and after. It never applies the test auth shim to Supabase. CI uploads the sanitized report. Missing configuration is BLOCKED and fails when `VERIFY_PG_REQUIRE=1`.
 
 PGlite, native PostgreSQL with test claims, and Supabase with real JWTs are three different verification environments. A PASS in one must never fill another's acceptance box.
+
+## Future read-only Supabase probes
+
+The investigator chose to create staging after local testing. Until then, `npm run test:supabase:staging` reports BLOCKED without making requests. Once accounts, MFA and synthetic positive controls exist, use `-- --config /absolute/private/staging-probes.json`. The private JSON contains `project` (the staging declaration above), `publicAnonKey`, five `accounts` in investigator/investigator/reviewer/reviewer/adjudicator order, and `fixtures`. Each account has `role`, `authUserId`, `appUserId`, `accessToken`; no service key is accepted. Optional synthetic positive controls are `predictionCaseId`, `reviewerAReviewId`, `reviewerBReviewId`, `auditId`, `developmentCaseId`, `calibrationCaseId`, `pilotCaseId`.
+
+The runner verifies existing sessions through Auth and `rpc_whoami`, then limited read-isolation probes. It refuses redirects and never prints remote payloads or credentials. Missing positive controls are UNTESTED, never a vacuous PASS. Full Supabase acceptance always remains UNTESTED: write denial, all RPCs/views/routes, MFA enrollment, token refresh/revocation and browser deployment still require a separate integration run. It never signs in, refreshes tokens, provisions users or seeds fixtures.
