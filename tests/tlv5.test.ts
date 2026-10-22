@@ -35,6 +35,8 @@ import {
 } from '../src/server/tlv5';
 
 process.env.VERIFY_DB_DIR = 'memory';
+// Explicit fictional build identity: the export refuses a dirty developer checkout (PR #4 finding).
+process.env.VERIFY_APP_GIT_SHA ??= 'e'.repeat(40);
 const [investigator, pilotA, pilotB, adjudicator, stagingOne, stagingTwo] = DEMO_ACTORS;
 const ATT = 'Synthetic attestation for testing only, at least twenty characters.';
 const python = process.env.VERIFY_ANALYSIS_PYTHON;
@@ -226,11 +228,12 @@ test('design v5 lifecycle: pilot, sign-off, activation, training, synthetic form
       'select version from public.app_schema_version order by applied_at',
     )
   ).rows.map((r) => r.version);
-  assert.deepEqual(versions.slice(-4), [
+  assert.deepEqual(versions.slice(-5), [
     '5.0.0',
     '5.1.0',
     '5.1.1-independent-finality',
     '5.1.2-legacy-pilot-packet-guards',
+    '5.1.3-v5-review-fixes',
   ]);
   assert.equal(versions.includes('4.0.7-investigator-judgment-boundary'), true);
 
@@ -659,11 +662,48 @@ test('design v5 lifecycle: pilot, sign-off, activation, training, synthetic form
     }),
     409,
   );
+  // Rubric calibration: open to the enrolled formal reviewers before the freeze, read-only after it
+  // (migration 0011 closes calibration at the freeze; the screen must say so, PR #4 finding).
+  await importTlv5Case(investigator, {
+    case_id: 'CAL5-TESTFX-01',
+    mode: 'CALIBRATION',
+    packet: synthPacket(701, 'SYN-NCT-7001'),
+  });
+  const formalPseudos = admin.reviewers
+    .filter((r) => r.modeScope === 'FORMAL')
+    .map((r) => r.pseudoId);
+  for (const [slot, pseudo] of formalPseudos.entries())
+    await assignTlv5(
+      investigator,
+      'CALIBRATION',
+      pseudo,
+      (slot + 1) as 1 | 2,
+      ['CAL5-TESTFX-01'],
+      5,
+    );
+  assert.equal(
+    (await getTlv5ReviewerCase(stagingOne, 'CAL5-TESTFX-01')).submissionsOpen,
+    true,
+    'calibration is open before the freeze',
+  );
   await freezeTlv5(investigator, {
     labelFileSha256: 'a'.repeat(64),
     frozenItems: { label_file: 'a'.repeat(64), rubric: rubricSha256() },
     attestation: ATT,
   });
+  assert.equal(
+    (await getTlv5ReviewerCase(stagingOne, 'CAL5-TESTFX-01')).submissionsOpen,
+    false,
+    'calibration closes at the freeze',
+  );
+  await denied(
+    submitTlv5(
+      stagingOne,
+      'CAL5-TESTFX-01',
+      submission(answers({ areas: ['ONCOLOGY'], rows: ['CAN_ALL'] })),
+    ),
+    409,
+  );
   admin = (await getTlv5Workspace(investigator)) as typeof admin;
   assert.equal(admin.state.frozen?.nCases, 6);
   assert.equal(admin.state.frozen?.caseListSha256, caseListSha256(formalIds));

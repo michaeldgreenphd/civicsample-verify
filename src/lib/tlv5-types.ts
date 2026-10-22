@@ -77,6 +77,8 @@ export interface Tlv5State {
   snapshot: { rows: number; sha256: string; takenAt: string } | null;
   /** Readable by every role through the database helper. */
   snapshotTaken: boolean;
+  /** Readable by every role through private.tlv5_scope() (migration 0015). */
+  adjudicationScope: 'DISAGREEMENTS_ONLY' | 'ALL_CASE_LEVELS';
   locks: Partial<Record<'PILOT' | 'TRAINING' | 'FORMAL', { lockedAt: string; items: number }>>;
   /** Submissions are accepted for this mode right now (the database enforces this independently). */
   submissionsOpen: Record<Tlv5Mode, boolean>;
@@ -188,6 +190,8 @@ export interface Tlv5AdjudicatorCaseDetail {
   items: Tlv5QueueRow[];
   adjudications: Tlv5AdjudicationRecord[];
   adjudicationOpen: boolean;
+  /** The active adjudication scope; under DISAGREEMENTS_ONLY concordant items enter by rule. */
+  adjudicationScope: 'DISAGREEMENTS_ONLY' | 'ALL_CASE_LEVELS';
 }
 export interface Tlv5AdjudicationInput {
   caseId: string;

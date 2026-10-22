@@ -27,6 +27,7 @@ import type {
   Tlv5ItemInput,
   Tlv5Mode,
   Tlv5QueueItem,
+  Tlv5QueueRow,
   Tlv5ReviewerCase,
   Tlv5ReviewerWorkspace,
   Tlv5TrialPacket,
@@ -771,6 +772,10 @@ function AdjudicationCase({
       setError('Select an item and give a rationale.');
       return;
     }
+    if (status !== 'UNRESOLVED_ESCALATED' && !effectiveBasis) {
+      setError('Select a decision; the basis follows from the reviewer answers it adopts.');
+      return;
+    }
     setBusy(true);
     try {
       await api('/api/tlv5/adjudicate', {
@@ -781,7 +786,7 @@ function AdjudicationCase({
           decision: status === 'UNRESOLVED_ESCALATED' ? null : decision,
           ...(detailCode ? { detailCode } : {}),
           status,
-          basis: status === 'UNRESOLVED_ESCALATED' ? 'NONE' : basis,
+          basis: status === 'UNRESOLVED_ESCALATED' ? 'NONE' : effectiveBasis,
           rationale: rationale.trim(),
           ...(reason ? { disagreementReasonCode: reason } : {}),
         }),
@@ -816,6 +821,31 @@ function AdjudicationCase({
     ? [...(SCALES[family] ?? []), ...(family.startsWith('SG_') ? ['NOT_APPLICABLE'] : [])]
     : [];
   const details = DETAIL_CODES[`${item}/${decision}`];
+  // Under DISAGREEMENTS_ONLY a concordant item enters the reference by rule and the database refuses
+  // an explicit adjudication, so it is not offered; under ALL_CASE_LEVELS every item is adjudicated.
+  const adjudicable = (row: Tlv5QueueRow) =>
+    !row.adjudicated && (detail.adjudicationScope === 'ALL_CASE_LEVELS' || row.needsAdjudication);
+  const selectedRow = detail.items.find((row) => row.itemCode === item);
+  // The basis names whose latest answer (and detail code) the decision adopts; the database checks
+  // the same rule (migration 0015), so only consistent choices are offered.
+  const matches = (answer: string | null, detailValue: string | null) =>
+    answer !== null && answer === decision && (detailValue ?? '') === (detailCode || '');
+  const validBases =
+    selectedRow && decision
+      ? [
+          matches(selectedRow.reviewer1Answer, selectedRow.reviewer1Detail) ? 'REVIEWER_1' : null,
+          matches(selectedRow.reviewer2Answer, selectedRow.reviewer2Detail) ? 'REVIEWER_2' : null,
+          matches(selectedRow.reviewer1Answer, selectedRow.reviewer1Detail) &&
+          matches(selectedRow.reviewer2Answer, selectedRow.reviewer2Detail)
+            ? 'BOTH_REVIEWERS'
+            : null,
+          !matches(selectedRow.reviewer1Answer, selectedRow.reviewer1Detail) &&
+          !matches(selectedRow.reviewer2Answer, selectedRow.reviewer2Detail)
+            ? 'NEITHER'
+            : null,
+        ].filter((b): b is string => b !== null)
+      : [];
+  const effectiveBasis = validBases.includes(basis) ? basis : (validBases[0] ?? '');
   return (
     <section className="panel">
       <header className="case-header">
@@ -898,7 +928,7 @@ function AdjudicationCase({
             </ul>
           </>
         )}
-        {detail.adjudicationOpen && detail.items.some((row) => !row.adjudicated) && (
+        {detail.adjudicationOpen && detail.items.some(adjudicable) && (
           <form onSubmit={submit}>
             <div className="section-label">
               <span className="section-index">03</span>Record an adjudication
@@ -919,13 +949,15 @@ function AdjudicationCase({
                 >
                   <option value="">Select…</option>
                   {detail.items.map((row) => (
-                    <option key={row.itemCode} value={row.itemCode} disabled={row.adjudicated}>
+                    <option key={row.itemCode} value={row.itemCode} disabled={!adjudicable(row)}>
                       {row.itemCode}
                       {row.adjudicated
                         ? ' (locked)'
                         : row.needsAdjudication
                           ? ' (needs adjudication)'
-                          : ''}
+                          : detail.adjudicationScope === 'ALL_CASE_LEVELS'
+                            ? ' (concordant)'
+                            : ' (by rule; not adjudicated)'}
                     </option>
                   ))}
                 </select>
@@ -988,8 +1020,13 @@ function AdjudicationCase({
                   <label className="form-label" htmlFor="adj-basis">
                     Basis
                   </label>
-                  <select id="adj-basis" value={basis} onChange={(e) => setBasis(e.target.value)}>
-                    {ADJUDICATION_BASES.filter((b) => b !== 'NONE').map((b) => (
+                  <select
+                    id="adj-basis"
+                    value={effectiveBasis}
+                    onChange={(e) => setBasis(e.target.value)}
+                  >
+                    {!validBases.length && <option value="">Select a decision first</option>}
+                    {ADJUDICATION_BASES.filter((b) => validBases.includes(b)).map((b) => (
                       <option key={b} value={b}>
                         {readable(b)}
                       </option>

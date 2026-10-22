@@ -156,7 +156,7 @@ export const ANSWER_LABELS: Record<string, string> = {
  * and OQ-04 texts and the comorbidity, complication and trial-context policies, shown without rule
  * identifiers, MeSH root codes or any statement of the Tier 0 rule.
  */
-export const TLV5_RUBRIC_VERSION = 'REVIEW_RUBRIC_v5_1-DRAFT';
+export const TLV5_RUBRIC_VERSION = 'REVIEW_RUBRIC_v5_1-DRAFT-2';
 export interface RubricSection {
   heading: string;
   paragraphs: string[];
@@ -173,7 +173,7 @@ export const TLV5_RUBRIC: readonly RubricSection[] = [
     heading: 'Three states, never collapsed',
     paragraphs: [
       'An answer is recorded (Yes, No, or a subgroup value); or you record explicitly that the packet cannot decide (Context dependent, Insufficient information, Unclear); or the item was not shown to you (a subgroup question after a row answer other than Yes). Each item also takes an uncertainty flag and a note. A note is required when you select OTHER_SPECIFIED.',
-      'You may revise an answer until the phase closes; the first submission and every revision are kept. Use the packet-problem flag, with a note, to report a missing or wrong record.',
+      'Your submission is final once recorded: this application locks it and refuses a second submission, and no revision window exists. Check every item before you submit. Use the packet-problem flag, with a note, to report a missing or wrong record.',
     ],
   },
   {

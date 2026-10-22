@@ -206,22 +206,50 @@ test('design v5 synthetic pilot: browser form, blinding, adjudication, lock, exp
     await adjPage.getByLabel('Item').selectOption('AREA_NEUROLOGICAL');
     await adjPage.getByLabel('Status').selectOption('DISCORDANT_RESOLVED');
     await adjPage.getByLabel('Decision').selectOption('NO');
-    await adjPage.getByLabel('Basis').selectOption('REVIEWER_1');
+    // Only bases consistent with the reviewer answers are offered (migration 0015): the reviewer
+    // who answered NO, whichever slot that account holds, and nothing else.
+    const bases = await adjPage
+      .locator('#adj-basis option')
+      .evaluateAll((o) => o.map((e) => (e as HTMLOptionElement).value));
+    expect(bases.filter((b) => b.startsWith('REVIEWER_'))).toHaveLength(1);
+    expect(bases).not.toContain('BOTH_REVIEWERS');
+    expect(bases).not.toContain('NEITHER');
+    await adjPage.getByLabel('Basis').selectOption(bases[0]);
     await adjPage.getByLabel('Disagreement reason code').selectOption('CONSTRUCT_BOUNDARY');
     await adjPage
       .getByLabel('Rationale')
       .fill('Synthetic adjudication of the planted disagreement.');
     await adjPage.getByRole('button', { name: 'Record adjudication' }).click();
     await expect(adjPage.getByText('Adjudication recorded and locked.')).toBeVisible();
-    await expect(adjPage.locator('#adj-item option[value="AREA_NEUROLOGICAL"]')).toBeDisabled();
-    await expect(adjPage.getByRole('button', { name: 'Record adjudication' })).toBeDisabled();
+    // The only disagreement of this case is now locked; concordant items enter by rule under
+    // DISAGREEMENTS_ONLY, so no adjudicable item remains and the form is gone (PR #4 finding).
+    await expect(adjPage.locator('#adj-item')).toHaveCount(0);
+    await expect(adjPage.getByRole('button', { name: 'Record adjudication' })).toHaveCount(0);
+    await expect(adjPage.getByText('AREA_NEUROLOGICAL (locked)')).toBeVisible();
     await adjPage.screenshot({ path: 'test-results/tlv5-adjudicator-desktop.png', fullPage: true });
+    const tenth = (await (await adj.request.get('/api/tlv5/cases/SYN-TLV5-010')).json()) as {
+      items: { itemCode: string; reviewer1Answer: string | null; reviewer2Answer: string | null }[];
+    };
+    const neuro = tenth.items.find((i) => i.itemCode === 'AREA_NEUROLOGICAL')!;
+    const noSlot = neuro.reviewer1Answer === 'NO' ? 'REVIEWER_1' : 'REVIEWER_2';
+    const otherSlot = noSlot === 'REVIEWER_1' ? 'REVIEWER_2' : 'REVIEWER_1';
+    // A basis that names the reviewer who did not give this answer is refused by the database.
+    const mismatched = await post(adj, '/api/tlv5/adjudicate', {
+      caseId: 'SYN-TLV5-010',
+      itemCode: 'AREA_NEUROLOGICAL',
+      decision: 'NO',
+      status: 'DISCORDANT_RESOLVED',
+      basis: otherSlot,
+      rationale: 'Synthetic mismatched basis.',
+      disagreementReasonCode: 'TRIAL_CONTEXT',
+    });
+    expect(mismatched.status()).toBe(400);
     const second = await post(adj, '/api/tlv5/adjudicate', {
       caseId: 'SYN-TLV5-010',
       itemCode: 'AREA_NEUROLOGICAL',
       decision: 'NO',
       status: 'DISCORDANT_RESOLVED',
-      basis: 'REVIEWER_1',
+      basis: noSlot,
       rationale: 'Synthetic explicit indeterminate kept apart from No.',
       disagreementReasonCode: 'TRIAL_CONTEXT',
     });

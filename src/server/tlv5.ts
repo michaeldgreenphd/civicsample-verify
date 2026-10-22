@@ -59,7 +59,7 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
     'This action is not available to your role.',
   ],
   [
-    /pilot reference is locked|training reference is locked|formal phase is not open|closed when the formal phase opened|calibration closed|Final v5 submission|amendment|Two independent|two independent|both reviewers|reference is locked/,
+    /pilot reference is locked|training reference is locked|formal phase is not open|closed when the formal phase opened|calibration closed|calibration is closed|Final v5 submission|amendment|Two independent|two independent|both reviewers|reference is locked/,
     409,
     'Submissions are closed for this case.',
   ],
@@ -74,6 +74,11 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
     'The reviewers agree on this item; under the disagreements-only scope it enters the reference by rule.',
   ],
   [/needs a disagreement reason code/, 400, 'A discordant item needs a disagreement reason code.'],
+  [
+    /basis (REVIEWER_1|REVIEWER_2|BOTH_REVIEWERS|NEITHER) does not match the reviewer answers|basis NONE applies only/,
+    400,
+    'The basis does not match the reviewer answers for this item.',
+  ],
   [/has no reviewer answer to adjudicate/, 409, 'No reviewer answered this item.'],
   [
     /single-reviewed item is|status .* does not fit|reviewers disagree on this item|reviewers agree on this item/,
@@ -164,14 +169,17 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
   ],
 ];
 
-export function appGitSha(): string {
+/** The build commit an export attests to. An injected VERIFY_APP_GIT_SHA wins; otherwise the
+ *  checked-out commit is used only when the working tree carries no uncommitted or untracked
+ *  change, so a manifest never names a commit that lacks the code or rubric that produced it. */
+export function appGitSha(cwd: string = process.cwd()): string {
   const configured = process.env.VERIFY_APP_GIT_SHA;
   if (configured && /^[0-9a-f]{40}$/.test(configured)) return configured;
   try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    }).trim();
+    const options = { cwd, encoding: 'utf8' as const, stdio: 'pipe' as const };
+    const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], options);
+    if (dirty.trim()) return 'unverified-local-build';
+    return execFileSync('git', ['rev-parse', 'HEAD'], options).trim();
   } catch {
     return 'unverified-local-build';
   }
@@ -210,10 +218,13 @@ async function readState(tx: Tx, actor: Actor): Promise<Tlv5State> {
     pilot_locked: boolean;
     training_locked: boolean;
     formal_locked: boolean;
+    frozen: boolean;
+    scope: string;
   }>(
     `select private.tlv5_phase() as phase, private.tlv5_snapshot_taken() as snapshot_taken,
             private.tlv5_locked('PILOT') as pilot_locked, private.tlv5_locked('TRAINING') as training_locked,
-            private.tlv5_locked('FORMAL') as formal_locked`,
+            private.tlv5_locked('FORMAL') as formal_locked, private.tlv5_frozen() as frozen,
+            private.tlv5_scope() as scope`,
   );
   const h = helpers.rows[0];
   const state: Tlv5State = {
@@ -227,10 +238,12 @@ async function readState(tx: Tx, actor: Actor): Promise<Tlv5State> {
     snapshot: null,
     snapshotTaken: h.snapshot_taken,
     locks: {},
+    adjudicationScope: h.scope === 'ALL_CASE_LEVELS' ? 'ALL_CASE_LEVELS' : 'DISAGREEMENTS_ONLY',
     submissionsOpen: {
       PILOT: !h.pilot_locked,
       TRAINING: !h.training_locked && h.phase === 'NOT_OPENED',
-      CALIBRATION: true,
+      // Rubric calibration closes at the freeze (migration 0011); the screen must say so too.
+      CALIBRATION: !h.frozen,
       FORMAL: h.phase === 'OPEN',
     },
   };
@@ -670,6 +683,7 @@ export async function getTlv5AdjudicatorCase(
         decidedAt: j.decided_at,
       })),
       adjudicationOpen: adjudicationOpen(c.rows[0].mode, state),
+      adjudicationScope: state.adjudicationScope,
     };
   });
 }

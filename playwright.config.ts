@@ -1,4 +1,9 @@
 import { defineConfig } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
+// The served-browser regression exercises synthetic exports from a developer checkout, which may
+// carry uncommitted work; the export's clean-tree rule would otherwise refuse the manifest. The
+// injected build identity is the checked-out commit and the bundles are synthetic fixtures.
+const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -27,6 +32,7 @@ export default defineConfig({
       VERIFY_REVIEWER_B_PASSWORD: 'e2e-only-generated-fictional-passphrase',
       VERIFY_ADJUDICATOR_PASSWORD: 'e2e-only-generated-fictional-passphrase',
       VERIFY_DB_DIR: 'memory',
+      VERIFY_APP_GIT_SHA: head,
       NEXT_TELEMETRY_DISABLED: '1',
     },
   },

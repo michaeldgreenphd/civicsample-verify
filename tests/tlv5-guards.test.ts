@@ -188,3 +188,62 @@ test('v5 strict synthetic freeze bootstrap and manifest verification', async () 
     await db.close();
   }
 });
+
+test('v5 review fixes (0015): the adjudication basis must match the reviewer answers; reviewers read freeze and scope state', async () => {
+  const db = new PGlite({ extensions: { pgcrypto } });
+  try {
+    await seedGuardDatabase(db);
+    await db.exec(await readFile('migrations/0014_legacy_pilot_and_packet_guards.sql', 'utf8'));
+    await db.exec(await readFile('migrations/0015_v5_review_fixes.sql', 'utf8'));
+    await guardActor(db, 'a', async () => {
+      const row = (
+        await db.query<{ frozen: boolean; scope: string }>(
+          'select private.tlv5_frozen() as frozen, private.tlv5_scope() as scope',
+        )
+      ).rows[0];
+      assert.equal(row.frozen, false);
+      assert.equal(row.scope, 'DISAGREEMENTS_ONLY');
+      // The grant widens nothing else: labels and other helpers stay closed to reviewers.
+      await assert.rejects(db.query('select private.tlv5_active()'), /permission denied/);
+    });
+    await guardSubmit(db, 'a', 'YES');
+    await guardSubmit(db, 'b', 'NO');
+    const attempt = (patch: Record<string, unknown>) =>
+      guardActor(db, 'adjudicator', () =>
+        db.query('select public.rpc_tlv5_record_adjudication($1::jsonb)', [
+          JSON.stringify({ ...guardAdjudication, ...patch }),
+        ]),
+      );
+    // Reviewer 1 answered YES: a NO decision cannot claim reviewer 1, both reviewers, or neither.
+    await assert.rejects(
+      attempt({ decision: 'NO', basis: 'REVIEWER_1' }),
+      /basis REVIEWER_1 does not match/,
+    );
+    await assert.rejects(
+      attempt({ decision: 'NO', basis: 'BOTH_REVIEWERS' }),
+      /basis BOTH_REVIEWERS does not match/,
+    );
+    await assert.rejects(
+      attempt({ decision: 'NO', basis: 'NEITHER' }),
+      /basis NEITHER does not match/,
+    );
+    await assert.rejects(
+      attempt({ decision: 'YES', basis: 'REVIEWER_2' }),
+      /basis REVIEWER_2 does not match/,
+    );
+    await assert.rejects(
+      attempt({ decision: 'NO', basis: 'NONE', status: 'DISCORDANT_RESOLVED' }),
+      /basis NONE applies only|check constraint|violates/i,
+    );
+    // The consistent record is accepted and locked; the mismatch never reached the table.
+    await attempt({ decision: 'NO', basis: 'REVIEWER_2' });
+    await guardActor(db, 'investigator', async () => {
+      const rows = await db.query<{ basis: string; decision: string }>(
+        'select basis, decision from public.tlv5_adjudications',
+      );
+      assert.deepEqual(rows.rows, [{ basis: 'REVIEWER_2', decision: 'NO' }]);
+    });
+  } finally {
+    await db.close();
+  }
+});
