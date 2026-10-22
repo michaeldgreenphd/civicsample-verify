@@ -2,7 +2,6 @@
 // through an rpc_tlv5_* function under the signed-in actor's session; every read goes through the
 // tables and views, so row-level security decides what each role receives. The DTOs returned here
 // are explicit allow-lists; raw rows never leave this module.
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { ACCOUNTS } from '../lib/auth';
 import {
@@ -74,6 +73,11 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
     'The reviewers agree on this item; under the disagreements-only scope it enters the reference by rule.',
   ],
   [/needs a disagreement reason code/, 400, 'A discordant item needs a disagreement reason code.'],
+  [
+    /differs from the rubric bound to|does not match the frozen rubric; review activity is blocked/,
+    409,
+    'The rubric text changed since this review began; review activity is blocked until the investigator reconciles the rubric.',
+  ],
   [
     /basis (REVIEWER_1|REVIEWER_2|BOTH_REVIEWERS|NEITHER) does not match the reviewer answers|basis NONE applies only/,
     400,
@@ -169,20 +173,17 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
   ],
 ];
 
-/** The build commit an export attests to. An injected VERIFY_APP_GIT_SHA wins; otherwise the
- *  checked-out commit is used only when the working tree carries no uncommitted or untracked
- *  change, so a manifest never names a commit that lacks the code or rubric that produced it. */
-export function appGitSha(cwd: string = process.cwd()): string {
-  const configured = process.env.VERIFY_APP_GIT_SHA;
-  if (configured && /^[0-9a-f]{40}$/.test(configured)) return configured;
-  try {
-    const options = { cwd, encoding: 'utf8' as const, stdio: 'pipe' as const };
-    const dirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], options);
-    if (dirty.trim()) return 'unverified-local-build';
-    return execFileSync('git', ['rev-parse', 'HEAD'], options).trim();
-  } catch {
-    return 'unverified-local-build';
-  }
+/** The build commit an export attests to: the deployment-provided VERIFY_APP_GIT_SHA, else the
+ *  commit baked into the artifact when the build started (next.config.ts, clean tree only). The
+ *  running server never resolves HEAD itself: a checkout can change without the artifact changing. */
+export function appGitSha(
+  configured: string | undefined = process.env.VERIFY_APP_GIT_SHA,
+  baked: string | undefined = process.env.VERIFY_BUILD_GIT_SHA,
+): string {
+  for (const candidate of [configured, baked])
+    if (candidate && /^[0-9a-f]{40}$/.test(candidate) && !/^0{40}$/.test(candidate))
+      return candidate;
+  return 'unverified-local-build';
 }
 
 async function run<T>(actor: Actor, operation: (tx: Tx) => Promise<T>): Promise<T> {
@@ -238,7 +239,7 @@ async function readState(tx: Tx, actor: Actor): Promise<Tlv5State> {
     snapshot: null,
     snapshotTaken: h.snapshot_taken,
     locks: {},
-    adjudicationScope: h.scope === 'ALL_CASE_LEVELS' ? 'ALL_CASE_LEVELS' : 'DISAGREEMENTS_ONLY',
+    adjudicationScope: h.scope === 'ALL_ITEMS' ? 'ALL_ITEMS' : 'DISAGREEMENTS_ONLY',
     submissionsOpen: {
       PILOT: !h.pilot_locked,
       TRAINING: !h.training_locked && h.phase === 'NOT_OPENED',
@@ -438,6 +439,21 @@ async function readSubmissions(tx: Tx, assignmentId: string): Promise<Tlv5Submis
   }
   return result;
 }
+/** Bind the runtime rubric to the mode on first use, or verify it; a mismatch aborts the activity. */
+async function bindRubric(tx: Tx, mode: Tlv5Mode): Promise<void> {
+  await tx.query('select public.rpc_tlv5_bind_rubric($1, $2, $3)', [
+    mode,
+    TLV5_RUBRIC_VERSION,
+    rubricSha256(),
+  ]);
+}
+async function rubricBinding(tx: Tx, mode: Tlv5Mode) {
+  const row = await tx.query<{ rubric_version: string; rubric_sha256: string }>(
+    'select rubric_version, rubric_sha256 from public.tlv5_rubric_bindings where mode = $1',
+    [mode],
+  );
+  return row.rows[0] ?? null;
+}
 async function myAssignment(tx: Tx, id: string) {
   const row = await tx.query<{ assignment_id: string; mode: Tlv5Mode; packet: Tlv5TrialPacket }>(
     `select a.assignment_id, c.mode, c.packet from public.tlv5_assignments a join public.tlv5_cases c on c.case_id = a.case_id
@@ -454,13 +470,18 @@ export async function getTlv5ReviewerCase(actor: Actor, id: string): Promise<Tlv
     const a = await myAssignment(tx, id);
     const state = await readState(tx, actor);
     const submissions = await readSubmissions(tx, a.assignment_id);
+    const bound = await rubricBinding(tx, a.mode);
+    const rubricMismatch =
+      bound !== null &&
+      (bound.rubric_sha256 !== rubricSha256() || bound.rubric_version !== TLV5_RUBRIC_VERSION);
     const detail: Tlv5ReviewerCase = {
       caseId: id,
       mode: a.mode,
       assignmentId: a.assignment_id,
       packet: packetOf(a),
       submissions,
-      submissionsOpen: state.submissionsOpen[a.mode] && submissions.length === 0,
+      submissionsOpen: state.submissionsOpen[a.mode] && submissions.length === 0 && !rubricMismatch,
+      rubricMismatch,
     };
     if (a.mode === 'TRAINING')
       detail.workedAnswer = submissions.length ? workedAnswer(id, !!state.locks.TRAINING) : null;
@@ -528,6 +549,7 @@ export async function submitTlv5(
   caseId(id);
   await run(actor, async (tx) => {
     const a = await myAssignment(tx, id);
+    await bindRubric(tx, a.mode);
     const payload = {
       items: input.items.map((i) => ({
         item_code: i.itemCode,
@@ -697,6 +719,13 @@ export async function recordTlv5Adjudication(
   requireRole(actor, 'ADJUDICATOR');
   caseId(input.caseId);
   await run(actor, async (tx) => {
+    const mode = await tx.query<{ mode: Tlv5Mode }>(
+      'select mode from public.tlv5_cases where case_id = $1',
+      [input.caseId],
+    );
+    // A case the adjudicator cannot read yet (before the close and snapshot) is refused by the
+    // RPC itself with the phase message; binding happens once the case is readable.
+    if (mode.rows[0]) await bindRubric(tx, mode.rows[0].mode);
     await tx.query('select public.rpc_tlv5_record_adjudication($1::jsonb)', [
       JSON.stringify({
         case_id: input.caseId,
@@ -1105,8 +1134,9 @@ export async function tlv5AdminAction(
       break;
     case 'register-export': {
       const bundle = await exportTlv5Bundle(actor, input.mode);
-      await run(actor, (tx) =>
-        tx.query('select public.rpc_tlv5_register_export($1::jsonb)', [
+      await run(actor, async (tx) => {
+        await bindRubric(tx, input.mode);
+        await tx.query('select public.rpc_tlv5_register_export($1::jsonb)', [
           JSON.stringify({
             mode: input.mode,
             bundle_format_version: '5.0',
@@ -1117,8 +1147,8 @@ export async function tlv5AdminAction(
             notes:
               `manifest export_id ${bundle.manifest.export_id}; ${input.notes?.trim() ?? ''}`.trim(),
           }),
-        ]),
-      );
+        ]);
+      });
       break;
     }
     case 'sign-off':
@@ -1239,6 +1269,17 @@ export async function exportTlv5Bundle(
     if (!/^[0-9a-f]{40}$/.test(buildSha) || /^0{40}$/.test(buildSha))
       throw new ServiceError(409, 'Export requires a verified application build commit.');
     let exportedRubricHash = rubricSha256();
+    // The export reports the rubric bound to the mode's first review activity and refuses to
+    // attest a runtime rubric that differs from it (migration 0017).
+    const bound = await rubricBinding(tx, mode);
+    if (
+      bound &&
+      (bound.rubric_sha256 !== exportedRubricHash || bound.rubric_version !== TLV5_RUBRIC_VERSION)
+    )
+      throw new ServiceError(
+        409,
+        'The rubric text changed since this review began; the export is blocked until the investigator reconciles the rubric.',
+      );
     if (mode === 'FORMAL') {
       const frozen = await tx.query<{ frozen_items: Record<string, string> }>(
         'select frozen_items from public.tlv5_freeze',

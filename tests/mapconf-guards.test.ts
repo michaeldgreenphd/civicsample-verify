@@ -131,7 +131,7 @@ test('mapping confirmation: reviewer isolation, finality, adjudicator timing and
       /An active ADJUDICATOR must record their own adjudication/,
     );
     await db.exec('rollback');
-    await assert.rejects(phase(db, 'LOCKED'), /disagreeing mappings have no adjudication/);
+    await assert.rejects(phase(db, 'LOCKED'), /disagreeing .*mappings have no adjudication/);
     await guardActor(db, 'adjudicator', () =>
       db.query('select public.rpc_mc_adjudicate($1::jsonb)', [JSON.stringify(mcGuardAdjudication)]),
     );
@@ -272,8 +272,8 @@ test('mapping evidence: allow-listed source fields only; nothing generated, pred
     );
     await assert.rejects(
       attempt((c) => (c.record_category = 'EVALUATION')),
-      /check constraint|violates/i,
-      'an EVALUATION record cannot use the synthetic prefix',
+      /evaluation import is disabled|check constraint|violates/i,
+      'an EVALUATION record is refused (synthetic-only build; prefix rule)',
     );
     await assert
       .rejects(

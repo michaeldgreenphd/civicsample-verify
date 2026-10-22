@@ -174,16 +174,19 @@ test('mapping confirmation: visible assignment, reviewer isolation, adjudication
       .fill('Synthetic: healthy volunteers are not a COVID-19 population.');
     await adjPage.getByRole('button', { name: 'Record adjudication' }).click();
     await expect(adjPage.getByTestId('mc-adjudication')).toContainText('Discordant resolved (NO)');
-    expect(
-      (
-        await post(adj, '/api/mc/adjudicate', {
-          caseId: 'MC-SYN-012',
-          status: 'UNRESOLVED_ESCALATED',
-          basis: 'NONE',
-          rationale: 'Synthetic: both reviewers proposed the rubric addition.',
-        })
-      ).status(),
-    ).toBe(200);
+    // Switching mappings resets the form: nothing typed for MC-SYN-011 may reach MC-SYN-012, and a
+    // concordant insufficient-information mapping is reviewed without a YES/NO judgment.
+    await adjPage.getByRole('button', { name: /^MC-SYN-012/ }).click();
+    await expect(adjPage.getByTestId('mc-slot-1')).toContainText('Insufficient information');
+    await expect(adjPage.getByLabel('Rationale')).toHaveValue('');
+    await expect(adjPage.getByLabel('Status')).toHaveValue('RUBRIC_ADDITION_REVIEWED');
+    await expect(adjPage.getByLabel('Decision')).toHaveCount(0);
+    await adjPage
+      .getByLabel('Rationale')
+      .fill('Synthetic: both reviewers proposed the rubric addition.');
+    await adjPage.getByRole('button', { name: 'Record adjudication' }).click();
+    await expect(adjPage.getByTestId('mc-adjudication')).toContainText('Rubric addition reviewed');
+    expect(await adjPage.content()).not.toContain('(YES)');
     expect(
       (
         await post(admin, '/api/mc/adjudicate', {

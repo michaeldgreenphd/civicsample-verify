@@ -163,8 +163,16 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     path.join(process.cwd(), 'migrations/0015_v5_review_fixes.sql'),
     'utf8',
   );
+  const rubricBinding = await readFile(
+    path.join(process.cwd(), 'migrations/0017_v5_rubric_binding.sql'),
+    'utf8',
+  );
   const mappingConfirmation = await readFile(
     path.join(process.cwd(), 'migrations/0016_mapping_confirmation.sql'),
+    'utf8',
+  );
+  const mappingReviewFixes = await readFile(
+    path.join(process.cwd(), 'migrations/0018_mapping_confirmation_review_fixes.sql'),
     'utf8',
   );
   for (const [version, migration] of [
@@ -173,7 +181,9 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ['5.1.1-independent-finality', independentFinality],
     ['5.1.2-legacy-pilot-packet-guards', legacyPilotGuards],
     ['5.1.3-v5-review-fixes', reviewFixes],
+    ['5.1.4-v5-rubric-binding', rubricBinding],
     ['6.0.0-mapping-confirmation', mappingConfirmation],
+    ['6.0.1-mapping-confirmation-review-fixes', mappingReviewFixes],
   ] as const) {
     const present = await db.query<{ present: boolean }>(
       `select exists(select 1 from public.app_schema_version where version='${version}') as present`,

@@ -28,7 +28,8 @@
     "supabase:admin": "node scripts/supabase-admin.mjs",
     "check:leakage:v5": "python3 tools/check_public_repo_leakage_v5.py --tree",
     "generate:tlv5-pilot": "node scripts/generate-tlv5-pilot-cases.mjs",
-    "tlv5:staging-dryrun": "node --import tsx scripts/tlv5-staging-dryrun.ts"
+    "tlv5:staging-dryrun": "node --import tsx scripts/tlv5-staging-dryrun.ts",
+    "demo:mapconf": "node scripts/mapconf-demo.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

@@ -30,26 +30,29 @@ export const mcAdjudicationSchema = z
     decision: z.enum(['YES', 'NO']).optional(),
     status: z.enum(MC_ADJUDICATION_STATUSES),
     basis: z.enum(['REVIEWER_1', 'REVIEWER_2', 'NEITHER', 'NONE']),
-    rationale: z.string().min(3).max(4000),
+    rationale: z.string().trim().min(3).max(4000),
   })
   .strict()
   .superRefine((value, ctx) => {
-    const escalated = value.status === 'UNRESOLVED_ESCALATED';
-    if (escalated !== (value.decision === undefined))
+    // UNRESOLVED_ESCALATED and RUBRIC_ADDITION_REVIEWED record no YES/NO judgment (basis NONE);
+    // DISCORDANT_RESOLVED records one with the reviewer basis it adopts. The database re-checks
+    // the pair against the two final answers.
+    const noDecision = value.status !== 'DISCORDANT_RESOLVED';
+    if (noDecision !== (value.decision === undefined))
       ctx.addIssue({
         code: 'custom',
-        message: 'A decision is recorded unless the mapping is escalated.',
+        message: 'A YES/NO decision is recorded only for a resolved disagreement.',
         path: ['decision'],
       });
-    if (escalated !== (value.basis === 'NONE'))
+    if (noDecision !== (value.basis === 'NONE'))
       ctx.addIssue({
         code: 'custom',
-        message: 'Basis NONE applies only to an escalation.',
+        message: 'Basis NONE applies exactly when no decision is recorded.',
         path: ['basis'],
       });
   });
 
-const attestation = z.string().min(20).max(2000);
+const attestation = z.string().trim().min(20).max(2000);
 export const mcAdminSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('create-campaign') }).strict(),
   z.object({ action: z.literal('import-synthetic') }).strict(),

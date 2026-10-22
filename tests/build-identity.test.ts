@@ -1,19 +1,19 @@
-// The export build identity: an injected commit wins; otherwise only a clean checkout names its
-// commit, so a manifest never attests to a commit that lacks the code that produced the bundle.
+// The export build identity: captured when the build starts (scripts/build-identity.mjs, baked by
+// next.config.ts) or supplied by the deployment; never resolved from HEAD at request time, because
+// a later clean checkout does not change the artifact a server is already serving.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { resolveBuildIdentity, UNVERIFIED } from '../scripts/build-identity.mjs';
 import { appGitSha } from '../src/server/tlv5';
 
-test('appGitSha names the checked-out commit only for a clean working tree', () => {
+test('build identity names the checked-out commit only for a clean working tree, at build time', () => {
   const root = mkdtempSync(join(tmpdir(), 'verify-build-identity-'));
   const git = (...args: string[]) =>
     execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' }).trim();
-  const saved = process.env.VERIFY_APP_GIT_SHA;
-  delete process.env.VERIFY_APP_GIT_SHA;
   try {
     git('init', '--quiet');
     git('config', 'user.email', 'synthetic@example.invalid');
@@ -22,32 +22,38 @@ test('appGitSha names the checked-out commit only for a clean working tree', () 
     git('add', 'rubric.txt');
     git('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'synthetic');
     const head = git('rev-parse', 'HEAD');
-    assert.match(head, /^[0-9a-f]{40}$/);
-    assert.equal(appGitSha(root), head);
-    // An uncommitted change to a tracked file: the commit no longer describes the running code.
+    assert.equal(resolveBuildIdentity(root), head);
     writeFileSync(join(root, 'rubric.txt'), 'synthetic rubric v2\n');
-    assert.equal(appGitSha(root), 'unverified-local-build');
+    assert.equal(resolveBuildIdentity(root), UNVERIFIED, 'tracked change');
     git('checkout', '--', 'rubric.txt');
-    assert.equal(appGitSha(root), head);
-    // An untracked file counts too (a new migration or fixture that the commit does not carry).
     writeFileSync(join(root, 'extra.sql'), '-- synthetic\n');
-    assert.equal(appGitSha(root), 'unverified-local-build');
-    // The injected build identity wins; a malformed one is ignored.
-    process.env.VERIFY_APP_GIT_SHA = 'e'.repeat(40);
-    assert.equal(appGitSha(root), 'e'.repeat(40));
-    process.env.VERIFY_APP_GIT_SHA = 'not-a-commit';
-    assert.equal(appGitSha(root), 'unverified-local-build');
-    // Outside a repository there is no verified identity.
-    delete process.env.VERIFY_APP_GIT_SHA;
-    const bare = mkdtempSync(join(tmpdir(), 'verify-no-repo-'));
-    try {
-      assert.equal(appGitSha(bare), 'unverified-local-build');
-    } finally {
-      rmSync(bare, { recursive: true, force: true });
-    }
+    assert.equal(resolveBuildIdentity(root), UNVERIFIED, 'untracked file');
+    rmSync(join(root, 'extra.sql'));
+    // A later clean checkout of another commit does not change a baked identity: the artifact keeps
+    // the commit it was built from, whatever HEAD says now.
+    const baked = resolveBuildIdentity(root);
+    writeFileSync(join(root, 'rubric.txt'), 'synthetic rubric v3\n');
+    git('add', 'rubric.txt');
+    git('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'later');
+    assert.notEqual(git('rev-parse', 'HEAD'), baked);
+    assert.equal(appGitSha(undefined, baked), baked);
   } finally {
-    if (saved === undefined) delete process.env.VERIFY_APP_GIT_SHA;
-    else process.env.VERIFY_APP_GIT_SHA = saved;
     rmSync(root, { recursive: true, force: true });
   }
+  const bare = mkdtempSync(join(tmpdir(), 'verify-no-repo-'));
+  try {
+    assert.equal(resolveBuildIdentity(bare), UNVERIFIED);
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test('appGitSha prefers the deployment identity, then the baked identity, and never resolves HEAD', () => {
+  assert.equal(appGitSha('e'.repeat(40), 'f'.repeat(40)), 'e'.repeat(40));
+  assert.equal(appGitSha(undefined, 'f'.repeat(40)), 'f'.repeat(40));
+  assert.equal(appGitSha('not-a-commit', 'f'.repeat(40)), 'f'.repeat(40));
+  assert.equal(appGitSha('0'.repeat(40), 'f'.repeat(40)), 'f'.repeat(40));
+  assert.equal(appGitSha(undefined, UNVERIFIED), UNVERIFIED);
+  assert.equal(appGitSha(undefined, undefined), UNVERIFIED);
+  assert.equal(appGitSha('', ''), UNVERIFIED);
 });

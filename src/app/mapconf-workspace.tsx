@@ -406,35 +406,49 @@ function McAdjudicator({
   onRefresh: () => Promise<McWorkspace>;
 }) {
   const [detail, setDetail] = useState<McAdjudicatorCase | null>(null);
-  const [form, setForm] = useState<Omit<McAdjudicationInput, 'caseId'>>({
+  const emptyForm: Omit<McAdjudicationInput, 'caseId'> = {
     status: 'DISCORDANT_RESOLVED',
     basis: 'REVIEWER_1',
     rationale: '',
     decision: 'YES',
-  });
+  };
+  const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState('');
   useEffect(() => {
-    if (selected)
-      api<McAdjudicatorCase>(`/api/mc/cases/${selected}`)
-        .then((next) => {
-          setDetail(next);
-          setError('');
-        })
-        .catch((e) => setError(e.message));
+    if (!selected) return;
+    api<McAdjudicatorCase>(`/api/mc/cases/${selected}`)
+      .then((next) => {
+        // A newly loaded mapping starts from an empty form: nothing typed for another mapping
+        // may be submitted as this mapping's immutable adjudication. The default status follows
+        // the answers (both insufficient: rubric-addition review; otherwise a disagreement).
+        const bothInsufficient =
+          next.responses.length === 2 &&
+          next.responses.every((r) => r.answer === 'INSUFFICIENT_INFORMATION');
+        setDetail(next);
+        setForm({
+          ...emptyForm,
+          status: bothInsufficient ? 'RUBRIC_ADDITION_REVIEWED' : 'DISCORDANT_RESOLVED',
+          basis: bothInsufficient ? 'NONE' : 'REVIEWER_1',
+          decision: bothInsufficient ? undefined : 'YES',
+        });
+        setError('');
+      })
+      .catch((e) => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- emptyForm is a constant literal
   }, [selected]);
   const shown = selected && detail?.case.caseId === selected ? detail : null;
   async function decide() {
     if (!shown) return;
     const detail = shown;
-    const escalated = form.status === 'UNRESOLVED_ESCALATED';
+    const noDecision = form.status !== 'DISCORDANT_RESOLVED';
     try {
       const next = await api<McAdjudicatorCase>('/api/mc/adjudicate', {
         method: 'POST',
         body: JSON.stringify({
           caseId: detail.case.caseId,
           status: form.status,
-          basis: escalated ? 'NONE' : form.basis,
-          decision: escalated ? undefined : form.decision,
+          basis: noDecision ? 'NONE' : form.basis,
+          decision: noDecision ? undefined : form.decision,
           rationale: form.rationale,
         }),
       });
@@ -531,12 +545,12 @@ function McAdjudicator({
                         ))}
                       </select>
                     </label>
-                    {form.status !== 'UNRESOLVED_ESCALATED' && (
+                    {form.status === 'DISCORDANT_RESOLVED' && (
                       <>
                         <label className="field">
                           <span className="form-label">Decision</span>
                           <select
-                            value={form.decision}
+                            value={form.decision ?? 'YES'}
                             onChange={(e) =>
                               setForm({ ...form, decision: e.target.value as 'YES' | 'NO' })
                             }

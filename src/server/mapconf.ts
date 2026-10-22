@@ -81,11 +81,31 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
     'Both reviewers proposed a rubric addition; use the rubric-addition or escalation status.',
   ],
   [
-    /mapping adjudication opens only after|disagreeing mappings have no adjudication|is not open|close the campaign before|authorize adjudication before|only while the campaign is open|registered only after the lock/,
+    /mapping adjudication opens only after|disagreeing mappings have no adjudication|disagreeing or insufficient-information mappings have no adjudication|is not open|close the campaign before|authorize adjudication before|only while the campaign is open|registered only after the lock/,
     409,
     'This phase transition or action is not allowed now.',
   ],
   [/create the mapping-confirmation campaign/, 409, 'Create the campaign first.'],
+  [
+    /evaluation import is disabled pending|only synthetic trial references/,
+    409,
+    'Evaluation import is disabled pending the approved condition set, sampling frame, frozen rubric and analysis specification.',
+  ],
+  [
+    /have no final response; an incomplete campaign cannot be locked/,
+    409,
+    'Every assigned mapping needs both final responses before the campaign can be locked.',
+  ],
+  [
+    /RUBRIC_ADDITION_REVIEWED applies only when|basis (REVIEWER_1|REVIEWER_2|NEITHER) does not match the reviewer answers for mapping/,
+    400,
+    'The adjudication status, decision and basis do not fit the reviewer answers for this mapping.',
+  ],
+  [
+    /names condition set .* but the campaign is|is not an accepted registry source name|is not an accepted provenance value|is not a reviewer-visible registry field|schema_version must be|names a field that is not a registry description/,
+    400,
+    'The mapping import does not match the campaign condition set or the evidence contract.',
+  ],
   [
     /mode contamination blocked|already holds slot|withdrawn or inactive/,
     409,
@@ -672,10 +692,10 @@ export async function exportMcBundle(actor: Actor): Promise<McBundle> {
       );
     const rows = (
       await tx.query<Row>(
-        `select record_category, case_id, trial_ref, condition_code, condition_label, condition_set_id, assignment_source, assignment_version,
+        `select record_category, case_id, trial_ref, condition_code, condition_label, condition_set_id, assignment_assigned, assignment_source, assignment_version,
                 assignment_sha256, evidence_sha256, evidence_version::integer as evidence_version, brief_summary_present, detailed_description_included,
                 reviewer_slot::integer as reviewer_slot, reviewer_pseudo_id, answer, annotation, rubric_addition_proposed, review_mode, assignment_visibility,
-                displayed_assignment_sha256, displayed_evidence_sha256, rubric_version, rubric_sha256, response_app_git_sha, ${TS('submitted_at')} as submitted_at,
+                displayed_assignment_sha256, displayed_evidence_sha256, displayed_evidence_version::integer as displayed_evidence_version, rubric_version, rubric_sha256, response_app_git_sha, ${TS('submitted_at')} as submitted_at,
                 adjudication_id::text as adjudication_id, adjudicated_decision, adjudication_status, adjudication_basis, adjudicator_role, ${TS('adjudicated_at')} as adjudicated_at
          from public.v_mc_export`,
       )
@@ -687,6 +707,7 @@ export async function exportMcBundle(actor: Actor): Promise<McBundle> {
       'condition_code',
       'condition_label',
       'condition_set_id',
+      'assignment_assigned',
       'assignment_source',
       'assignment_version',
       'assignment_sha256',
@@ -713,6 +734,7 @@ export async function exportMcBundle(actor: Actor): Promise<McBundle> {
       'assignment_visibility',
       'displayed_assignment_sha256',
       'displayed_evidence_sha256',
+      'displayed_evidence_version',
       'rubric_version',
       'rubric_sha256',
       'response_app_git_sha',
