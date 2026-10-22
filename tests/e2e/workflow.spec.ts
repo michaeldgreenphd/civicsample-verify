@@ -90,6 +90,10 @@ test('served browser previews custom evidence and reviewers receive exactly the 
     for (const [label, value] of fields) {
       await adminPage.getByLabel(label, { exact: true }).fill(value);
     }
+    const authorAccessibility = await new AxeBuilder({ page: adminPage })
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21aa'])
+      .analyze();
+    expect(authorAccessibility.violations).toEqual([]);
     const preview = adminPage.getByRole('region', { name: 'Evidence preview' });
     await expect(preview.getByText(custom.scopeNote, { exact: true })).toBeVisible();
     await expect(preview.getByText(custom.summary, { exact: true })).toBeVisible();

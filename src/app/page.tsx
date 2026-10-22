@@ -1468,7 +1468,12 @@ function Investigator({
                       <td>
                         <div
                           className="progress-track"
-                          aria-label={`${item.completed} of ${item.total} complete`}
+                          role="progressbar"
+                          aria-label={`${item.label} completion`}
+                          aria-valuemin={0}
+                          aria-valuemax={item.total || 1}
+                          aria-valuenow={item.completed}
+                          aria-valuetext={`${item.completed} of ${item.total} complete`}
                         >
                           <div
                             className="progress-fill"
