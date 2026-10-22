@@ -631,51 +631,48 @@ test(
           }),
         ]);
 
-        const concurrentWithdrawPromise = asRoleOn(
-          conn2,
-          'investigator',
-          'select public.rpc_withdraw_case($1,$2)',
-          [descId, 'Concurrent withdrawal during freeze must block and fail.'],
+        const concurrentWithdrawRejection = assert.rejects(
+          asRoleOn(conn2, 'investigator', 'select public.rpc_withdraw_case($1,$2)', [
+            descId,
+            'Concurrent withdrawal during freeze must block and fail.',
+          ]),
+          /is a frozen held-out case and cannot be withdrawn/,
         );
 
-        const concurrentVersionPromise = asRoleOn(
-          conn3,
-          'investigator',
-          'select public.rpc_add_case_version($1,$2::jsonb,$3,$4,$5,$6,$7)',
-          [
-            descId,
-            j({
-              schema_version: '1.0',
-              case_title: `Fictional ${descId} v2`,
-              question: 'Does this fictional unit belong?',
-              unit: { unit_type: 'DESCRIPTOR_AREA', unit_id: `SYN-${descId}::infectious` },
-              descriptor: {
-                descriptor_ui: `SYN-${descId}`,
-                name: `Fictional descriptor ${descId}`,
-              },
-              mesh: { scope_note: 'SYNTHETIC ENGINEERING ONLY', tree_numbers: ['SYN.001'] },
-              area: { key: 'infectious', label: 'Fictional infectious' },
-            }),
-            '1.0.0+R-TEST',
-            true,
-            false,
-            false,
-            'Concurrent packet versioning during freeze must block and fail.',
-          ],
+        const concurrentVersionRejection = assert.rejects(
+          asRoleOn(
+            conn3,
+            'investigator',
+            'select public.rpc_add_case_version($1,$2::jsonb,$3,$4,$5,$6,$7)',
+            [
+              descId,
+              j({
+                schema_version: '1.0',
+                case_title: `Fictional ${descId} v2`,
+                question: 'Does this fictional unit belong?',
+                unit: { unit_type: 'DESCRIPTOR_AREA', unit_id: `SYN-${descId}::infectious` },
+                descriptor: {
+                  descriptor_ui: `SYN-${descId}`,
+                  name: `Fictional descriptor ${descId}`,
+                },
+                mesh: { scope_note: 'SYNTHETIC ENGINEERING ONLY', tree_numbers: ['SYN.001'] },
+                area: { key: 'infectious', label: 'Fictional infectious' },
+              }),
+              '1.0.0+R-TEST',
+              true,
+              false,
+              false,
+              'Concurrent packet versioning during freeze must block and fail.',
+            ],
+          ),
+          /Frozen held-out evidence packets cannot be versioned/,
         );
 
         assert.equal(await waitForBackendLock(conn2.backendPid), true);
         assert.equal(await waitForBackendLock(conn3.backendPid), true);
         await conn1.exec('commit');
 
-        await assert.rejects(
-          concurrentWithdrawPromise,
-          /is a frozen held-out case and cannot be withdrawn/,
-        );
-        await assert.rejects(
-          concurrentVersionPromise,
-          /Frozen held-out evidence packets cannot be versioned/,
-        );
+        await Promise.all([concurrentWithdrawRejection, concurrentVersionRejection]);
 
         // Assign formal cases to reviewerA and reviewerB
         for (const [slot, role] of (['reviewerA', 'reviewerB'] as const).entries()) {
@@ -779,27 +776,22 @@ test(
           }),
         ]);
 
-        const concurrentAmendPromise = asRoleOn(
-          conn2,
-          'reviewerA',
-          'select public.rpc_submit_review($1,$2)',
-          [
+        const concurrentAmendRejection = assert.rejects(
+          asRoleOn(conn2, 'reviewerA', 'select public.rpc_submit_review($1,$2)', [
             reviewerADescAssignmentId,
             j({
               l1_decision: 'INCLUDE',
               l1_rationale: 'Second concurrent amendment revision racing for revision 2.',
               l1_uncertain: false,
             }),
-          ],
+          ]),
+          /duplicate key value violates unique constraint/,
         );
 
         assert.equal(await waitForBackendLock(conn2.backendPid), true);
         await conn1.exec('commit');
 
-        await assert.rejects(
-          concurrentAmendPromise,
-          /duplicate key value violates unique constraint/,
-        );
+        await concurrentAmendRejection;
 
         // Reviewer A can see only their own 3 review rows (2 initial + 1 amendment), never Reviewer B's reviews
         assert.equal(
@@ -840,11 +832,8 @@ test(
           }),
         ]);
 
-        const concurrentAdjudicationPromise = asRoleOn(
-          conn2,
-          'adjudicator2',
-          'select public.rpc_record_adjudication_v3($1)',
-          [
+        const concurrentAdjudicationRejection = assert.rejects(
+          asRoleOn(conn2, 'adjudicator2', 'select public.rpc_record_adjudication_v3($1)', [
             j({
               case_id: descId,
               determination_level: 'DESCRIPTOR_LEVEL',
@@ -856,16 +845,14 @@ test(
               rationale: 'Concurrent adjudicator session without supersession ID.',
               considered_ids: consideredDesc,
             }),
-          ],
+          ]),
+          /a new adjudication must supersede the current one/,
         );
 
         assert.equal(await waitForBackendLock(conn2.backendPid), true);
         await conn1.exec('commit');
 
-        await assert.rejects(
-          concurrentAdjudicationPromise,
-          /a new adjudication must supersede the current one/,
-        );
+        await concurrentAdjudicationRejection;
 
         // 6. True multi-connection concurrency: reference lock in conn1 vs assignment withdrawal (conn2)
         //    AND concurrent migration 0008 preflight lock guard (conn3)
@@ -887,30 +874,27 @@ test(
         ]);
         await conn1.query('select public.rpc_lock_reference_v4($1)', [ATT]);
 
-        const concurrentAssignmentWithdrawPromise = asRoleOn(
-          conn2,
-          'investigator',
-          'select public.rpc_withdraw_assignment($1,$2)',
-          [targetAssignmentId, 'Concurrent assignment withdrawal during reference lock.'],
+        const concurrentAssignmentWithdrawRejection = assert.rejects(
+          asRoleOn(conn2, 'investigator', 'select public.rpc_withdraw_assignment($1,$2)', [
+            targetAssignmentId,
+            'Concurrent assignment withdrawal during reference lock.',
+          ]),
+          /Locked reference prevents assignment withdrawal/,
         );
 
-        const concurrentMigrationPromise = conn3.exec(migration0008Sql).catch(async (err) => {
-          await conn3.exec('rollback').catch(() => {});
-          throw err;
-        });
+        const concurrentMigrationRejection = assert.rejects(
+          conn3.exec(migration0008Sql).catch(async (err) => {
+            await conn3.exec('rollback').catch(() => {});
+            throw err;
+          }),
+          /Existing locked formal reference requires explicit investigator migration review/,
+        );
 
         assert.equal(await waitForBackendLock(conn2.backendPid), true);
         assert.equal(await waitForBackendLock(conn3.backendPid), true);
         await conn1.exec('commit');
 
-        await assert.rejects(
-          concurrentAssignmentWithdrawPromise,
-          /Locked reference prevents assignment withdrawal/,
-        );
-        await assert.rejects(
-          concurrentMigrationPromise,
-          /Existing locked formal reference requires explicit investigator migration review/,
-        );
+        await Promise.all([concurrentAssignmentWithdrawRejection, concurrentMigrationRejection]);
 
         // Verify full DB integrity and export from the native PostgreSQL database
         const integrity = await verifyV4DatabaseIntegrity(investigatorQueryable);
