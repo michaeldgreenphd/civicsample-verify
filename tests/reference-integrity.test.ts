@@ -1928,3 +1928,155 @@ for (const trialDesign of [undefined, 'two-step'] as const) {
     }
   });
 }
+
+const INVESTIGATOR_BOUNDARY_MIGRATION = 'migrations/0010_investigator_judgment_boundary.sql';
+
+test('0010 denies investigator judgments through RPC and direct insert, including spoofed adjudicators, while preserving independent paths', async () => {
+  const f = await fixture({ scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    const mb = await prepareModuleB(f);
+    await mb.submit();
+    await f.investigator('select public.rpc_mb_phase_v4($1,$2)', ['MB_CLOSED', ATT]);
+    const preserved = async () =>
+      (
+        await f.db.query(`select jsonb_build_object(
+      'adjudications',(select jsonb_agg(to_jsonb(a) order by adjudication_id) from public.adjudications a),
+      'audit',(select jsonb_agg(to_jsonb(a) order by audit_id) from public.audit_log a),
+      'snapshots',(select jsonb_agg(to_jsonb(s)) from public.judgment_snapshots_v4 s)) as state`)
+      ).rows;
+    const before = await preserved();
+    await f.db.exec(await readFile(INVESTIGATOR_BOUNDARY_MIGRATION, 'utf8'));
+    assert.deepEqual(await preserved(), before);
+    const formal = await adjudicationPayload(
+      f,
+      ids[0],
+      'CONCORDANT_CONFIRMED',
+      'INCLUDE',
+      'BOTH_REVIEWERS',
+    );
+    const denied = /An active ADJUDICATOR must record their own adjudication/;
+    await assert.rejects(
+      f.investigator('select public.rpc_record_adjudication_v3($1)', [j(formal)]),
+      denied,
+    );
+    await assert.rejects(
+      f.investigator('select public.rpc_record_adjudication_v3($1)', [
+        j({ ...formal, case_id: 'SYN-001' }),
+      ]),
+      denied,
+    );
+    await assert.rejects(
+      f.investigator(
+        "select public.rpc_record_adjudication($1,'clinical_classification','INCLUDE',null,'CONCORDANT_CONFIRMED','BOTH_REVIEWERS','Synthetic denied adjudication',null,'{}'::uuid[],null,null,false)",
+        ['SYN-001'],
+      ),
+      denied,
+    );
+    const mbPayload = {
+      mb_unit_id: mb.unit,
+      decision: 'COMPATIBLE',
+      status: 'SINGLE_REVIEW_ADJUDICATED',
+      basis: 'REVIEWER_1',
+      rationale: 'Synthetic independent decision.',
+    };
+    await assert.rejects(
+      f.investigator('select public.rpc_record_mb_adjudication_v4($1)', [j(mbPayload)]),
+      denied,
+    );
+    for (const table of ['adjudications', 'mb_adjudications_v4']) {
+      // Real authenticated callers lack direct INSERT privileges independently of the trigger.
+      await assert.rejects(
+        rpc(f.db, 'investigator', `insert into public.${table}(decided_by) values($1)`, [
+          ACTORS.adjudicator,
+        ]),
+        /permission denied/,
+      );
+      // Owner-level probes exercise the trigger itself with the real caller JWT; no guard is disabled.
+      for (const actor of ['investigator', 'reviewerA', 'adjudicator'] as const) {
+        for (const decider of actor === 'adjudicator'
+          ? [ACTORS.investigator]
+          : [ACTORS.investigator, ACTORS.adjudicator]) {
+          await assert.rejects(
+            f.db.transaction(async (tx) => {
+              await tx.query("select set_config('request.jwt.claims',$1,true)", [
+                j({ sub: ACTORS[actor], aal: 'aal2' }),
+              ]);
+              return tx.query(`insert into public.${table}(decided_by) values($1)`, [decider]);
+            }),
+            denied,
+          );
+        }
+      }
+      await assert.rejects(
+        f.db.query(`insert into public.${table}(decided_by) values($1)`, [ACTORS.adjudicator]),
+        denied,
+      );
+    }
+    assert.deepEqual(
+      await preserved(),
+      before,
+      'Rejected writes must not change historical rows, audit hashes or snapshots',
+    );
+    await rpc(f.db, 'adjudicator', 'select public.rpc_record_adjudication_v3($1)', [j(formal)]);
+    await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await rpc(f.db, 'adjudicator', 'select public.rpc_record_mb_adjudication_v4($1)', [
+      j(mbPayload),
+    ]);
+    await f.lock();
+    await f.investigator('select public.rpc_lock_mb_reference_v4($1)', [ATT]);
+    assert.equal(await f.verify(), true);
+    assert.equal(
+      (
+        await f.db.query(
+          "select * from public.adjudications where mode='FORMAL' and adjudicator_role='ADJUDICATOR' and not adjudicator_exposed_to_index_labels",
+        )
+      ).rows.length,
+      2,
+    );
+    assert.equal(
+      (
+        await f.db.query(
+          "select * from public.mb_adjudications_v4 where adjudicator_role='ADJUDICATOR' and not adjudicator_exposed_to_pipeline_status",
+        )
+      ).rows.length,
+      1,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('0010 loader upgrade preserves existing locked references and historical pilot judgments across restarts', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'verify-investigator-boundary-upgrade-'));
+  try {
+    const f = await fixture({ dataDir: dir, scope: 'ALL_CASE_LEVELS' });
+    await completeReviews(f);
+    for (const id of ids)
+      await adjudication(f, id, 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await f.lock();
+    // Suppress automatic pilot fixture seeding so the upgrade comparison is exact.
+    await f.db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Preserved fictional packet' })],
+    );
+    const query = `select jsonb_build_object(
+      'judgments',(select jsonb_agg(to_jsonb(a) order by adjudication_id) from public.adjudications a),
+      'audit',(select jsonb_agg(to_jsonb(a) order by audit_id) from public.audit_log a),
+      'locks',(select jsonb_agg(to_jsonb(l)) from public.reference_locks l),
+      'snapshots',(select jsonb_agg(to_jsonb(s)) from public.judgment_snapshots_v4 s)) as state`;
+    const before = (await f.db.query(query)).rows;
+    await f.db.close();
+    const script = `import {getDb} from './src/server/db.ts'; const db=await getDb(); console.log(JSON.stringify({versions:(await db.query("select count(*)::integer as n from public.app_schema_version where version='4.0.7-investigator-judgment-boundary'")).rows[0].n,records:(await db.query(${j(query)})).rows})); await db.close();`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await promisify(execFile)(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '-e', script],
+        { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+      );
+      assert.deepEqual(JSON.parse(result.stdout.trim()), { versions: 1, records: before });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

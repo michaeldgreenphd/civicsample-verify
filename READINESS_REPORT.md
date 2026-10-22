@@ -1,5 +1,17 @@
 # CivicSample Verify readiness — 2026-10-22
 
+## Latest staging preparation
+
+**Local synthetic demonstration is available; formal clinical review remains blocked.** The investigator chose local testing before creating Supabase staging. No named accounts or real study data were imported. Tier 1 remains explicitly awaiting approval.
+
+The current implementation adds an independent-adjudicator database boundary, removal-only performance labels, hash-first private transfer preflights, offline roster validation, future real-JWT read probes, upstream v4 leakage checks and a native PostgreSQL runner. Historical schema and migration bytes are preserved.
+
+Current results: **106 application tests passed, one native-PostgreSQL test blocked locally; 291 maintained Python tests; 108 original supplied Python tests; preserved PGlite counts 164/262/262/356; optimized build and two browser scenarios passed.** [Hosted PostgreSQL 16](https://github.com/michaeldgreenphd/civicsample-verify/actions/runs/39791388114/job/119868057953) also passed at 2634c11: two native application tests and all preserved suites (164/262/262/356), with zero failures/skips. No Supabase acceptance is inferred.
+
+See [current command evidence](docs/test_runs/STAGING_READINESS.md), [item-by-item acceptance](docs/PILOT_ACCEPTANCE_CHECKLIST_v4.md), and [staging/calibration guide](docs/STAGING_PREFLIGHT.md). Those records supersede the older baseline below. Three jointly discussed examples will be excluded calibration records once supplied.
+
+## Prior build baseline
+
 **Working local synthetic pilot; not ready for formal clinical review. The complete requested production platform is not finished.** The application supports a ten-case independent-review/adjudication/lock/export path. Remaining formal and infrastructure integration work is listed explicitly below and in `docs/OPEN_QUESTIONS.md`. No actual records were imported, no physicians were invited, and no production service was deployed.
 
 ## Executed verification

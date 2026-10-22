@@ -96,6 +96,22 @@ async function initialize(): Promise<PGlite> {
   }
   try {
     await applyTrialPacketUpgrades(db);
+    const roleBoundary = await db.query<{ present: boolean }>(
+      "select exists(select 1 from public.app_schema_version where version='4.0.7-investigator-judgment-boundary') as present",
+    );
+    if (!roleBoundary.rows[0].present) {
+      try {
+        await db.exec(
+          await readFile(
+            path.join(process.cwd(), 'migrations/0010_investigator_judgment_boundary.sql'),
+            'utf8',
+          ),
+        );
+      } catch (error) {
+        await db.exec('rollback');
+        throw error;
+      }
+    }
   } catch (error) {
     // Upgrade refusal must leave the original persisted database available.
     await db.close();

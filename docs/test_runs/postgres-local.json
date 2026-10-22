@@ -1,0 +1,11 @@
+{
+  "synthetic_only": true,
+  "scope": "Historical supplied suites on native PostgreSQL 16 with local auth shim; not Supabase JWT/PostgREST verification",
+  "generated_at": "2026-10-22T12:49:05.997Z",
+  "git_commit": "3523097bd19c0ba6ee08a0d42e809481fe41c980",
+  "command": "node scripts/test-handoff-postgres.mjs",
+  "status": "BLOCKED",
+  "stage": "configuration",
+  "suites": [],
+  "reason": "VERIFY_PG_TEST_URL is absent; no native PostgreSQL suite was executed"
+}

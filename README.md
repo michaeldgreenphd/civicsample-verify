@@ -54,3 +54,11 @@ The production platform remains incomplete: verified invited Supabase authentica
 This is a Next.js server application. GitHub Pages cannot host its authentication, APIs, or persistent database. A future approved deployment can use managed Next.js hosting plus Supabase; running the pilot does not authorize that deployment.
 
 ![Synthetic reviewer interface](docs/screenshots/reviewer-desktop.png)
+
+## Staging preparation
+
+See [the staging preflight guide](docs/STAGING_PREFLIGHT.md) for external-file hash validation, the offline five-account plan, and native PostgreSQL checks. These tools do not create accounts or import records. The investigator's three shared examples will be calibration records excluded from formal outcomes; their identities are still awaited. Tier 1 remains awaiting approval.
+
+`npm run check` now includes the adapted upstream v4 leakage scan, also enforced by the pre-commit hook. `--tree` scans public source and indexed objects; ignored local runtime artifacts are excluded only while ignored. It is not a scan of the private study folder. All original content rules remain active. Python 3 and Node are required.
+
+The upstream Python validation suite was executed unchanged from an isolated external copy; maintained application analysis tests live under `analysis/`, so run `.venv/bin/python -m pytest -q analysis` here. No private handoff files are needed to clone, run or test this repository.
