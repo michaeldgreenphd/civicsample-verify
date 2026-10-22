@@ -696,9 +696,17 @@ test(
           'public.frozen_predictions_v4',
           'public.freeze_manifests_v4',
         ]) {
-          await assert.rejects(
-            asRole('reviewerA', `select count(*) from ${blindedTable}`),
-            /permission denied/,
+          assert.equal(
+            await asRole<number>('reviewerA', `select count(*)::integer from ${blindedTable}`),
+            0,
+            `Reviewer must see 0 rows in RLS-blinded table ${blindedTable}`,
+          );
+          assert.equal(
+            (await asRole<number>(
+              'investigator',
+              `select count(*)::integer from ${blindedTable}`,
+            )) > 0,
+            true,
           );
         }
 
