@@ -36,6 +36,7 @@ export interface InvitedAccountRecord {
   expiresAt: number;
   claimedAt?: number;
   revokedAt?: number;
+  activeSessionId?: string;
   mfaRequired: boolean;
 }
 
@@ -50,14 +51,18 @@ export interface VerifiedJwtClaims {
 }
 
 const globals = globalThis as typeof globalThis & {
-  verifySessions?: Map<string, { actor: Actor; expires: number; aal?: 'aal1' | 'aal2' }>;
+  verifySessions?: Map<string, { actor: Actor; expires: number; sessionId?: string }>;
   verifyAttempts?: { count: number; until: number };
   verifyInvites?: Map<string, InvitedAccountRecord>;
   verifyRevokedUsers?: Set<string>;
+  verifyEverRevokedUsers?: Set<string>;
+  verifyRevokedSessionIds?: Set<string>;
 };
 const sessions = (globals.verifySessions ??= new Map());
 const invites = (globals.verifyInvites ??= new Map());
 const revokedUsers = (globals.verifyRevokedUsers ??= new Set());
+const everRevokedUsers = (globals.verifyEverRevokedUsers ??= new Set());
+const revokedSessionIds = (globals.verifyRevokedSessionIds ??= new Set());
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -125,7 +130,7 @@ export function login(account: string, password: string): string {
   if (sessions.size > 100)
     throw new HttpError(429, 'Too many active local sessions. Restart the pilot server.');
   const token = randomBytes(32).toString('hex');
-  sessions.set(token, { actor: { ...ACCOUNTS[account] }, expires: now + MAX_AGE, aal: 'aal2' });
+  sessions.set(token, { actor: { ...ACCOUNTS[account] }, expires: now + MAX_AGE });
   return token;
 }
 export function logout(request: Request) {
@@ -140,8 +145,14 @@ export function expiredCookie() {
 }
 
 /**
- * Issue a synthetic-only account invitation. Real clinician email domains are refused
- * in this build; only `.invalid` synthetic domains are accepted.
+ * SYNTHETIC TEST SCAFFOLDING ONLY.
+ *
+ * The helpers below (`issueSyntheticInvite`, `claimInvitedSession`, `signSyntheticJwt`,
+ * `verifySignedJwtClaims`, `revokeActorSessions`) exercise invitation, claim, session-ID,
+ * assurance-level (`aal1`/`aal2`), and revocation state transitions in local synthetic tests.
+ * They do NOT implement TOTP enrollment, cryptographic MFA verification, or a production
+ * identity provider. Production authentication must remain behind a verified external
+ * identity-provider boundary (e.g., Supabase Auth with verified TOTP MFA).
  */
 export function issueSyntheticInvite(
   issuer: Actor,
@@ -171,6 +182,10 @@ export function issueSyntheticInvite(
   if (!input.displayName.trim() || input.displayName.trim().length > 120) {
     throw new HttpError(400, 'Display name is required.');
   }
+  const previous = invites.get(input.userId);
+  if (previous?.activeSessionId) {
+    revokedSessionIds.add(previous.activeSessionId);
+  }
   const inviteToken = randomBytes(32).toString('hex');
   const inviteTokenHash = createHash('sha256').update(inviteToken).digest('hex');
   const mfaRequired = input.role === 'INVESTIGATOR' ? true : (input.mfaRequired ?? true);
@@ -185,13 +200,13 @@ export function issueSyntheticInvite(
     mfaRequired,
   };
   invites.set(input.userId, record);
-  revokedUsers.delete(input.userId);
   return { inviteToken, record: { ...record } };
 }
 
 /**
- * Claim an invited account token, enforcing single-use redemption, expiration, revocation,
- * and TOTP/MFA (`aal2`) assurance before issuing an authenticated session.
+ * Synthetic test helper to claim an invited account token.
+ * Does NOT default to `aal2`: callers must explicitly pass the assurance level verified
+ * by an external identity provider (defaulting to `'aal1'` when omitted).
  */
 export function claimInvitedSession(
   userId: string,
@@ -200,7 +215,7 @@ export function claimInvitedSession(
 ): { sessionToken: string; actor: Actor; claims: VerifiedJwtClaims } {
   const now = Date.now();
   const invite = invites.get(userId);
-  if (!invite || invite.revokedAt !== undefined || revokedUsers.has(userId)) {
+  if (!invite || invite.revokedAt !== undefined) {
     throw new HttpError(401, 'Invitation is invalid or has been revoked.');
   }
   if (invite.claimedAt !== undefined) {
@@ -214,19 +229,22 @@ export function claimInvitedSession(
   if (suppliedHash.length !== expectedHash.length || !timingSafeEqual(suppliedHash, expectedHash)) {
     throw new HttpError(401, 'Invitation token was not accepted.');
   }
-  const aal = options.aal ?? 'aal2';
+  const aal: 'aal1' | 'aal2' = options.aal ?? 'aal1';
   if (invite.mfaRequired && aal !== 'aal2') {
     throw new HttpError(403, 'Multi-factor authentication (aal2) is required to claim this role.');
   }
+  const sessionToken = randomBytes(32).toString('hex');
+  const sessionId = randomBytes(16).toString('hex');
   invite.claimedAt = now;
+  invite.activeSessionId = sessionId;
+  revokedUsers.delete(userId);
   const actor: Actor = {
     id: invite.userId,
     role: invite.role,
     displayName: invite.displayName,
   };
-  const sessionToken = randomBytes(32).toString('hex');
   const expires = now + MAX_AGE;
-  sessions.set(sessionToken, { actor, expires, aal });
+  sessions.set(sessionToken, { actor, expires, sessionId });
   return {
     sessionToken,
     actor: { ...actor },
@@ -236,14 +254,14 @@ export function claimInvitedSession(
       aal,
       iat: Math.floor(now / 1000),
       exp: Math.floor(expires / 1000),
-      sessionId: sessionToken.slice(0, 16),
+      sessionId,
       role: 'authenticated',
     },
   };
 }
 
 /**
- * Sign and verify HS256 JWT tokens compatible with Supabase `request.jwt.claims` (`sub`, `aal`, `role`).
+ * Synthetic test helper to sign HS256 JWT tokens shaped like Supabase `request.jwt.claims`.
  */
 export function signSyntheticJwt(claims: VerifiedJwtClaims, secret: string): string {
   if (!secret || secret.length < 16) {
@@ -292,20 +310,36 @@ export function verifySignedJwtClaims(
   if (typeof payload.sub !== 'string' || !payload.sub) {
     throw new HttpError(401, 'JWT sub claim is required.');
   }
+  const sessionId = typeof payload.sessionId === 'string' ? payload.sessionId : undefined;
+  if (sessionId && revokedSessionIds.has(sessionId)) {
+    throw new HttpError(401, 'User session has been revoked.');
+  }
   if (revokedUsers.has(payload.sub)) {
     throw new HttpError(401, 'User session has been revoked.');
   }
-  const knownDemo = Object.values(ACCOUNTS).find((a) => a.id === payload.sub);
   const invited = invites.get(payload.sub);
-  const actor: Actor | null = knownDemo
-    ? { ...knownDemo }
-    : invited && invited.claimedAt !== undefined && invited.revokedAt === undefined
-      ? { id: invited.userId, role: invited.role, displayName: invited.displayName }
-      : null;
+  const knownDemo = Object.values(ACCOUNTS).find((a) => a.id === payload.sub);
+  let actor: Actor | null = null;
+  if (invited) {
+    if (
+      invited.claimedAt === undefined ||
+      invited.revokedAt !== undefined ||
+      !invited.activeSessionId ||
+      sessionId !== invited.activeSessionId
+    ) {
+      throw new HttpError(401, 'User session has been revoked.');
+    }
+    actor = { id: invited.userId, role: invited.role, displayName: invited.displayName };
+  } else if (knownDemo) {
+    if (everRevokedUsers.has(payload.sub)) {
+      throw new HttpError(401, 'User session has been revoked.');
+    }
+    actor = { ...knownDemo };
+  }
   if (!actor) {
     throw new HttpError(401, 'JWT subject is not an enrolled account.');
   }
-  const aal = payload.aal === 'aal2' ? 'aal2' : 'aal1';
+  const aal: 'aal1' | 'aal2' = payload.aal === 'aal2' ? 'aal2' : 'aal1';
   const requireMfa = options.requireMfaForInvestigator ?? true;
   if (actor.role === 'INVESTIGATOR' && requireMfa && aal !== 'aal2') {
     throw new HttpError(403, 'Investigator actions require an MFA-verified (aal2) session.');
@@ -321,7 +355,7 @@ export function verifySignedJwtClaims(
       aal,
       exp: payload.exp,
       iat: typeof payload.iat === 'number' ? payload.iat : undefined,
-      sessionId: typeof payload.sessionId === 'string' ? payload.sessionId : undefined,
+      sessionId,
       role: 'authenticated',
     },
   };
@@ -329,20 +363,28 @@ export function verifySignedJwtClaims(
 
 /**
  * Revoke all active sessions and invitations for a user ID. Immediately blocks both cookie
- * sessions and signed JWT tokens for that subject.
+ * sessions and previously issued JWT tokens for that subject, even if the user is later re-invited.
  */
 export function revokeActorSessions(targetUserId: string, revokedBy: Actor): number {
   if (revokedBy.role !== 'INVESTIGATOR') {
     throw new HttpError(403, 'Only an investigator may revoke user sessions.');
   }
   revokedUsers.add(targetUserId);
+  everRevokedUsers.add(targetUserId);
   const invite = invites.get(targetUserId);
   if (invite) {
     invite.revokedAt = Date.now();
+    if (invite.activeSessionId) {
+      revokedSessionIds.add(invite.activeSessionId);
+      invite.activeSessionId = undefined;
+    }
   }
   let removed = 0;
   for (const [token, session] of sessions) {
     if (session.actor.id === targetUserId) {
+      if (session.sessionId) {
+        revokedSessionIds.add(session.sessionId);
+      }
       sessions.delete(token);
       removed += 1;
     }
@@ -353,5 +395,7 @@ export function revokeActorSessions(targetUserId: string, revokedBy: Actor): num
 export function resetInvitedAuthStateForTests(): void {
   invites.clear();
   revokedUsers.clear();
+  everRevokedUsers.clear();
+  revokedSessionIds.clear();
   sessions.clear();
 }

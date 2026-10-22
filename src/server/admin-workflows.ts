@@ -35,33 +35,40 @@ export interface ApprovalGateReport {
   gates: ApprovalGateItem[];
 }
 
+const treeNumberSchema = z.strictObject({
+  number: z.string().regex(/^(?:TESTFX|SYN)\.\d{3}(?:\.\d{3})*$/),
+  label: z.string().trim().min(1).max(200),
+});
+
 const trialPacketSchema = z.strictObject({
-  nctId: z.string().regex(/^SYN-NCT-\d{4,8}$/),
+  registryId: z.string().regex(/^SYN-NCT-\d{4,8}$/),
   title: z.string().trim().min(1).max(300),
+  summary: z.string().trim().min(1).max(4000),
   conditions: z.array(z.string().trim().min(1).max(200)).min(1).max(20),
   interventions: z.array(z.string().trim().min(1).max(200)).min(1).max(20),
   primaryOutcomes: z.array(z.string().trim().min(1).max(300)).min(1).max(20),
-  eligibilitySummary: z.string().trim().min(1).max(2000),
-  briefSummary: z.string().trim().min(1).max(4000),
+  studyType: z.string().trim().min(1).max(200),
+  primaryPurpose: z.string().trim().min(1).max(200),
+  phase: z.string().trim().min(1).max(200),
+  ageRange: z.string().trim().min(1).max(200),
+  source: z.string().trim().min(1).max(200),
+  sourceVersion: z.string().trim().min(1).max(100),
 });
 
-const syntheticCaseAuthorSchema = z.strictObject({
+export const syntheticCaseAuthorSchema = z.strictObject({
   id: z.string().regex(/^SYN-\d{3}$/),
   kind: z.enum(['DESCRIPTOR', 'TWO_STEP']),
   packet: z.strictObject({
     title: z.string().trim().min(1).max(300),
     area: z.string().trim().min(1).max(100),
-    descriptorUi: z.string().regex(/^SYN-D\d{3,6}$/),
     descriptorName: z.string().trim().min(1).max(300),
-    treeNumbers: z.array(z.string().trim().min(1).max(100)).min(1).max(20),
+    descriptorId: z.string().regex(/^(?:TESTFX|SYN)-D\d{3,6}$/),
     scopeNote: z.string().trim().min(1).max(2000),
-    parents: z.array(z.string().trim().min(1).max(200)).max(20),
-    children: z.array(z.string().trim().min(1).max(200)).max(20),
-    synonyms: z.array(z.string().trim().min(1).max(200)).max(20),
-    includedConcepts: z.array(z.string().trim().min(1).max(200)).max(20),
-    excludedConcepts: z.array(z.string().trim().min(1).max(200)).max(20),
-    hierarchyExcerpt: z.array(z.string().trim().min(1).max(300)).min(1).max(20),
-    rubricPrompt: z.string().trim().min(1).max(1000),
+    entryTerms: z.array(z.string().trim().min(1).max(200)).min(1).max(20),
+    treeNumbers: z.array(treeNumberSchema).min(1).max(20),
+    areaDefinition: z.string().trim().min(1).max(2000),
+    source: z.string().trim().min(1).max(200),
+    sourceVersion: z.string().trim().min(1).max(100),
   }),
   trialPacket: trialPacketSchema.optional(),
 });
@@ -260,7 +267,7 @@ export async function authorSyntheticPilotCase(
     if (/duplicate key/.test(message)) {
       throw new ServiceError(409, 'A synthetic case with this identifier already exists.');
     }
-    if (/Packet key|Real registry identifiers|SYN-NNN|TWO_STEP/.test(message)) {
+    if (/Packet key|Real registry identifiers|SYN-NNN|TWO_STEP|canonical/.test(message)) {
       throw new ServiceError(400, message.replace(/^error:\s*/i, ''));
     }
     throw new ServiceError(500, 'The local review database could not complete this request.');

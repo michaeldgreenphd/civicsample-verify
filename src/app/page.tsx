@@ -1280,6 +1280,92 @@ function Investigator({
     level: 'DESCRIPTOR_LEVEL',
     reason: '',
   });
+  const [newCase, setNewCase] = useState({
+    id: 'SYN-011',
+    kind: 'TWO_STEP' as 'DESCRIPTOR' | 'TWO_STEP',
+    title: 'Fictional condition K',
+    area: 'Respiratory',
+    descriptorName: 'Fictional condition K',
+    descriptorId: 'TESTFX-D0011',
+    scopeNote:
+      'Synthetic training vignette 11. This invented descriptor exercises the two-step authoring and review workflow.',
+    entryTerms: 'Fictional synonym 11',
+    treeNumber: 'TESTFX.011',
+    treeLabel: 'Synthetic branch — no real MeSH classification',
+    areaDefinition:
+      'For this pilot only, consider whether the fictional condition belongs in the respiratory construct.',
+    source: 'Hand-authored fictional engineering fixture',
+    sourceVersion: 'synthetic-v1',
+    registryId: 'SYN-NCT-0011',
+    trialTitle: 'Fictional trial 11',
+    trialSummary:
+      'An invented trial examines fictional condition K as its primary condition. No real trial is represented.',
+    conditions: 'Fictional condition K',
+    interventions: 'Fictional nebulized intervention',
+    primaryOutcomes: 'Fictional respiratory symptom score',
+    studyType: 'Synthetic interventional example',
+    primaryPurpose: 'Synthetic treatment example',
+    trialPhase: 'Not applicable to fictional study',
+    ageRange: 'Fictional adult population',
+  });
+  async function authorCase(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const splitList = (value: string) =>
+        value
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+      const payload = {
+        id: newCase.id.trim(),
+        kind: newCase.kind,
+        packet: {
+          title: newCase.title.trim(),
+          area: newCase.area.trim(),
+          descriptorName: newCase.descriptorName.trim(),
+          descriptorId: newCase.descriptorId.trim(),
+          scopeNote: newCase.scopeNote.trim(),
+          entryTerms: splitList(newCase.entryTerms),
+          treeNumbers: [{ number: newCase.treeNumber.trim(), label: newCase.treeLabel.trim() }],
+          areaDefinition: newCase.areaDefinition.trim(),
+          source: newCase.source.trim(),
+          sourceVersion: newCase.sourceVersion.trim(),
+        },
+        ...(newCase.kind === 'TWO_STEP'
+          ? {
+              trialPacket: {
+                registryId: newCase.registryId.trim(),
+                title: newCase.trialTitle.trim(),
+                summary: newCase.trialSummary.trim(),
+                conditions: splitList(newCase.conditions),
+                interventions: splitList(newCase.interventions),
+                primaryOutcomes: splitList(newCase.primaryOutcomes),
+                studyType: newCase.studyType.trim(),
+                primaryPurpose: newCase.primaryPurpose.trim(),
+                phase: newCase.trialPhase.trim(),
+                ageRange: newCase.ageRange.trim(),
+                source: newCase.source.trim(),
+                sourceVersion: newCase.sourceVersion.trim(),
+              },
+            }
+          : {}),
+      };
+      await api('/api/admin/cases', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      const refreshed = await onRefresh();
+      setConfig(refreshed.configuration);
+      setNotice(`Synthetic case ${newCase.id.trim()} authored and assigned to both reviewers.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function execute() {
     if (!action || !attestation.trim()) return;
     setBusy(true);
@@ -1562,6 +1648,170 @@ function Investigator({
                 Review amendment authorization
               </button>
             </div>
+          </details>
+          <details className="panel rubric-panel">
+            <summary>Author a synthetic pilot case</summary>
+            <form className="panel-body" style={{ paddingTop: 0 }} onSubmit={authorCase}>
+              <p className="muted" style={{ fontSize: 12, marginBottom: 15 }}>
+                Enrolls a fabricated pilot case (`SYN-NNN`) with canonical descriptor and optional
+                Step-2 trial evidence, assigning it independently to Reviewer A and Reviewer B.
+              </p>
+              <div className="context-grid">
+                <div className="field">
+                  <label className="form-label" htmlFor="author-case-id">
+                    New synthetic case ID
+                  </label>
+                  <input
+                    id="author-case-id"
+                    value={newCase.id}
+                    onChange={(e) => setNewCase({ ...newCase, id: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="form-label" htmlFor="author-case-kind">
+                    Case kind
+                  </label>
+                  <select
+                    id="author-case-kind"
+                    value={newCase.kind}
+                    onChange={(e) =>
+                      setNewCase({
+                        ...newCase,
+                        kind: e.target.value as 'DESCRIPTOR' | 'TWO_STEP',
+                      })
+                    }
+                  >
+                    <option value="DESCRIPTOR">Descriptor only</option>
+                    <option value="TWO_STEP">Two-step trial case</option>
+                  </select>
+                </div>
+              </div>
+              <div className="context-grid">
+                <div className="field">
+                  <label className="form-label" htmlFor="author-case-title">
+                    Case title
+                  </label>
+                  <input
+                    id="author-case-title"
+                    value={newCase.title}
+                    onChange={(e) => setNewCase({ ...newCase, title: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="form-label" htmlFor="author-case-area">
+                    Construct area
+                  </label>
+                  <input
+                    id="author-case-area"
+                    value={newCase.area}
+                    onChange={(e) => setNewCase({ ...newCase, area: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="context-grid">
+                <div className="field">
+                  <label className="form-label" htmlFor="author-descriptor-name">
+                    Descriptor name
+                  </label>
+                  <input
+                    id="author-descriptor-name"
+                    value={newCase.descriptorName}
+                    onChange={(e) => setNewCase({ ...newCase, descriptorName: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="form-label" htmlFor="author-descriptor-id">
+                    Synthetic descriptor ID
+                  </label>
+                  <input
+                    id="author-descriptor-id"
+                    value={newCase.descriptorId}
+                    onChange={(e) => setNewCase({ ...newCase, descriptorId: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <label className="form-label" htmlFor="author-scope-note">
+                  Descriptor scope note
+                </label>
+                <textarea
+                  id="author-scope-note"
+                  value={newCase.scopeNote}
+                  onChange={(e) => setNewCase({ ...newCase, scopeNote: e.target.value })}
+                />
+              </div>
+              <div className="context-grid">
+                <div className="field">
+                  <label className="form-label" htmlFor="author-entry-terms">
+                    Entry terms
+                  </label>
+                  <input
+                    id="author-entry-terms"
+                    value={newCase.entryTerms}
+                    onChange={(e) => setNewCase({ ...newCase, entryTerms: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="form-label" htmlFor="author-tree-number">
+                    Tree number
+                  </label>
+                  <input
+                    id="author-tree-number"
+                    value={newCase.treeNumber}
+                    onChange={(e) => setNewCase({ ...newCase, treeNumber: e.target.value })}
+                  />
+                </div>
+              </div>
+              <div className="field">
+                <label className="form-label" htmlFor="author-area-definition">
+                  Area definition
+                </label>
+                <textarea
+                  id="author-area-definition"
+                  value={newCase.areaDefinition}
+                  onChange={(e) => setNewCase({ ...newCase, areaDefinition: e.target.value })}
+                />
+              </div>
+              {newCase.kind === 'TWO_STEP' && (
+                <>
+                  <div className="context-grid">
+                    <div className="field">
+                      <label className="form-label" htmlFor="author-registry-id">
+                        Synthetic trial registry ID
+                      </label>
+                      <input
+                        id="author-registry-id"
+                        value={newCase.registryId}
+                        onChange={(e) => setNewCase({ ...newCase, registryId: e.target.value })}
+                      />
+                    </div>
+                    <div className="field">
+                      <label className="form-label" htmlFor="author-trial-title">
+                        Trial title
+                      </label>
+                      <input
+                        id="author-trial-title"
+                        value={newCase.trialTitle}
+                        onChange={(e) => setNewCase({ ...newCase, trialTitle: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label className="form-label" htmlFor="author-trial-summary">
+                      Trial summary
+                    </label>
+                    <textarea
+                      id="author-trial-summary"
+                      value={newCase.trialSummary}
+                      onChange={(e) => setNewCase({ ...newCase, trialSummary: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+              <button className="button secondary" disabled={phase !== 'OPEN' || busy}>
+                Author synthetic case
+              </button>
+            </form>
           </details>
         </div>
         <div>

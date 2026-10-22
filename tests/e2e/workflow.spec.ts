@@ -27,6 +27,84 @@ const structuredContext = JSON.stringify({
 const hidden =
   /tier0_binary|tier1_binary|prediction_set|selection_probability|comparison_cell|frame_unit|request\.jwt|service_role|snapshot_hash/;
 
+test('served browser authors a canonical two-step synthetic case and reviewer completes Step 1 and Step 2', async ({
+  browser,
+}) => {
+  const [admin, a] = await Promise.all([
+    browser.newContext({ baseURL: origin }),
+    browser.newContext({ baseURL: origin }),
+  ]);
+  const [adminPage, aPage] = await Promise.all([admin.newPage(), a.newPage()]);
+  try {
+    await signIn(adminPage, 'investigator');
+    await expect(adminPage.getByRole('heading', { name: 'Pilot overview' })).toBeVisible();
+    await adminPage.locator('summary').filter({ hasText: 'Author a synthetic pilot case' }).click();
+    await expect(adminPage.getByLabel('New synthetic case ID')).toHaveValue('SYN-011');
+    await expect(adminPage.getByLabel('Case kind')).toHaveValue('TWO_STEP');
+    await expect(adminPage.getByLabel('Synthetic descriptor ID')).toHaveValue('TESTFX-D0011');
+    await expect(adminPage.getByLabel('Synthetic trial registry ID')).toHaveValue('SYN-NCT-0011');
+    await adminPage.getByRole('button', { name: 'Author synthetic case' }).click();
+    await expect(
+      adminPage.getByText('Synthetic case SYN-011 authored and assigned to both reviewers.'),
+    ).toBeVisible();
+
+    await signIn(aPage, 'reviewer-a');
+    expect(
+      (
+        await post(a, '/api/admin/cases', {
+          id: 'SYN-012',
+          kind: 'DESCRIPTOR',
+          packet: {},
+        })
+      ).status(),
+    ).toBe(403);
+
+    await aPage.getByRole('button', { name: /Fictional condition K/ }).click();
+    await expect(aPage.getByRole('heading', { name: 'Fictional condition K' })).toBeVisible();
+    await expect(aPage.getByText('Step 1 of 2')).toBeVisible();
+    await expect(aPage.getByText('TESTFX-D0011')).toBeVisible();
+    await expect(aPage.getByText('Fictional synonym 11')).toBeVisible();
+    await expect(
+      aPage.getByText('TESTFX.011 — Synthetic branch — no real MeSH classification'),
+    ).toBeVisible();
+    await expect(aPage.getByText('SYN-NCT-0011')).toHaveCount(0);
+    await expect(aPage.getByText('Disclosed trial evidence')).toHaveCount(0);
+
+    await aPage.getByRole('radio', { name: /^Include\b/ }).check();
+    await aPage
+      .getByLabel(/^Rationale/)
+      .fill('Reviewer A Step 1 descriptor judgment on authored synthetic case SYN-011.');
+    await aPage.getByRole('button', { name: 'Lock Step 1 & continue', exact: true }).click();
+    await aPage.getByRole('button', { name: /Confirm & lock/ }).click();
+
+    await expect(aPage.getByText(/Step 1 locked:\s*Include/)).toBeVisible();
+    await expect(aPage.getByText('Step 2 of 2')).toBeVisible();
+    await expect(aPage.getByText('Disclosed trial evidence')).toBeVisible();
+    await expect(aPage.getByRole('heading', { name: 'Fictional trial 11' })).toBeVisible();
+    await expect(aPage.getByText('SYN-NCT-0011')).toBeVisible();
+    await expect(aPage.getByText('Fictional nebulized intervention')).toBeVisible();
+    await expect(aPage.getByText('Fictional respiratory symptom score')).toBeVisible();
+    await expect(
+      aPage.getByText('Synthetic interventional example · Synthetic treatment example'),
+    ).toBeVisible();
+    await expect(
+      aPage.getByText('Not applicable to fictional study · Fictional adult population'),
+    ).toBeVisible();
+
+    await aPage.getByLabel(/Descriptor role in this trial/).selectOption('DISEASE_STUDIED');
+    await aPage.getByRole('radio', { name: /^Include\b/ }).check();
+    await aPage
+      .getByLabel(/^Rationale/)
+      .fill('Reviewer A Step 2 trial judgment on authored synthetic case SYN-011.');
+    await aPage.getByRole('button', { name: 'Submit judgment', exact: true }).click();
+    await aPage.getByRole('button', { name: /Confirm & lock/ }).click();
+    await expect(aPage.getByText(/Final submission locked/i).first()).toBeVisible();
+  } finally {
+    await admin.close();
+    await a.close();
+  }
+});
+
 test('four isolated browser roles: review, two-step blinding, adjudication, lock and export', async ({
   browser,
 }) => {
@@ -120,8 +198,8 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
     [a, 'A'],
     [b, 'B'],
   ] as const) {
-    for (let i = 1; i <= 10; i++) {
-      if (slot === 'A' && i === 1) continue;
+    for (let i = 1; i <= 11; i++) {
+      if (slot === 'A' && (i === 1 || i === 11)) continue;
       const id = `SYN-${String(i).padStart(3, '0')}`;
       if (i >= 9) {
         const step = await post(context, `/api/cases/${id}/step1`, answer());
@@ -185,7 +263,7 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
   await adjPage.getByRole('button', { name: 'Confirm & lock' }).click();
   await expect(adjPage.getByText('Adjudication locked', { exact: true })).toBeVisible();
   await adjPage.screenshot({ path: 'test-results/adjudicator-desktop.png', fullPage: true });
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= 11; i++) {
     const id = `SYN-${String(i).padStart(3, '0')}`;
     const detail = await (await adj.request.get(`/api/cases/${id}`)).json();
     expect(JSON.stringify(detail)).not.toMatch(hidden);
@@ -224,7 +302,7 @@ test('four isolated browser roles: review, two-step blinding, adjudication, lock
   expect(bundle.manifest.analysis_eligible).toBe(false);
   expect(bundle.manifest.clinical_metrics).toBeNull();
   expect(bundle.files.find((f: { role: string }) => f.role === 'independent_judgments').rows).toBe(
-    24,
+    28,
   );
   expect((await adj.request.get('/api/admin/export')).status()).toBe(403);
   await aPage.setViewportSize({ width: 390, height: 844 });
