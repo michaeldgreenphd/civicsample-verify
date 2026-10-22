@@ -1,0 +1,46 @@
+{
+ "export_id": "00000000-0000-4000-8000-0000000e5e5e",
+ "export_format_version": "5.0",
+ "mode": "FORMAL",
+ "created_at": "2026-11-26T12:00:00Z",
+ "app_git_sha": "synthetic",
+ "db_schema_version": "5.0.0",
+ "is_synthetic_fixture": true,
+ "design_version": "SYN-5",
+ "adjudication_scope": "DISAGREEMENTS_ONLY",
+ "label_set_id": "LBL5-TESTFX",
+ "frozen_at": "2026-11-01T12:00:00Z",
+ "frozen_case_list_sha256": "2a5de406c3e0ea44875b1de20496b80f7ad66250aa6b9ef1252084f9c005cf38",
+ "frozen_label_rows_sha256": "894c8c884875e742636b9aeded6a433bddde8bbdf5c998af057a3063bf2c5b09",
+ "formal_phase_opened_at": "2026-11-02T09:00:00Z",
+ "formal_phase_closed_at": "2026-11-21T17:00:00Z",
+ "formal_phase_status": "CLOSED_INCOMPLETE",
+ "snapshot_taken_at": "2026-11-21T17:30:00Z",
+ "snapshot_sha256": "5b77343bd881a4f425bde1ec9979946ec1add11de02010d4c63159977bac4de8",
+ "snapshot_rows": 1463,
+ "reference_locked": true,
+ "reference_lock_id": "00000000-0000-4000-8000-00000000c0de",
+ "reference_locked_at": "2026-11-26T10:00:00Z",
+ "rubric_version": "REVIEW_RUBRIC_v5-DRAFT",
+ "rubric_sha256": "9fcd3fe72a0f7851c89c22564f4fbf2152450593843af32e0ac5f7f604bb6e50",
+ "files": [
+  {
+   "role": "independent_judgments",
+   "name": "synthetic_v5_independent_judgments.csv",
+   "sha256": "711182087ee033048a6830d4d0d124fc6fa29973b30205d2a1fc2c6fe044a621",
+   "rows": 1463
+  },
+  {
+   "role": "adjudicated_reference",
+   "name": "synthetic_v5_adjudicated_reference.csv",
+   "sha256": "f6025486d50a998f0ab143671d0e47147293e01eae128dac3b7836368bb94d54",
+   "rows": 760
+  },
+  {
+   "role": "frozen_labels",
+   "name": "synthetic_v5_frozen_labels.csv",
+   "sha256": "7743c3c5830fbcd402a374f0f325b27dbc8547509dd7113ec8dd5541bc50d709",
+   "rows": 702
+  }
+ ]
+}

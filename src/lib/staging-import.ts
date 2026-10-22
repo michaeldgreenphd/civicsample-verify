@@ -165,6 +165,8 @@ function oneOf(value: string, allowed: readonly string[], code: string): void {
 }
 const unitTypes = ['DESCRIPTOR_AREA', 'TRIAL_AREA'];
 const binary = ['INCLUDE', 'EXCLUDE'];
+// Match the preserved database contract, including both synthetic separator forms.
+const trialIdentifier = /^(?:NCT\d{8}|SYN-NCT-?\d{4,8})$/;
 const rawStatuses = [
   ...binary,
   'CONTEXT_DEPENDENT',
@@ -300,7 +302,7 @@ export function validateHeldout(
     const trial = row.unit_type === 'TRIAL_AREA';
     if (boolean(row, 'two_step_descriptor_then_trial') !== trial)
       refuse('TWO_STEP_DESIGN_MISMATCH');
-    if (trial ? !/^(?:NCT\d{8}|SYN-NCT-[A-Za-z0-9-]+)$/.test(row.nct_id) : row.nct_id !== '')
+    if (trial ? !trialIdentifier.test(row.nct_id) : row.nct_id !== '')
       refuse('TRIAL_IDENTIFIER_MISMATCH');
     boolean(row, 'policy_governed_neoplasm_GEN06');
     integer(row, 'N_h');
@@ -439,6 +441,21 @@ export function validatePredictions(
             ? row.tier1_status_raw
             : row.tier0_binary;
     if (row.tier1_binary !== expected) refuse('PREDICTION_MAPPING_MISMATCH');
+    // The verified sample carries the v1.1 classification only. A valid alternate
+    // v1.1 label must not replace that sampled classification during preflight.
+    if (
+      options.tier1Version === 'v1.1' &&
+      [
+        ['tier1_status_raw', 'tier1_v11_status_raw'],
+        ['tier1_binary', 'tier1_v11_binary'],
+        ['comparison_cell', 'comparison_cell_v11'],
+      ].some(([prediction, field]) => row[prediction] !== sample[field])
+    )
+      refuse('PREDICTION_SAMPLE_PROVENANCE_MISMATCH');
+    // v1.2 may legitimately differ from v1.1. For either version the comparison
+    // cell must describe the two labels actually present in this prediction row.
+    const comparisonCell = `O${row.tier0_binary === 'INCLUDE' ? 'POS' : 'NEG'}_C${row.tier1_binary === 'INCLUDE' ? 'POS' : 'NEG'}`;
+    if (row.comparison_cell !== comparisonCell) refuse('PREDICTION_COMPARISON_CELL_MISMATCH');
   }
   if (seen.size !== required.size || sets.size !== 1) refuse('PREDICTION_POPULATION_MISMATCH');
   return file.rows;
@@ -493,8 +510,7 @@ export function validateModuleB(
       if (row.nct_id !== '') refuse('MODULE_B_IDENTIFIER_MISMATCH');
     } else {
       trials++;
-      if (!/^(?:NCT\d{8}|SYN-NCT-[A-Za-z0-9-]+)$/.test(present(row, 'nct_id')))
-        refuse('MODULE_B_IDENTIFIER_MISMATCH');
+      if (!trialIdentifier.test(present(row, 'nct_id'))) refuse('MODULE_B_IDENTIFIER_MISMATCH');
     }
   }
   if (

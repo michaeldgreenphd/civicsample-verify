@@ -69,7 +69,30 @@ export function adaptPreservedSuite(source, adapterUrl) {
   return source.replace(imports[0], replacement).replace(imports[1], '');
 }
 
-export function inspectSuiteResult(output, expectedCount) {
+/**
+ * Create `count` disposable databases (nested, each dropped on exit) and pass
+ * their URLs, in creation order, to `operation`.
+ */
+export async function withDisposableHandoffDatabases(
+  baseUrl,
+  count,
+  operation,
+  makeClient = (url) => new Client({ connectionString: url }),
+) {
+  assert.ok(Number.isInteger(count) && count >= 1, 'At least one disposable database is required');
+  const nest = (urls) =>
+    urls.length === count
+      ? operation(urls)
+      : withDisposableHandoffDatabase(baseUrl, (url) => nest([...urls, url]), makeClient);
+  return nest([]);
+}
+
+/**
+ * `allowedFailures` lists step IDs that the supplied test reports document as
+ * expected differences (schema-version lists that see later migrations). They
+ * may pass or fail; every other step must pass.
+ */
+export function inspectSuiteResult(output, expectedCount, allowedFailures = []) {
   assert.equal(output.summary.n, expectedCount, 'Unexpected supplied step count');
   assert.equal(output.results.length, expectedCount, 'Incomplete supplied results');
   const failures = output.results.filter((row) => row.pass !== true);
@@ -79,10 +102,13 @@ export function inspectSuiteResult(output, expectedCount) {
     expectedCount - failures.length,
     'Contradictory supplied pass count',
   );
+  const unexpected = failures.filter((row) => !allowedFailures.includes(row.id));
   return {
     count: expectedCount,
     pass: expectedCount - failures.length,
     fail: failures.length,
+    unexpectedFail: unexpected.length,
+    allowedFailures: [...allowedFailures],
     failedStepIds: failures.map((row) => row.id),
     steps: output.results.map((row) => ({ id: row.id, pass: row.pass === true })),
   };

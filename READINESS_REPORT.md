@@ -1,5 +1,15 @@
 # CivicSample Verify readiness — 2026-10-22
 
+## Current independent audit
+
+**Local synthetic workflows pass; clinical deployment is not ready.** The latest investigator request is **100 individual trial-to-condition mappings with the existing assignment visible**, following three excluded worked examples. The proposed v5 100-trial questionnaire does not implement that request and is not approved as a substitute. See [the recorded decisions](docs/REVIEW_WORKFLOW_DECISIONS.md).
+
+The independent audit adds database-enforced role separation, immutable initial and adjudicated judgments, lifecycle locking, private-helper blinding, packet validation, and stricter export/import checks. Supplied migrations 0011/0012 remain byte-identical; protections are additive in 0013/0014. Real-data dry runs and formal web activation are blocked pending the revised design.
+
+Current local evidence: **122 application tests passed, 8 native PostgreSQL tests skipped as BLOCKED; 359 Python tests passed; preserved handoff suites passed with their explicitly documented version-list exceptions; production build passed with 16 SQL inputs; three served-browser scenarios passed.** All three hosted jobs (web, analysis, PostgreSQL 16) passed at `024b86c`. Native results: 2 existing native harness tests and 7 new role/concurrency/pilot tests, with zero skipped or failed. Supabase staging exists but is not connected or tested. See [the current audit record](docs/test_runs/V5_REVIEW_AUDIT.md) for exact commands, scope and remaining gates. The [original author's v5 report](docs/test_runs/V5_READINESS.md) is historical and does not establish current readiness.
+
+The records below are historical v4 results; their counts and infrastructure status are not current-head acceptance.
+
 ## Latest staging preparation
 
 **Local synthetic demonstration is available; formal clinical review remains blocked.** The investigator chose local testing before creating Supabase staging. No named accounts or real study data were imported. Tier 1 remains explicitly awaiting approval.

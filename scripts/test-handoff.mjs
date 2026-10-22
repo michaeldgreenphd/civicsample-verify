@@ -18,14 +18,43 @@ const suites = [
   ['v2', 'pglite_rls', 'rls_tests.mjs'],
   ['v3', 'pglite_rls_v3', 'rls_tests_v3.mjs'],
   ['v4', 'pglite_rls_v4', 'rls_tests_v4.mjs'],
+  ['v5', 'pglite_rls_v5', 'rls_tests_v5.mjs'],
+  ['v5_1', 'pglite_rls_v5', 'rls_tests_v5_1.mjs'],
 ];
+const migrationFiles = {
+  m2: 'migrations/0002_v3_review_design.sql',
+  m3: 'migrations/0003_v4_record_categories_module_b.sql',
+  // This repository's own additive migrations (never run with the v3/v4 suites:
+  // 0010 refuses investigator pilot adjudications by design).
+  app: [
+    'migrations/0004_synthetic_verify_workflow.sql',
+    'migrations/0005_review_integrity_fixes.sql',
+    'migrations/0006_reference_integrity.sql',
+    'migrations/0007_frozen_contract_guards.sql',
+    'migrations/0008_trial_packet_and_concurrency_guards.sql',
+    'migrations/0009_canonical_packet_and_lock_state_guards.sql',
+    'migrations/0010_investigator_judgment_boundary.sql',
+  ],
+  // Byte-identical copies of the supplied v5 migrations 0004 and 0005.
+  m11: 'migrations/0011_v5_trial_label_verification.sql',
+  m12: 'migrations/0012_v5_training_examples.sql',
+};
 
 function copy(source, destination) {
   mkdirSync(dirname(destination), { recursive: true });
   copyFileSync(source, destination);
 }
+function concat(destination, files) {
+  writeFileSync(destination, files.map((file) => readFileSync(join(root, file), 'utf8')).join(''));
+}
 
-function run(label, directory, script, inputs, expectedCount) {
+/**
+ * Run one preserved suite and require every step to pass, except the step IDs in
+ * `allowedFailures`, which the supplied test reports document as expected
+ * differences (schema-version lists that see later migrations). Those steps may
+ * pass or fail; every other step must pass and the total count must match.
+ */
+function run(label, directory, script, inputs, expectedCount, allowedFailures = []) {
   const resultPath = join(scratch, `${label}-results.json`);
   const stepsPath = join(scratch, `${label}-steps.sql`);
   execFileSync(process.execPath, [script, ...inputs, resultPath, stepsPath], {
@@ -33,25 +62,32 @@ function run(label, directory, script, inputs, expectedCount) {
     stdio: 'pipe',
   });
   const output = JSON.parse(readFileSync(resultPath, 'utf8'));
-  const failures = output.results.filter((row) => !row.pass);
+  const failures = output.results.filter((row) => row.pass !== true);
+  const unexpected = failures.filter((row) => !allowedFailures.includes(row.id));
   if (
     output.summary.n !== expectedCount ||
-    output.summary.fail !== 0 ||
-    output.summary.pass !== expectedCount ||
-    failures.length
+    output.results.length !== expectedCount ||
+    output.summary.fail !== failures.length ||
+    output.summary.pass !== expectedCount - failures.length ||
+    unexpected.length
   ) {
     throw new Error(
-      `${label}: expected ${expectedCount} passing steps; failed step IDs: ${failures.map((row) => row.id).join(', ') || 'incomplete count'}`,
+      `${label}: expected ${expectedCount} steps with no failure outside [${allowedFailures.join(', ')}]; failed step IDs: ${failures.map((row) => row.id).join(', ') || 'incomplete count'}`,
     );
   }
-  console.log(`${label}: ${output.summary.pass}/${output.summary.n} supplied steps passed`);
+  const note = failures.length
+    ? ` (documented expected difference: ${failures.map((row) => row.id).join(', ')})`
+    : '';
+  console.log(`${label}: ${output.summary.pass}/${output.summary.n} supplied steps passed${note}`);
 }
 
 try {
   for (const file of [
     'schema.sql',
-    'migrations/0002_v3_review_design.sql',
-    'migrations/0003_v4_record_categories_module_b.sql',
+    migrationFiles.m2,
+    migrationFiles.m3,
+    migrationFiles.m11,
+    migrationFiles.m12,
     'supabase_test_shim/auth_shim.sql',
   ]) {
     copy(join(root, file), join(scratch, file));
@@ -62,18 +98,17 @@ try {
       join(scratch, 'tests_prebuild', directory, script),
     );
   const v4dir = join(scratch, 'tests_prebuild/pglite_rls_v4');
+  const v5dir = join(scratch, 'tests_prebuild/pglite_rls_v5');
   copy(join(root, 'tests/handoff/audit-probe.mjs'), join(v4dir, 'probe.mjs'));
   symlinkSync(join(root, 'node_modules'), join(scratch, 'node_modules'), 'dir');
   const base = ['../../supabase_test_shim/auth_shim.sql', '../../schema.sql'];
-  const m2 = '../../migrations/0002_v3_review_design.sql';
-  const m3 = '../../migrations/0003_v4_record_categories_module_b.sql';
+  const m2 = `../../${migrationFiles.m2}`;
+  const m3 = `../../${migrationFiles.m3}`;
+  const m11 = `../../${migrationFiles.m11}`;
+  const m12 = `../../${migrationFiles.m12}`;
   run('v2', join(scratch, 'tests_prebuild/pglite_rls'), 'rls_tests.mjs', base, 164);
   run('v3', join(scratch, 'tests_prebuild/pglite_rls_v3'), 'rls_tests_v3.mjs', [...base, m2], 262);
-  writeFileSync(
-    join(v4dir, 'combined.sql'),
-    readFileSync(join(root, 'migrations/0002_v3_review_design.sql'), 'utf8') +
-      readFileSync(join(root, 'migrations/0003_v4_record_categories_module_b.sql'), 'utf8'),
-  );
+  concat(join(v4dir, 'combined.sql'), [migrationFiles.m2, migrationFiles.m3]);
   copy(join(root, 'tests/handoff/v3.mjs'), join(v4dir, 'regression.mjs'));
   run('v3-on-v4', v4dir, 'regression.mjs', [...base, 'combined.sql'], 262);
   run('v4', v4dir, 'rls_tests_v4.mjs', [...base, m2, m3], 356);
@@ -88,6 +123,42 @@ try {
     throw new Error('Audit probe did not reproduce the historical exposure and migration fix');
   }
   console.log('Audit probe: v3 exposed 2/2 synthetic decisions; v4 exposed 0/2.');
+
+  // v5 (supplied 0004 = repo 0011) and v5.1 (supplied 0005 = repo 0012) on the
+  // supplied lineage, with the unchanged v3 and v4 suites as regressions.
+  concat(join(v5dir, 'combined_0002_0003_0011_0012.sql'), [
+    migrationFiles.m2,
+    migrationFiles.m3,
+    migrationFiles.m11,
+    migrationFiles.m12,
+  ]);
+  concat(join(v5dir, 'combined_0003_0011_0012.sql'), [
+    migrationFiles.m3,
+    migrationFiles.m11,
+    migrationFiles.m12,
+  ]);
+  copy(join(root, 'tests/handoff/v3.mjs'), join(v5dir, 'regression_v3.mjs'));
+  copy(join(root, 'tests/handoff/v4.mjs'), join(v5dir, 'regression_v4.mjs'));
+  run('v3-on-v5', v5dir, 'regression_v3.mjs', [...base, 'combined_0002_0003_0011_0012.sql'], 262);
+  run('v4-on-v5', v5dir, 'regression_v4.mjs', [...base, m2, 'combined_0003_0011_0012.sql'], 356, [
+    'V4-SCHEMA-01',
+  ]);
+  run('v5', v5dir, 'rls_tests_v5.mjs', [...base, m2, m3, m11], 457);
+  run('v5_1', v5dir, 'rls_tests_v5_1.mjs', [...base, m2, m3, m11, m12], 534);
+  // Historical v5.1 snapshot through 0012 (NOT the current guarded schema).
+  // Supplied revision/investigator-pilot tests retain their original semantics.
+  // Current 0013 boundaries run in tests/tlv5-guards and tlv5-postgres instead.
+  // Lineage: schema, 0002, 0003, repo 0004 to
+  // 0010, 0011, 0012). Only the schema-version list differs.
+  concat(join(v5dir, 'combined_app_0003_to_0010.sql'), [migrationFiles.m3, ...migrationFiles.app]);
+  run(
+    'v5_1-on-app-through-0012',
+    v5dir,
+    'rls_tests_v5_1.mjs',
+    [...base, m2, 'combined_app_0003_to_0010.sql', m11, m12],
+    534,
+    ['V5-SCHEMA-01'],
+  );
   console.log(
     'SYNTHETIC ENGINEERING ONLY. PGlite is not a live PostgreSQL or Supabase deployment test.',
   );

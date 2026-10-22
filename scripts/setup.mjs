@@ -14,6 +14,8 @@ const accounts = {
   'reviewer-a': 'VERIFY_REVIEWER_A_PASSWORD',
   'reviewer-b': 'VERIFY_REVIEWER_B_PASSWORD',
   adjudicator: 'VERIFY_ADJUDICATOR_PASSWORD',
+  'staging-reviewer-1': 'VERIFY_STAGING_REVIEWER_1_PASSWORD',
+  'staging-reviewer-2': 'VERIFY_STAGING_REVIEWER_2_PASSWORD',
 };
 const existing = existsSync('.env.local');
 if (existing && !process.argv.includes('--individual-credentials')) {
@@ -55,6 +57,7 @@ if (existing && !process.argv.includes('--individual-credentials')) {
     ...Object.entries(accounts).map(([account, variable]) => `${account}: ${configured[variable]}`),
     '',
     'Keep the investigator and adjudicator credentials with the investigator.',
+    'The staging-reviewer accounts are synthetic FORMAL-scope test identities for design v5 training examples; never give them to a clinician.',
     'Share only the assigned reviewer credential with each pilot tester.',
     'Restart the local server after changing configuration. Existing database records are preserved.',
     'Never commit this file, paste it into a PR, or expose this local pilot through a public tunnel.',

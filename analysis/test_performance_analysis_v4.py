@@ -474,10 +474,39 @@ def test_refuses_out_of_window_records(bundle, frame, col, value, msg):
         _validate(data, man)
 
 
-def test_refuses_phase_opened_before_freeze(bundle):
+def test_accepts_recorded_unlock_before_freeze_when_judgments_follow_both(bundle):
     data, man = _copy(bundle)
     man["formal_phase_opened_at"] = "2030-01-09T00:00:00Z"
-    with pytest.raises(pa3.ExportError, match="opened before the freeze"):
+    _validate(data, man)
+
+
+@pytest.mark.parametrize("timestamp", ["2030-01-08T23:00:00Z", "2030-01-09T12:00:00Z"])
+def test_refuses_judgments_before_unlock_or_freeze(bundle, timestamp):
+    data, man = _copy(bundle)
+    man["formal_phase_opened_at"] = "2030-01-09T00:00:00Z"
+    data["independent_judgments"].loc[0, "first_submitted_at"] = timestamp
+    with pytest.raises(pa3.ExportError, match="before opening or freeze"):
+        _validate(data, man)
+
+
+@pytest.mark.parametrize("field,timestamp", [
+    ("formal_phase_closed_at", "2030-01-09T12:00:00Z"),
+    ("reference_locked_at", "2030-01-09T12:00:00Z"),
+    ("reference_locked_at", "2030-02-14T12:00:00Z"),
+])
+def test_refuses_close_or_lock_before_readiness_or_lock_before_close(bundle, field, timestamp):
+    data, man = _copy(bundle)
+    man["formal_phase_opened_at"] = "2030-01-09T00:00:00Z"
+    man[field] = timestamp
+    with pytest.raises(pa3.ExportError, match="close and reference lock must follow"):
+        _validate(data, man)
+
+
+def test_refuses_reference_assessment_before_freeze_even_after_unlock(bundle):
+    data, man = _copy(bundle)
+    man["formal_phase_opened_at"] = "2030-01-09T00:00:00Z"
+    data["adjudicated_reference"].loc[0, "adjudicated_at"] = "2030-01-09T12:00:00Z"
+    with pytest.raises(pa3.ExportError, match="close and the reference lock"):
         _validate(data, man)
 
 

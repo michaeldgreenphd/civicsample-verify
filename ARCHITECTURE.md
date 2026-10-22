@@ -10,6 +10,8 @@ Local storage uses PGlite (PostgreSQL in WebAssembly) persisted in ignored .loca
 
 Judgments, adjudication and exports are distinct. Reviewer DTOs contain only their own assignment, draft and submitted work. Trial evidence is disclosed only after the reviewer's descriptor determination is locked. An investigator closes review, authorizes adjudication, and locks the completed reference explicitly. No application endpoint can activate formal research.
 
+Design v5 (trial-level label verification) is a separate module: `src/server/tlv5.ts` calls the supplied `rpc_tlv5_*` functions and views through the same actor-scoped transaction, `src/app/tlv5-workspace.tsx` renders the role-specific screens, `src/lib/tlv5-export.ts` writes bundle format 5.0 deterministically from the three export views, and the historical private-file dry-run script is currently blocked before reading files pending the revised mapping-unit protocol. Additive 0013/0014 enforce stricter independent-role, finality and lifecycle boundaries. The latest visible-assignment 100-mapping workflow is recorded in `docs/REVIEW_WORKFLOW_DECISIONS.md` and is not implemented by this v5 module. The v4 pilot (`verify_*` tables) and the v5 pilot (`tlv5_*` tables) coexist; designs v4 and v5 are mutually exclusive in the database.
+
 Analysis lives separately under analysis/. Pilot export is an engineering audit artifact, not a performance bundle. Formal-format compatibility is exercised only with explicit synthetic test records. Module B is reserved as a separately approved study module.
 
 The deployment decision, hosting region and retention policy remain investigator decisions. This local prototype is intentionally not a public hosting configuration.

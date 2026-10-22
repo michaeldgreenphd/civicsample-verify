@@ -288,7 +288,7 @@ test('prediction validation supports explicit version choices and enforces case 
   const trial = {
     ...sample,
     unit_type: 'TRIAL_AREA',
-    nct_id: 'SYN-NCT-TESTFX-01',
+    nct_id: 'SYN-NCT-0001',
     two_step_descriptor_then_trial: 'TRUE',
   };
   const trialSample = heldout([trial]);
@@ -347,6 +347,82 @@ test('Module B stays separate, checks row/trial counts and retains absent provis
       validateModuleB(file([row]), { ...options, expectedConditionRows: 0, expectedTrialRows: 1 }),
     'MODULE_B_COUNTS_MISMATCH',
   );
+  const trialOptions = { ...options, expectedConditionRows: 0, expectedTrialRows: 1 };
+  const trial = { ...row, unit_type: 'TRIAL_ELIGIBILITY', module_b_unit_id: 'MB4-T-TESTFX-01' };
+  for (const nct_id of ['SYN-NCT-0001', 'SYN-NCT0001', 'SYN-NCT-12345678'])
+    assert.equal(validateModuleB(file([{ ...trial, nct_id }]), trialOptions).length, 1);
+  for (const nct_id of ['SYN-NCT-TESTFX-01', 'SYN-NCT-123', 'SYN-NCT-123456789'])
+    refuses(
+      () => validateModuleB(file([{ ...trial, nct_id }]), trialOptions),
+      'MODULE_B_IDENTIFIER_MISMATCH',
+    );
+});
+
+test('trial preflight accepts exactly the database synthetic identifier forms', () => {
+  const trial = { ...sample, unit_type: 'TRIAL_AREA', two_step_descriptor_then_trial: 'TRUE' };
+  for (const nct_id of ['SYN-NCT-0001', 'SYN-NCT0001', 'SYN-NCT-12345678'])
+    assert.equal(heldout([{ ...trial, nct_id }]).length, 1);
+  for (const nct_id of ['SYN-NCT-TESTFX-01', 'SYN-NCT-123', 'SYN-NCT-123456789'])
+    refuses(() => heldout([{ ...trial, nct_id }]), 'TRIAL_IDENTIFIER_MISMATCH');
+});
+
+test('v1.1 predictions must match the sampled classification while both versions validate comparison cells', () => {
+  const check = (row: CsvRow, version: 'v1.1' | 'v1.2', selected = heldout()) =>
+    validatePredictions(file([{ ...row, tier1_version: version }]), {
+      expectedRows: 1,
+      tier1Version: version,
+      sample: selected,
+      sampleWeightColumn: 'sampling_weight_v4',
+    });
+  // A coherent alternate classifier result still contradicts the verified v1.1 sample.
+  const changed = {
+    ...prediction(),
+    tier1_status_raw: 'INCLUDE',
+    tier1_binary: 'INCLUDE',
+    comparison_cell: 'OPOS_CPOS',
+  };
+  refuses(() => check(changed, 'v1.1'), 'PREDICTION_SAMPLE_PROVENANCE_MISMATCH');
+  // The same change is permitted for v1.2; its classification is not copied from v1.1.
+  assert.equal(check(changed, 'v1.2').length, 1);
+  refuses(
+    () => check({ ...changed, comparison_cell: 'OPOS_CNEG' }, 'v1.2'),
+    'PREDICTION_COMPARISON_CELL_MISMATCH',
+  );
+  // A different raw status can map to the same binary and must still be detected.
+  refuses(
+    () => check({ ...prediction(), tier1_status_raw: 'NOT_IN_DECISION_FILE' }, 'v1.1'),
+    'PREDICTION_SAMPLE_PROVENANCE_MISMATCH',
+  );
+  refuses(
+    () => check({ ...prediction(), comparison_cell: 'OPOS_CPOS' }, 'v1.1'),
+    'PREDICTION_SAMPLE_PROVENANCE_MISMATCH',
+  );
+  // Even matching sample/prediction metadata must describe the actual binary pair.
+  refuses(
+    () =>
+      check(
+        { ...prediction(), comparison_cell: 'OPOS_CPOS' },
+        'v1.1',
+        heldout([{ ...sample, comparison_cell_v11: 'OPOS_CPOS' }]),
+      ),
+    'PREDICTION_COMPARISON_CELL_MISMATCH',
+  );
+  for (const tier0_binary of ['INCLUDE', 'EXCLUDE'])
+    for (const tier1_binary of ['INCLUDE', 'EXCLUDE']) {
+      const selected = heldout([{ ...sample, tier0_original_binary: tier0_binary }]);
+      const row = {
+        ...prediction(selected[0]),
+        tier0_binary,
+        tier1_binary,
+        tier1_status_raw: tier1_binary,
+        comparison_cell: `O${tier0_binary === 'INCLUDE' ? 'POS' : 'NEG'}_C${tier1_binary === 'INCLUDE' ? 'POS' : 'NEG'}`,
+      };
+      assert.equal(check(row, 'v1.2', selected).length, 1);
+      refuses(
+        () => check({ ...row, comparison_cell: 'UNKNOWN' }, 'v1.2', selected),
+        'PREDICTION_COMPARISON_CELL_MISMATCH',
+      );
+    }
 });
 
 test('CLI performs no writes, prints no private cells, and refuses production or an import action', async () => {

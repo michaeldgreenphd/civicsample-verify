@@ -1,3 +1,5 @@
+> Current state: Supabase staging has been created, but this app has not been connected or tested there. Username-only identity and investigator-managed password resets remain unimplemented. The historical v5 private-file dry run below is blocked pending protocol reconciliation; its earlier results do not certify the current strict-boundary build.
+
 # Staging preparation and calibration
 
 This branch adds read-only transfer validation, an offline account plan, removal-only analysis interpretation, and native PostgreSQL regression execution. It does not implement real account provisioning or authorize a formal campaign.
@@ -20,6 +22,20 @@ Other kinds are `heldout`, `predictions`, and `module-b`. A held-out preflight a
 These commands read files in memory and perform **zero database writes**. PASS means hash/schema/provenance preflight only. It does not mean database import dry run, scientific approval, prediction freeze, or `rpc_verify_frozen_predictions_v4` execution. Selection probability serialization may differ only by relative serialization tolerance of 1e-12; original values are never rewritten. String metadata remain exact.
 
 The preserved migration requires active design v4 before writing the development registry. This conflicts with the current no-activation instruction. Do not bypass it; actual import remains blocked pending investigator reconciliation. Neither proposed prediction file may be loaded while Tier 1 approval remains pending.
+
+## Design v5 staging dry run (private files, disposable database)
+
+```sh
+npm run tlv5:staging-dryrun -- \
+  --sample /abs/private/REVIEW_SAMPLE_v5_PROPOSED.csv --sample-sha256 EXPECTED \
+  --labels /abs/private/FROZEN_LABELS_v5_PROPOSED.csv --labels-sha256 EXPECTED \
+  --calibration /abs/private/CALIBRATION_TRIALS_v5_PROPOSED.csv --calibration-sha256 EXPECTED \
+  --freeze-manifest /abs/private/freeze_manifest_v5_PROPOSED.json --freeze-manifest-sha256 EXPECTED \
+  --worked-examples /abs/private/worked_examples_v5.json --worked-examples-sha256 EXPECTED \
+  [--checklist /abs/filled/PILOT_ACCEPTANCE_CHECKLIST_v5.md] [--report /abs/private/out.json]
+```
+
+The script refuses any SHA-256 mismatch, runs on an in-memory database that disappears at exit, and prints aggregate counts only: the synthetic pilot and sign-off, design v5 activation, the two staging reviewer enrolments, the three worked training examples (queue item, blinded adjudication, training lock, reference comparison), the six calibration trials, the 100 sample trials with their design rows, the 1,747 labels, the overlap and post-freeze refusals, the freeze with its case-list and label-set hashes compared with the freeze manifest, the formal opening and assignments, and the refusal of training after the opening. `--debug` prints refusal messages to stderr for local troubleshooting only; never paste them anywhere. The 2026-10-22 run is recorded in `docs/test_runs/tlv5-staging-dryrun.json`. Nothing is written to a persistent or production database; the production import, which must build packets from registry fields, remains the investigator's step.
 
 ## Five-account staging plan
 

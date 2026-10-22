@@ -8,6 +8,8 @@ const PASSWORD_VARIABLES: Record<string, string> = {
   'reviewer-a': 'VERIFY_REVIEWER_A_PASSWORD',
   'reviewer-b': 'VERIFY_REVIEWER_B_PASSWORD',
   adjudicator: 'VERIFY_ADJUDICATOR_PASSWORD',
+  'staging-reviewer-1': 'VERIFY_STAGING_REVIEWER_1_PASSWORD',
+  'staging-reviewer-2': 'VERIFY_STAGING_REVIEWER_2_PASSWORD',
 };
 export const ACCOUNTS: Record<string, Actor> = {
   investigator: {
@@ -29,6 +31,18 @@ export const ACCOUNTS: Record<string, Actor> = {
     id: '00000000-0000-4000-8000-000000000004',
     role: 'ADJUDICATOR',
     displayName: 'Synthetic adjudicator',
+  },
+  // Design v5 staging reviewers (FORMAL scope, never pilot test accounts): synthetic test
+  // identities for training examples and formal dry runs on a disposable database only.
+  'staging-reviewer-1': {
+    id: '00000000-0000-4000-8000-000000000005',
+    role: 'REVIEWER',
+    displayName: 'Staging reviewer slot 1',
+  },
+  'staging-reviewer-2': {
+    id: '00000000-0000-4000-8000-000000000006',
+    role: 'REVIEWER',
+    displayName: 'Staging reviewer slot 2',
   },
 };
 
