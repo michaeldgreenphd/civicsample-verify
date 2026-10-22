@@ -12,6 +12,7 @@ const fixturePatterns = {
   developmentCaseId: /^DEV4-TESTFX-[A-Za-z0-9-]{1,30}$/,
   calibrationCaseId: /^CAL4-TESTFX-[A-Za-z0-9-]{1,30}$/,
   pilotCaseId: /^SYN-[A-Za-z0-9-]{1,40}$/,
+  mappingCaseId: /^MC-SYN-[A-Z0-9][A-Z0-9-]{1,40}$/,
 };
 const probeNames = [
   'existing_staging_sessions',
@@ -21,6 +22,7 @@ const probeNames = [
   'development_registry_blinding',
   'unassigned_calibration_blinding',
   'unassigned_pilot_blinding',
+  'mapping_confirmation_isolation',
 ];
 
 function exactKeys(value, keys) {
@@ -125,7 +127,7 @@ async function read(config, account, path, fetchImpl) {
   if (!(
     path === '/auth/v1/user' ||
     path === '/rest/v1/rpc/rpc_whoami' ||
-    /^\/rest\/v1\/(?:frozen_predictions_v4|reviews|audit_log|development_registry_v4|calibration_cases_v4|cases)\?/.test(
+    /^\/rest\/v1\/(?:frozen_predictions_v4|reviews|audit_log|development_registry_v4|calibration_cases_v4|cases|mc_cases|mc_responses)\?/.test(
       path,
     )
   ))
@@ -305,6 +307,23 @@ export async function runStagingPreflight(config, fetchImpl = fetch) {
       reviewers,
     ),
   );
+  // Mapping confirmation (migration 0016): the investigator reads the synthetic mapping; the
+  // adjudicator reads neither the mapping nor any response before the campaign closes and
+  // adjudication is authorized. Reviewers may be assigned, so they are not probed here.
+  await probe(7, ['mappingCaseId'], async () => {
+    const adjudicator = [config.accounts[4]];
+    const present = await investigatorControl(
+      tablePath('mc_cases', 'case_id,record_category', 'case_id', f.mappingCaseId),
+      (row) => row.case_id === f.mappingCaseId && row.record_category === 'SYNTHETIC_PILOT',
+      adjudicator,
+    );
+    if (!present) return false;
+    await deny(
+      adjudicator,
+      tablePath('mc_responses', 'response_id,case_id', 'case_id', f.mappingCaseId),
+    );
+    return true;
+  });
   report.status = report.checks.some((check) => check.status === 'FAIL')
     ? 'FAIL'
     : report.checks.some((check) => check.status === 'UNTESTED')

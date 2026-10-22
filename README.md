@@ -71,6 +71,8 @@ The "Mapping confirmation" tab implements the revised review design with synthet
 
 ## Staging preparation
 
+The Supabase identity design (usernames mapped to internal non-deliverable addresses, admin-created confirmed accounts, investigator-managed resets, TOTP for investigators, no service-role key in the web app) and the staging bootstrap plan are in [docs/SUPABASE_IDENTITY.md](docs/SUPABASE_IDENTITY.md); `npm run supabase:admin -- plan --config /absolute/private/supabase-admin.json` prints the plan without any remote request, and every mutation needs explicit opt-in flags. Nothing has been applied to the staging project.
+
 See [the staging preflight guide](docs/STAGING_PREFLIGHT.md) for external-file hash validation, the offline five-account plan, and native PostgreSQL checks. These tools do not create accounts or import records. The investigator's three shared examples will be calibration records excluded from formal outcomes; private training materials have been supplied but are not loaded into the persistent app. Tier 1 and v5 design adoption remain awaiting verified approval.
 
 `npm run check` now includes the adapted upstream v4 and v5 leakage scans, also enforced by the pre-commit hook. `--tree` scans public source and indexed objects; ignored local runtime artifacts are excluded only while ignored. It is not a scan of the private study folder. All original content rules remain active. Python 3 and Node are required.
