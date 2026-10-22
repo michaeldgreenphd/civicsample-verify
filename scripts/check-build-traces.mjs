@@ -14,6 +14,7 @@ const sqlInputs = new Set([
   'migrations/0006_reference_integrity.sql',
   'migrations/0007_frozen_contract_guards.sql',
   'migrations/0008_trial_packet_and_concurrency_guards.sql',
+  'migrations/0009_canonical_packet_and_lock_state_guards.sql',
 ]);
 function traces(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

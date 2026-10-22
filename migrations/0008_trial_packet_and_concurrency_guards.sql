@@ -4,7 +4,6 @@ begin;
 
 -- Do not reinterpret an already locked formal Module A or Module B archive.
 -- Synthetic pilot locks use verify_state and do not trigger this boundary.
-lock table public.reference_locks, public.mb_reference_lock_v4 in share row exclusive mode;
 do $$ begin
   if current_setting('transaction_isolation') <> 'read committed' then
     raise exception 'Trial-packet and concurrency guard migration requires READ COMMITTED isolation';
@@ -16,143 +15,6 @@ do $$ begin
     raise exception 'Existing locked formal reference requires explicit investigator migration review';
   end if;
 end$$;
-
--- Pre-existing singleton state row so concurrent READ COMMITTED sessions inside
--- SELECT rpc_...() portals observe committed freeze/lock/adjudication transitions
--- via PostgreSQL EvalPlanQual (SELECT ... FOR SHARE / FOR UPDATE).
-create table if not exists private.v4_lock_state (
-  singleton boolean primary key default true check (singleton),
-  frozen boolean not null default false,
-  reference_locked boolean not null default false,
-  adjudicated_roots jsonb not null default '{}'::jsonb
-);
-revoke all on table private.v4_lock_state from public, anon, authenticated;
-insert into private.v4_lock_state (singleton, frozen, reference_locked)
-values (
-  true,
-  exists (select 1 from public.freeze_manifests_v4),
-  exists (select 1 from public.reference_locks where review_module = 'ONTOLOGY_AREA')
-)
-on conflict (singleton) do update
-  set frozen = excluded.frozen,
-      reference_locked = excluded.reference_locked;
-
-create or replace function private.cases_v4_no_withdraw_after_freeze() returns trigger
-language plpgsql security definer set search_path = '' as $$
-declare
-  locked_freeze boolean := false;
-begin
-  if old.withdrawn_at is null and new.withdrawn_at is not null
-     and exists (select 1 from public.case_records_v4 r where r.case_id=old.case_id) then
-    if current_setting('transaction_isolation') <> 'read committed' then
-      raise exception 'Held-out withdrawal requires READ COMMITTED isolation';
-    end if;
-    lock table public.cases in share row exclusive mode;
-    select s.frozen into locked_freeze from private.v4_lock_state s where s.singleton for share;
-  end if;
-  if old.withdrawn_at is null and new.withdrawn_at is not null
-     and (coalesce(locked_freeze, false) or private.v4_frozen())
-     and exists (select 1 from public.case_records_v4 r where r.case_id = old.case_id) then
-    raise exception 'design v4: % is a frozen held-out case and cannot be withdrawn; the case list is fixed at the freeze', old.case_id;
-  end if;
-  return new;
-end $$;
-
-create or replace function private.case_versions_v4_guard() returns trigger
-language plpgsql security definer set search_path = '' as $$
-declare
-  locked_freeze boolean := false;
-begin
-  if new.mode='FORMAL' and exists(select 1 from public.case_records_v4 r where r.case_id=new.case_id) then
-    if current_setting('transaction_isolation') <> 'read committed' then
-      raise exception 'Held-out packet versioning requires READ COMMITTED isolation';
-    end if;
-    lock table public.case_versions in share row exclusive mode;
-    select s.frozen into locked_freeze from private.v4_lock_state s where s.singleton for share;
-    if coalesce(locked_freeze, false) or private.v4_frozen() then
-      raise exception 'Frozen held-out evidence packets cannot be versioned';
-    end if;
-  end if;
-  if new.mode = 'FORMAL' and (coalesce(locked_freeze, false) or private.v4_frozen())
-     and (select o.registered_at from public.ontology_versions o where o.version_set_id = new.version_set_id)
-         > (select f.frozen_at from public.freeze_manifests_v4 f) then
-    raise exception 'a FORMAL case version cannot use a version set registered after the freeze';
-  end if;
-  return new;
-end $$;
-
-create or replace function private.assignments_reference_lock_guard() returns trigger
-language plpgsql security definer set search_path = '' as $$
-declare
-  locked_ref boolean := false;
-begin
-  if old.withdrawn_at is null and new.withdrawn_at is not null
-     and exists(select 1 from public.case_records_v4 r where r.case_id=old.case_id) then
-    if current_setting('transaction_isolation') <> 'read committed' then
-      raise exception 'Held-out withdrawal requires READ COMMITTED isolation';
-    end if;
-    lock table public.assignments in share row exclusive mode;
-    select s.reference_locked into locked_ref from private.v4_lock_state s where s.singleton for share;
-    if coalesce(locked_ref, false) or private.reference_locked('ONTOLOGY_AREA') then
-      raise exception 'Locked reference prevents assignment withdrawal';
-    end if;
-  end if;
-  return new;
-end$$;
-
-create or replace function public.rpc_lock_reference_v4(p_attestation text) returns uuid
-language plpgsql security definer set search_path = '' as $$
-declare
-  me uuid := private.assert_investigator();
-  n_missing integer;
-  n_levels integer;
-  n_unanswered integer;
-  lid uuid;
-begin
-  if current_setting('transaction_isolation') <> 'read committed' then
-    raise exception 'Reference locking requires READ COMMITTED isolation';
-  end if;
-  lock table public.cases, public.case_versions, public.assignments,
-    public.reviews, public.trial_step1_records, public.adjudications,
-    public.reference_locks in share row exclusive mode;
-  update private.v4_lock_state set reference_locked = true where singleton;
-  if not private.v4_frozen() then
-    raise exception 'no v4 freeze';
-  end if;
-  if private.formal_phase_status() not in ('COMPLETE', 'CLOSED_INCOMPLETE') then
-    raise exception 'the reference is locked only after the formal phase is closed';
-  end if;
-  if not exists (select 1 from public.judgment_snapshots_v4) then
-    raise exception 'no independent-judgment snapshot';
-  end if;
-  if not exists (select 1 from public.rpc_verify_judgment_snapshot_v4() s where s.matches) then
-    raise exception 'Independent-judgment snapshot integrity failure; reference lock refused';
-  end if;
-  with lv as (
-    select r.case_id, l.lvl,
-           (select count(*) from private.case_level_answers_v4(r.case_id, l.lvl)) as n_ans,
-           (select count(distinct a.decision) from private.case_level_answers_v4(r.case_id, l.lvl) a) as n_dist
-    from public.case_records_v4 r
-    join public.cases c on c.case_id = r.case_id and c.withdrawn_at is null
-    cross join lateral private.case_levels_v4(r.case_id) as l(lvl)
-  )
-  select count(*) filter (where lv.n_ans >= 1
-                            and (lv.n_ans = 1 or lv.n_dist > 1 or private.v4_scope() = 'ALL_CASE_LEVELS')
-                            and not exists (select 1 from public.v_effective_adjudications j
-                                            where j.case_id = lv.case_id and j.determination_level = lv.lvl
-                                              and j.layer = 'clinical_classification')),
-         count(*), count(*) filter (where lv.n_ans = 0)
-  into n_missing, n_levels, n_unanswered from lv;
-  if n_unanswered > 0 then
-    raise exception '% frozen case levels have no independent judgment; reference lock refused', n_unanswered;
-  end if;
-  if n_missing > 0 then
-    raise exception '% case levels that the adjudication scope requires have no adjudication; the reference cannot be locked', n_missing;
-  end if;
-  insert into public.reference_locks (review_module, n_case_levels_locked, attestation, locked_by)
-  values ('ONTOLOGY_AREA', n_levels, p_attestation, me) returning lock_id into lid;
-  return lid;
-end $$;
 
 -- Every formal v4 TRIAL_AREA case is a two-step case requiring both determinations,
 -- even before case_design_v3 is inserted.
@@ -186,16 +48,13 @@ end $$;
 -- Step 2 trial-context packets on held-out cases are frozen by rpc_freeze_v4.
 create or replace function private.trial_context_packets_v4_guard() returns trigger
 language plpgsql security definer set search_path = '' as $$
-declare
-  locked_freeze boolean := false;
 begin
   if new.mode = 'FORMAL' and (private.v4_frozen() or exists(select 1 from public.case_records_v4 r where r.case_id = new.case_id)) then
     if current_setting('transaction_isolation') <> 'read committed' then
       raise exception 'Held-out trial context packets require READ COMMITTED isolation';
     end if;
     lock table public.trial_context_packets in share row exclusive mode;
-    select s.frozen into locked_freeze from private.v4_lock_state s where s.singleton for share;
-    if coalesce(locked_freeze, false) or private.v4_frozen() then
+    if private.v4_frozen() then
       raise exception 'Frozen held-out trial context packets cannot be added or modified';
     end if;
   end if;
@@ -325,23 +184,7 @@ begin
   where j.case_id = new.case_id and j.layer = new.layer and j.determination_level = new.determination_level
     and not exists (select 1 from public.adjudications k where k.supersedes_adjudication_id = j.adjudication_id)
   order by j.decided_at desc limit 1;
-  if new.mode = 'FORMAL' and private.v4_active() and not new.post_unblinding then
-    declare
-      roots jsonb;
-      rkey text := new.case_id || '::' || new.determination_level || '::' || new.layer;
-    begin
-      select s.adjudicated_roots into roots from private.v4_lock_state s where s.singleton for update;
-      if cur is null and (roots ? rkey) then
-        cur := (roots ->> rkey)::uuid;
-      end if;
-      if new.supersedes_adjudication_id is distinct from cur then
-        raise exception 'a new adjudication must supersede the current one (current: %)', coalesce(cur::text, 'none');
-      end if;
-      update private.v4_lock_state
-      set adjudicated_roots = jsonb_set(coalesce(adjudicated_roots, '{}'::jsonb), array[rkey], to_jsonb(new.adjudication_id::text), true)
-      where singleton;
-    end;
-  elsif new.supersedes_adjudication_id is distinct from cur then
+  if new.supersedes_adjudication_id is distinct from cur then
     raise exception 'a new adjudication must supersede the current one (current: %)', coalesce(cur::text, 'none');
   end if;
   if new.version_set_id <> cv.version_set_id then
@@ -400,7 +243,6 @@ begin
   end if;
   lock table public.cases, public.case_records_v4, public.case_versions, public.trial_context_packets in share row exclusive mode;
   lock table public.frozen_predictions_v4 in share row exclusive mode;
-  update private.v4_lock_state set frozen = true where singleton;
   if exists (select 1 from public.frozen_predictions_v4 f
              join public.cases c on c.case_id=f.case_id where c.withdrawn_at is not null) then
     raise exception 'Predictions for withdrawn cases prevent freezing';
@@ -650,25 +492,11 @@ begin
    raise exception 'TWO_STEP cases require a trialPacket and DESCRIPTOR cases cannot have one';
  end if;
  select k into bad_key from private.jsonb_all_keys(pkt || coalesce(tpkt, '{}'::jsonb)) k
- where k ~* '(^ai_|_ai_|stage_?[abcd]($|_)|llm|model_id|prompt|stratum|strata|selection_prob|sampling|weight|decision|proposed|adjudicat|reviewer|confidence|rule_id|original_technical|expected|tier0|tier1|enrol|female|male|sex|gender|baseline|result|participant|count|ppr|benchmark)'
+ where k <> 'rubricPrompt'
+   and k ~* '(^ai_|_ai_|stage_?[abcd]($|_)|llm|model_id|prompt|stratum|strata|selection_prob|sampling|weight|decision|proposed|adjudicat|reviewer|confidence|rule_id|original_technical|expected|tier0|tier1|enrol|female|male|sex|gender|baseline|result|participant|count|ppr|benchmark)'
  limit 1;
  if bad_key is not null then
    raise exception 'Packet key "%" is not allowed in a blinded reviewer packet', bad_key;
- end if;
- if (pkt - array['title','area','descriptorName','descriptorId','scopeNote','entryTerms','treeNumbers','areaDefinition','source','sourceVersion']) <> '{}'::jsonb
-    or coalesce(pkt->>'descriptorId','') !~ '^(TESTFX|SYN)-D[0-9]{3,6}$'
-    or jsonb_typeof(pkt->'entryTerms') <> 'array'
-    or jsonb_typeof(pkt->'treeNumbers') <> 'array' then
-   raise exception 'Case packet must match the canonical EvidencePacket structure';
- end if;
- if tpkt is not null and (
-    (tpkt - array['registryId','title','summary','conditions','interventions','primaryOutcomes','studyType','primaryPurpose','phase','ageRange','source','sourceVersion']) <> '{}'::jsonb
-    or coalesce(tpkt->>'registryId','') !~ '^SYN-NCT-[0-9]{4,8}$'
-    or jsonb_typeof(tpkt->'conditions') <> 'array'
-    or jsonb_typeof(tpkt->'interventions') <> 'array'
-    or jsonb_typeof(tpkt->'primaryOutcomes') <> 'array'
- ) then
-   raise exception 'Trial packet must match the canonical TrialPacket structure';
  end if;
  if (pkt::text || coalesce(tpkt::text, '')) ~* '\mNCT[0-9]{8}\M' then
    raise exception 'Real registry identifiers are forbidden in synthetic packets';

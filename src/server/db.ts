@@ -111,6 +111,23 @@ async function initialize(): Promise<PGlite> {
       throw error;
     }
   }
+  const canonicalLockStateGuards = await db.query<{ present: boolean }>(
+    "select exists(select 1 from public.app_schema_version where version='4.0.6-canonical-packet-lock-state') as present",
+  );
+  if (!canonicalLockStateGuards.rows[0].present) {
+    try {
+      await db.exec(
+        await readFile(
+          path.join(process.cwd(), 'migrations/0009_canonical_packet_and_lock_state_guards.sql'),
+          'utf8',
+        ),
+      );
+    } catch (error) {
+      await db.exec('rollback');
+      await db.close();
+      throw error;
+    }
+  }
   if (
     !(await db.query<{ n: number }>('select count(*)::integer as n from public.verify_cases'))
       .rows[0].n

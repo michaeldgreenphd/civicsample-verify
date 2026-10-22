@@ -74,6 +74,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
       '4.0.3-reference-integrity',
       '4.0.4-frozen-contract',
       '4.0.5-trial-packet-concurrency-guards',
+      '4.0.6-canonical-packet-lock-state',
     ],
   );
   const initialAdmin = await getWorkspace(investigator);
@@ -408,7 +409,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
     3,
   );
   assert.equal(exported.provenance.judgmentSnapshotHash.length, 64);
-  assert.equal(exported.provenance.schemaVersion, '4.0.5-trial-packet-concurrency-guards');
+  assert.equal(exported.provenance.schemaVersion, '4.0.6-canonical-packet-lock-state');
   assert.equal(exported.configuration.analysisPlanState, 'PROPOSED');
   assert.equal(exported.provenance.analysisPlan, 'PENDING_APPROVAL');
   const storedSnapshot = (

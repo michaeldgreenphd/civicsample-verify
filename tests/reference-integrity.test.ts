@@ -12,6 +12,7 @@ const ATT = 'Synthetic engineering regression attestation only.';
 const MIGRATION = 'migrations/0006_reference_integrity.sql';
 const FROZEN_MIGRATION = 'migrations/0007_frozen_contract_guards.sql';
 const TRIAL_CONCURRENCY_MIGRATION = 'migrations/0008_trial_packet_and_concurrency_guards.sql';
+const CANONICAL_LOCK_STATE_MIGRATION = 'migrations/0009_canonical_packet_and_lock_state_guards.sql';
 const ACTORS = {
   investigator: '00000000-0000-4000-8000-0000000000a1',
   pilotA: '00000000-0000-4000-8000-0000000000a2',
@@ -23,7 +24,7 @@ const ACTORS = {
 type Role = keyof typeof ACTORS;
 const ids = ['HO4-TESTFX-LOCK1', 'HO4-TESTFX-LOCK2'];
 
-async function migratedDb(latest = true, dataDir?: string, through = 8) {
+async function migratedDb(latest = true, dataDir?: string, through = 9) {
   const db = new PGlite({ dataDir, extensions: { pgcrypto } });
   await db.waitReady;
   const files = [
@@ -37,6 +38,7 @@ async function migratedDb(latest = true, dataDir?: string, through = 8) {
   if (latest) files.push(MIGRATION);
   if (latest && through >= 7) files.push(FROZEN_MIGRATION);
   if (latest && through >= 8) files.push(TRIAL_CONCURRENCY_MIGRATION);
+  if (latest && through >= 9) files.push(CANONICAL_LOCK_STATE_MIGRATION);
   for (const file of files) await db.exec(await readFile(file, 'utf8'));
   return db;
 }
@@ -1519,5 +1521,238 @@ test('0008 upgrade is idempotent and refuses already locked formal references', 
     assert.equal(versions.length, 1);
   } finally {
     await f2.db.close();
+  }
+});
+
+test('persistent database created from original 0008 upgrades through getDb() loader to 0009, preserves existing records, and enforces new canonical packet and lock-state guards', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'verify-0008-to-0009-upgrade-'));
+  try {
+    // 1. Create a persisted database at original 0008 (072bfa0) before 0009 is applied
+    const db = await migratedDb(true, dir, 8);
+    for (const [role, id] of [
+      ['INVESTIGATOR', '00000000-0000-4000-8000-000000000001'],
+      ['REVIEWER', '00000000-0000-4000-8000-000000000002'],
+      ['REVIEWER', '00000000-0000-4000-8000-000000000003'],
+      ['ADJUDICATOR', '00000000-0000-4000-8000-000000000004'],
+    ] as const) {
+      const email = `upgrade-${id.slice(-1)}@example.invalid`;
+      await db.query('insert into auth.users(id,email) values($1,$2)', [id, email]);
+      await db.query(
+        'insert into public.users(user_id,auth_uid,email,display_name,role,is_pilot_test_account) values($1,$1,$2,$3,$4,$5)',
+        [id, email, `Synthetic ${role}`, role, false],
+      );
+    }
+    await db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Fictional preserved 0008 case', area: 'Fictional construct' })],
+    );
+    await db.query(
+      "insert into public.verify_assignments(case_id,reviewer_id,position) values('SYN-901','00000000-0000-4000-8000-000000000002',1),('SYN-901','00000000-0000-4000-8000-000000000003',1)",
+    );
+
+    // Under original 0008 (072bfa0), rpc_verify_author_case allowed a minimal packet with rubricPrompt
+    await db.transaction(async (tx) => {
+      await tx.exec('set local role authenticated');
+      await tx.query("select set_config('request.jwt.claims',$1,true)", [
+        j({ sub: '00000000-0000-4000-8000-000000000001', aal: 'aal2' }),
+      ]);
+      await tx.query('select public.rpc_verify_author_case($1)', [
+        j({
+          id: 'SYN-902',
+          kind: 'DESCRIPTOR',
+          packet: {
+            title: 'Legacy 0008 authored case',
+            area: 'Fictional area',
+            rubricPrompt: 'Legacy prompt field allowed only before 0009',
+          },
+        }),
+      ]);
+    });
+
+    // Submit a reviewer response in the 0008 database to verify response preservation across upgrade
+    await db.transaction(async (tx) => {
+      await tx.exec('set local role authenticated');
+      await tx.query("select set_config('request.jwt.claims',$1,true)", [
+        j({ sub: '00000000-0000-4000-8000-000000000002', aal: 'aal2' }),
+      ]);
+      await tx.query("select public.rpc_verify_submit('SYN-901','DESCRIPTOR_LEVEL',$1)", [
+        j({
+          decision: 'INCLUDE',
+          rationale: 'Preserved reviewer judgment recorded under 0008.',
+          uncertain: false,
+          packetProblem: false,
+          context: '',
+        }),
+      ]);
+    });
+
+    const beforeCases = JSON.parse(
+      JSON.stringify((await db.query('select * from public.verify_cases order by id')).rows),
+    );
+    const beforeResponses = JSON.parse(
+      JSON.stringify(
+        (await db.query('select * from public.verify_responses order by sequence')).rows,
+      ),
+    );
+    assert.equal(beforeCases.length, 2);
+    assert.equal(beforeResponses.length, 1);
+    await db.close();
+
+    // 2. Upgrade through the actual application loader (getDb in src/server/db.ts) across two restarts
+    const upgradeScript = `
+      import { getDb, withActor } from './src/server/db.ts';
+      const db = await getDb();
+      const v0008 = (await db.query("select count(*)::integer as n from public.app_schema_version where version='4.0.5-trial-packet-concurrency-guards'")).rows[0].n;
+      const v0009 = (await db.query("select count(*)::integer as n from public.app_schema_version where version='4.0.6-canonical-packet-lock-state'")).rows[0].n;
+      const lockState = (await db.query("select singleton, frozen, reference_locked from private.v4_lock_state")).rows;
+      const cases = (await db.query('select * from public.verify_cases order by id')).rows;
+      const responses = (await db.query('select * from public.verify_responses order by sequence')).rows;
+
+      let onlyDescriptorIdRejected = false;
+      try {
+        await withActor({ id: '00000000-0000-4000-8000-000000000001', role: 'INVESTIGATOR', displayName: 'Inv' }, (tx) =>
+          tx.query('select public.rpc_verify_author_case($1)', [JSON.stringify({
+            id: 'SYN-903',
+            kind: 'DESCRIPTOR',
+            packet: { descriptorId: 'TESTFX-D0903' },
+          })])
+        );
+      } catch (err) {
+        onlyDescriptorIdRejected = /canonical EvidencePacket structure/.test(String(err));
+      }
+
+      let rubricPromptRejected = false;
+      try {
+        await withActor({ id: '00000000-0000-4000-8000-000000000001', role: 'INVESTIGATOR', displayName: 'Inv' }, (tx) =>
+          tx.query('select public.rpc_verify_author_case($1)', [JSON.stringify({
+            id: 'SYN-904',
+            kind: 'DESCRIPTOR',
+            packet: { title: 'Bad', area: 'Bad', rubricPrompt: 'Disallowed in 0009' },
+          })])
+        );
+      } catch (err) {
+        rubricPromptRejected = /Packet key "rubricPrompt" is not allowed/.test(String(err));
+      }
+
+      console.log(JSON.stringify({
+        v0008,
+        v0009,
+        lockState,
+        cases,
+        responses,
+        onlyDescriptorIdRejected,
+        rubricPromptRejected,
+      }));
+      await db.close();
+    `;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await promisify(execFile)(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '-e', upgradeScript],
+        { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+      );
+      assert.deepEqual(JSON.parse(result.stdout.trim()), {
+        v0008: 1,
+        v0009: 1,
+        lockState: [{ singleton: true, frozen: false, reference_locked: false }],
+        cases: beforeCases,
+        responses: beforeResponses,
+        onlyDescriptorIdRejected: true,
+        rubricPromptRejected: true,
+      });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('0009 refuses an already locked formal reference without changing records or exports, and upgrades a locked synthetic pilot cleanly', async () => {
+  const f = await fixture({ through: 8, scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    await adjudication(f, ids[0], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await f.lock();
+    const beforeSchema = (
+      await f.db.query('select * from public.app_schema_version order by version')
+    ).rows;
+
+    await assert.rejects(
+      f.db.exec(await readFile(CANONICAL_LOCK_STATE_MIGRATION, 'utf8')),
+      /Existing locked formal reference requires explicit investigator migration review/,
+    );
+    await f.db.exec('rollback');
+    assert.deepEqual(
+      (await f.db.query('select * from public.app_schema_version order by version')).rows,
+      beforeSchema,
+    );
+  } finally {
+    await f.db.close();
+  }
+
+  const pilot = await fixture({ through: 8 });
+  try {
+    await pilot.db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Fictional local pilot 0008->0009 case' })],
+    );
+    await pilot.db.query(
+      "insert into public.verify_assignments(case_id,reviewer_id,position) values('SYN-901',$1,1),('SYN-901',$2,1)",
+      [ACTORS.reviewerA, ACTORS.reviewerB],
+    );
+    const response = {
+      decision: 'INCLUDE',
+      rationale: 'Synthetic pilot upgrade judgment.',
+      uncertain: false,
+      packetProblem: false,
+      context: '',
+    };
+    for (const actor of ['reviewerA', 'reviewerB'] as const) {
+      await rpc(
+        pilot.db,
+        actor,
+        "select public.rpc_verify_submit('SYN-901','DESCRIPTOR_LEVEL',$1)",
+        [j(response)],
+      );
+    }
+    for (const action of ['CLOSE_REVIEW', 'AUTHORIZE_ADJUDICATION']) {
+      await pilot.investigator('select public.rpc_verify_admin($1)', [
+        j({ action, attestation: ATT }),
+      ]);
+    }
+    await rpc(
+      pilot.db,
+      'adjudicator',
+      "select public.rpc_verify_adjudicate('SYN-901','DESCRIPTOR_LEVEL',$1)",
+      [
+        j({
+          ...response,
+          status: 'RESOLVED',
+          basis: 'Both fictional reviewers.',
+          reasonCode: 'OTHER',
+        }),
+      ],
+    );
+    await pilot.investigator('select public.rpc_verify_admin($1)', [
+      j({ action: 'LOCK_REFERENCE', attestation: ATT }),
+    ]);
+    const beforeExport = await rpc<Record<string, unknown>>(
+      pilot.db,
+      'investigator',
+      'select public.rpc_verify_export()',
+    );
+    assert.equal(beforeExport.schemaVersion, '4.0.5-trial-packet-concurrency-guards');
+
+    await pilot.db.exec(await readFile(CANONICAL_LOCK_STATE_MIGRATION, 'utf8'));
+    const afterExport = await rpc<Record<string, unknown>>(
+      pilot.db,
+      'investigator',
+      'select public.rpc_verify_export()',
+    );
+    assert.equal(afterExport.schemaVersion, '4.0.6-canonical-packet-lock-state');
+    assert.deepEqual({ ...afterExport, schemaVersion: beforeExport.schemaVersion }, beforeExport);
+  } finally {
+    await pilot.db.close();
   }
 });

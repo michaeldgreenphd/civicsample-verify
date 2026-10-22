@@ -239,7 +239,7 @@ test('approval-gate inspector and canonical synthetic case authoring workflow en
   assert.equal(report.gates.length, 11);
   assert.ok(report.gates.some((g) => g.gate === 'sample_adequacy' && g.status === 'BLOCKED'));
   assert.ok(report.gates.some((g) => g.gate === 'security' && g.status === 'BLOCKED'));
-  assert.equal(report.schemaVersion, '4.0.5-trial-packet-concurrency-guards');
+  assert.equal(report.schemaVersion, '4.0.6-canonical-packet-lock-state');
 
   // Formal activation via adminAction remains disabled even after configuring a proposal
   await adminAction(investigator, {
@@ -328,18 +328,175 @@ test('approval-gate inspector and canonical synthetic case authoring workflow en
     /not allowed in a blinded reviewer packet/,
   );
 
-  await assert.rejects(
-    withActor(investigator, (tx) =>
-      tx.query('select public.rpc_verify_author_case($1::jsonb)', [
-        JSON.stringify({
-          id: 'SYN-011',
-          kind: 'DESCRIPTOR',
-          packet: { title: 'Missing canonical fields', area: 'Respiratory' },
-        }),
-      ]),
-    ),
-    /canonical EvidencePacket/,
-  );
+  // Direct-RPC negative tests: missing fields, SQL NULL semantics, only descriptorId, and nested structures
+  const directRpcNegativePayloads: Array<{ label: string; payload: unknown; expected: RegExp }> = [
+    {
+      label: 'packet containing only descriptorId',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { descriptorId: 'TESTFX-D0011' },
+      },
+      expected: /canonical EvidencePacket structure \(invalid or missing "title"\)/,
+    },
+    {
+      label: 'packet missing descriptorId and other canonical fields',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { title: 'Missing canonical fields', area: 'Respiratory' },
+      },
+      expected: /canonical EvidencePacket structure \(invalid or missing "descriptorName"\)/,
+    },
+    {
+      label: 'packet with JSON null required string field',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, scopeNote: null },
+      },
+      expected: /canonical EvidencePacket structure \(invalid or missing "scopeNote"\)/,
+    },
+    {
+      label: 'packet with whitespace-only required string field',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, areaDefinition: '   ' },
+      },
+      expected: /canonical EvidencePacket structure \(invalid or missing "areaDefinition"\)/,
+    },
+    {
+      label: 'packet with unexpected extra key',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, customField: 'not allowed' },
+      },
+      expected: /canonical EvidencePacket structure \(unexpected keys\)/,
+    },
+    {
+      label: 'packet with missing entryTerms (SQL NULL)',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: (() => {
+          const { entryTerms: _omit, ...rest } = validPacket;
+          void _omit;
+          return rest;
+        })(),
+      },
+      expected: /canonical EvidencePacket structure \(invalid entryTerms\)/,
+    },
+    {
+      label: 'packet with empty entryTerms array',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, entryTerms: [] },
+      },
+      expected: /canonical EvidencePacket structure \(invalid entryTerms\)/,
+    },
+    {
+      label: 'packet with non-string or blank entryTerms element',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, entryTerms: ['Valid', null] },
+      },
+      expected: /canonical EvidencePacket structure \(invalid entryTerms\)/,
+    },
+    {
+      label: 'packet with primitive string treeNumbers instead of nested {number,label} objects',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, treeNumbers: ['TESTFX.011'] },
+      },
+      expected: /canonical EvidencePacket structure \(invalid treeNumbers\)/,
+    },
+    {
+      label: 'packet with treeNumbers element missing label',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: { ...validPacket, treeNumbers: [{ number: 'TESTFX.011' }] },
+      },
+      expected: /canonical EvidencePacket structure \(invalid treeNumbers\)/,
+    },
+    {
+      label: 'packet with treeNumbers element containing unexpected key',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: {
+          ...validPacket,
+          treeNumbers: [{ number: 'TESTFX.011', label: 'Synthetic branch', extra: 'bad' }],
+        },
+      },
+      expected: /canonical EvidencePacket structure \(invalid treeNumbers\)/,
+    },
+    {
+      label: 'DESCRIPTOR case with non-null string trialPacket',
+      payload: {
+        id: 'SYN-011',
+        kind: 'DESCRIPTOR',
+        packet: validPacket,
+        trialPacket: 'unexpected-string',
+      },
+      expected: /TWO_STEP cases require a trialPacket and DESCRIPTOR cases cannot have one/,
+    },
+    {
+      label: 'TWO_STEP case with trialPacket containing only registryId',
+      payload: {
+        id: 'SYN-011',
+        kind: 'TWO_STEP',
+        packet: validPacket,
+        trialPacket: { registryId: 'SYN-NCT-0011' },
+      },
+      expected: /canonical TrialPacket structure \(invalid or missing "title"\)/,
+    },
+    {
+      label: 'TWO_STEP case with JSON null trialPacket field',
+      payload: {
+        id: 'SYN-011',
+        kind: 'TWO_STEP',
+        packet: validPacket,
+        trialPacket: { ...validTrialPacket, studyType: null },
+      },
+      expected: /canonical TrialPacket structure \(invalid or missing "studyType"\)/,
+    },
+    {
+      label: 'TWO_STEP case with empty conditions array in trialPacket',
+      payload: {
+        id: 'SYN-011',
+        kind: 'TWO_STEP',
+        packet: validPacket,
+        trialPacket: { ...validTrialPacket, conditions: [] },
+      },
+      expected: /canonical TrialPacket structure \(invalid "conditions"\)/,
+    },
+    {
+      label: 'TWO_STEP case with non-string element in trialPacket interventions',
+      payload: {
+        id: 'SYN-011',
+        kind: 'TWO_STEP',
+        packet: validPacket,
+        trialPacket: { ...validTrialPacket, interventions: [null] },
+      },
+      expected: /canonical TrialPacket structure \(invalid "interventions"\)/,
+    },
+  ];
+
+  for (const tc of directRpcNegativePayloads) {
+    await assert.rejects(
+      withActor(investigator, (tx) =>
+        tx.query('select public.rpc_verify_author_case($1::jsonb)', [JSON.stringify(tc.payload)]),
+      ),
+      tc.expected,
+      `Direct RPC must reject: ${tc.label}`,
+    );
+  }
 
   // Authoring a valid canonical synthetic case succeeds and assigns it to both pilot reviewers
   const invWorkspace = await authorSyntheticPilotCase(investigator, {
