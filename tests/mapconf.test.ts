@@ -20,6 +20,7 @@ import {
   getMcAdjudicatorCase,
   getMcReviewerCase,
   getMcWorkspace,
+  importMcCase,
   mcAdminAction,
   recordMcAdjudication,
   submitMc,
@@ -75,6 +76,28 @@ test('mapping confirmation: visible assignment, isolation, finality, adjudicatio
   assert.equal(inv.campaign?.rubricSha256, mcRubricSha256());
   assert.equal(inv.conditions.length, 10);
   assert.equal(inv.evaluationImportAllowed, false);
+  // The database itself refuses an EVALUATION record and a real registry reference, whatever the API does.
+  assert.equal(
+    await status(
+      importMcCase(investigator, {
+        ...MC_SYNTHETIC_PILOT_CASES[0],
+        caseId: 'MC-EVAL-0001',
+        recordCategory: 'EVALUATION',
+        trialRef: 'SYN-NCT-7777',
+      }),
+    ),
+    409,
+  );
+  assert.equal(
+    await status(
+      importMcCase(investigator, {
+        ...MC_SYNTHETIC_PILOT_CASES[0],
+        caseId: 'MC-SYN-REAL',
+        trialRef: 'NCT' + '00000001',
+      }),
+    ),
+    409,
+  );
   inv = await mcAdminAction(investigator, { action: 'import-synthetic' });
   assert.equal(inv.counts.syntheticPilot, MC_SYNTHETIC_PILOT_CASES.length);
   assert.equal(inv.counts.trainingExample, MC_SYNTHETIC_TRAINING_CASES.length);
@@ -267,6 +290,16 @@ test('mapping confirmation: visible assignment, isolation, finality, adjudicatio
     409,
   );
   assert.equal(
+    await status(recordMcAdjudication(adjudicator, { ...adjudication, basis: 'REVIEWER_1' })),
+    400,
+    'reviewer 1 answered YES',
+  );
+  assert.equal(
+    await status(recordMcAdjudication(adjudicator, { ...adjudication, basis: 'NEITHER' })),
+    400,
+    'reviewer 2 answered NO',
+  );
+  assert.equal(
     await status(
       mcAdminAction(investigator, { action: 'phase', eventType: 'LOCKED', attestation: ATT }),
     ),
@@ -281,17 +314,50 @@ test('mapping confirmation: visible assignment, isolation, finality, adjudicatio
     'one adjudication per mapping',
   );
   assert.equal(await status(exportMcBundle(investigator)), 409, 'no export before the lock');
-  // The lock blocks on the proposed rubric addition only when the answers differ; MC-SYN-012 is
-  // concordant INSUFFICIENT_INFORMATION and may be recorded as a rubric-addition review.
-  await recordMcAdjudication(
+  // MC-SYN-012 is concordant INSUFFICIENT_INFORMATION: the lock stays refused until the proposed
+  // rubric addition is reviewed, and the review records no YES/NO judgment (migration 0018).
+  assert.equal(
+    await status(
+      mcAdminAction(investigator, { action: 'phase', eventType: 'LOCKED', attestation: ATT }),
+    ),
+    409,
+    'unreviewed rubric addition blocks the lock',
+  );
+  assert.equal(
+    await status(
+      recordMcAdjudication(
+        adjudicator,
+        mcAdjudicationSchema.parse({
+          caseId: 'MC-SYN-012',
+          decision: 'YES',
+          status: 'DISCORDANT_RESOLVED',
+          basis: 'REVIEWER_1',
+          rationale: 'Synthetic: wrong status.',
+        }),
+      ),
+    ),
+    400,
+  );
+  assert.throws(() =>
+    mcAdjudicationSchema.parse({
+      caseId: 'MC-SYN-012',
+      decision: 'YES',
+      status: 'RUBRIC_ADDITION_REVIEWED',
+      basis: 'NONE',
+      rationale: 'Synthetic.',
+    }),
+  );
+  const reviewed = await recordMcAdjudication(
     adjudicator,
     mcAdjudicationSchema.parse({
       caseId: 'MC-SYN-012',
-      status: 'UNRESOLVED_ESCALATED',
+      status: 'RUBRIC_ADDITION_REVIEWED',
       basis: 'NONE',
       rationale: 'Synthetic: both reviewers proposed the rubric addition.',
     }),
   );
+  assert.equal(reviewed.adjudication?.decision, null);
+  assert.equal(reviewed.adjudication?.status, 'RUBRIC_ADDITION_REVIEWED');
   inv = await mcAdminAction(investigator, {
     action: 'phase',
     eventType: 'LOCKED',
@@ -328,6 +394,15 @@ test('mapping confirmation: visible assignment, isolation, finality, adjudicatio
   assert.equal(lines.length, 24);
   assert.ok(lines.every((l) => l.includes('MAPPING_CONFIRMATION,EXISTING_ASSIGNMENT_VISIBLE')));
   assert.ok(cases.content.includes('MC-SYN-011') && cases.content.includes('DISCORDANT_RESOLVED'));
+  assert.ok(cases.content.split('\n')[0].includes('assignment_assigned'));
+  assert.ok(
+    cases.content.includes('MC-SYN-012') && cases.content.includes('RUBRIC_ADDITION_REVIEWED'),
+  );
+  assert.ok(responses.content.split('\n')[0].includes('displayed_evidence_version'));
+  assert.ok(
+    lines.every((l) => l.includes(',1,MAPPING_CONFIRMATION_RUBRIC')),
+    'evidence version 1 precedes the rubric version on every response row',
+  );
   inv = await mcAdminAction(investigator, { action: 'register-export' });
   assert.equal(inv.exports.length, 1);
   assert.equal(inv.exports[0].manifestSha256, bundle.manifestSha256);
