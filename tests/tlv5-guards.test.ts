@@ -313,3 +313,132 @@ test('v5 rubric binding (0017): the first review activity fixes the rubric; a di
     await db.close();
   }
 });
+
+test('v5 rubric reconciliation (0019): pre-binding activity is unreconciled until the investigator records its rubric; only assigned reviewers or investigators create bindings', async () => {
+  const db = new PGlite({ extensions: { pgcrypto } });
+  try {
+    await seedGuardDatabase(db);
+    for (const file of [
+      'migrations/0014_legacy_pilot_and_packet_guards.sql',
+      'migrations/0015_v5_review_fixes.sql',
+    ])
+      await db.exec(await readFile(file, 'utf8'));
+    // Activity recorded before rubric binding existed.
+    await guardSubmit(db, 'a', 'YES');
+    await guardSubmit(db, 'b', 'NO');
+    await db.exec(await readFile('migrations/0017_v5_rubric_binding.sql', 'utf8'));
+    await db.exec(await readFile('migrations/0019_v5_rubric_binding_reconciliation.sql', 'utf8'));
+    const bind = (
+      who: 'a' | 'b' | 'investigator' | 'adjudicator',
+      mode: string,
+      version: string,
+      sha: string,
+    ) =>
+      guardActor(
+        db,
+        who,
+        async () =>
+          (
+            await db.query<{ r: string }>('select public.rpc_tlv5_bind_rubric($1,$2,$3) as r', [
+              mode,
+              version,
+              sha,
+            ])
+          ).rows[0].r,
+      );
+    // The upgrade marked PILOT as unreconciled; no caller can relabel it, and activity is blocked.
+    await guardActor(db, 'investigator', async () => {
+      const rows = await db.query<{ mode: string; rubric_version: string }>(
+        'select mode, rubric_version from public.tlv5_rubric_bindings',
+      );
+      assert.deepEqual(rows.rows, [{ mode: 'PILOT', rubric_version: 'UNRECONCILED-PRE-0017' }]);
+    });
+    await assert.rejects(
+      bind('a', 'PILOT', 'OTHER-RUBRIC', 'e'.repeat(64)),
+      /unreconciled: judgments exist from before rubric binding/,
+    );
+    await assert.rejects(
+      bind('investigator', 'PILOT', 'OTHER-RUBRIC', 'e'.repeat(64)),
+      /unreconciled/,
+    );
+    await assert.rejects(
+      bind('a', 'PILOT', 'UNRECONCILED-PRE-0017', 'e'.repeat(64)),
+      /sentinel cannot be bound/,
+    );
+    // Only the investigator reconciles, once, with an attestation naming a real rubric.
+    await assert.rejects(
+      guardActor(db, 'a', () =>
+        db.query("select public.rpc_tlv5_reconcile_rubric('PILOT','R-HIST',$1,$2)", [
+          'c'.repeat(64),
+          GUARD_ATT,
+        ]),
+      ),
+      /investigator role/,
+    );
+    await assert.rejects(
+      guardActor(db, 'investigator', () =>
+        db.query("select public.rpc_tlv5_reconcile_rubric('PILOT','R-HIST',$1,'short')", [
+          'c'.repeat(64),
+        ]),
+      ),
+      /check constraint|violates/i,
+    );
+    await assert.rejects(
+      guardActor(db, 'investigator', () =>
+        db.query("select public.rpc_tlv5_reconcile_rubric('TRAINING','R-HIST',$1,$2)", [
+          'c'.repeat(64),
+          GUARD_ATT,
+        ]),
+      ),
+      /has no binding to reconcile/,
+    );
+    await guardActor(db, 'investigator', () =>
+      db.query("select public.rpc_tlv5_reconcile_rubric('PILOT','R-HIST',$1,$2)", [
+        'c'.repeat(64),
+        GUARD_ATT,
+      ]),
+    );
+    await assert.rejects(
+      guardActor(db, 'investigator', () =>
+        db.query("select public.rpc_tlv5_reconcile_rubric('PILOT','R-OTHER',$1,$2)", [
+          'd'.repeat(64),
+          GUARD_ATT,
+        ]),
+      ),
+      /already bound to R-HIST/,
+    );
+    assert.equal(await bind('a', 'PILOT', 'R-HIST', 'c'.repeat(64)), 'VERIFIED');
+    await assert.rejects(
+      bind('a', 'PILOT', 'R-NEW', 'e'.repeat(64)),
+      /differs from the rubric bound to PILOT review \(R-HIST\)/,
+    );
+    await assert.rejects(
+      guardActor(db, 'investigator', () =>
+        db.query("update public.tlv5_rubric_reconciliations set rubric_sha256 = repeat('f', 64)"),
+      ),
+      /permission denied|append-only|immutable/i,
+    );
+    // Creation authority: a pilot reviewer cannot bind a mode they hold no assignment in; the
+    // investigator can; afterwards everyone verifies.
+    await assert.rejects(
+      bind('b', 'FORMAL', 'UNASSIGNED-RUBRIC', 'd'.repeat(64)),
+      /only an investigator or a reviewer assigned in FORMAL review/,
+    );
+    await assert.rejects(
+      bind('adjudicator', 'TRAINING', 'R-ONE', 'd'.repeat(64)),
+      /only an investigator or a reviewer assigned in TRAINING review/,
+    );
+    await guardActor(db, 'adjudicator', async () => {
+      assert.equal(
+        (await db.query("select * from public.tlv5_rubric_bindings where mode = 'FORMAL'")).rows
+          .length,
+        0,
+        'nothing was created',
+      );
+    });
+    assert.equal(await bind('investigator', 'TRAINING', 'R-ONE', 'd'.repeat(64)), 'BOUND');
+    assert.equal(await bind('b', 'TRAINING', 'R-ONE', 'd'.repeat(64)), 'VERIFIED');
+  } finally {
+    await db.close();
+  }
+});

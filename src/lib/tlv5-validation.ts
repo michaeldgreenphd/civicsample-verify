@@ -199,4 +199,13 @@ export const tlv5AdminSchema = z.discriminatedUnion('action', [
     .strict(),
   z.object({ action: z.literal('snapshot') }).strict(),
   z.object({ action: z.literal('provision-staging-accounts') }).strict(),
+  z
+    .object({
+      action: z.literal('reconcile-rubric'),
+      mode: z.enum(['PILOT', 'CALIBRATION', 'TRAINING', 'FORMAL']),
+      rubricVersion: z.string().trim().min(3).max(80),
+      rubricSha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+      attestation: z.string().trim().min(20).max(2000),
+    })
+    .strict(),
 ]);

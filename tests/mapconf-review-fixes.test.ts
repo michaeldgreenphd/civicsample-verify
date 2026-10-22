@@ -34,6 +34,12 @@ test('import boundary: synthetic only, one condition set, consistent entries and
   const db = new PGlite({ extensions: { pgcrypto } });
   try {
     await seedMcGuardDatabase(db);
+    // A blank attestation is refused at the database (checked before any mapping is added).
+    await assert.rejects(
+      phase(db, 'CLOSED', '                    '),
+      /check constraint|violates/i,
+      'blank attestation',
+    );
     // Evaluation records and real registry references are refused in the database, not only by the API.
     await assert.rejects(
       importCase(db, (c) => (c.record_category = 'EVALUATION'), 'MC-EVAL-0001', 'SYN-NCT-9991'),
@@ -152,11 +158,6 @@ test('import boundary: synthetic only, one condition set, consistent entries and
       ]);
       assert.ok(!JSON.stringify(audit.rows[0].details).includes('Fictional'));
     });
-    await assert.rejects(
-      phase(db, 'CLOSED', '                    '),
-      /check constraint|violates/i,
-      'blank attestation',
-    );
   } finally {
     await db.close();
   }
@@ -192,7 +193,7 @@ test('lock and adjudication: incomplete campaigns never lock; insufficient-infor
     // One assignment of MC-SYN-SECOND has no response: the lock is refused before anything else.
     await assert.rejects(
       phase(db, 'LOCKED'),
-      /assigned mappings have no final response; an incomplete campaign cannot be locked/,
+      /lack two final responses; an incomplete campaign cannot be locked/,
     );
     // Both reviewers proposed the rubric addition on the guard mapping: a YES/NO resolution is refused,
     // and so is a lock without the rubric-addition review.

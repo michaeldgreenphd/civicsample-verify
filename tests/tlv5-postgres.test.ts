@@ -48,6 +48,7 @@ async function withClients(operation: (owner: Client, one: Client, two: Client) 
         'migrations/0014_legacy_pilot_and_packet_guards.sql',
         'migrations/0015_v5_review_fixes.sql',
         'migrations/0017_v5_rubric_binding.sql',
+        'migrations/0019_v5_rubric_binding_reconciliation.sql',
       ])
         await clients[0].query(await readFile(file, 'utf8'));
       await operation(clients[0], clients[1], clients[2]);
@@ -329,6 +330,23 @@ test(
         );
       assert.equal(await bind('a'.repeat(64)), 'BOUND');
       assert.equal(await bind('a'.repeat(64)), 'VERIFIED');
+      // 0019: a reviewer without a FORMAL assignment cannot create that mode's binding natively,
+      // and an already-bound mode cannot be reconciled.
+      await assert.rejects(
+        guardActor(db, 'b', () =>
+          db.query("select public.rpc_tlv5_bind_rubric('FORMAL', 'R-X', $1)", ['d'.repeat(64)]),
+        ),
+        /only an investigator or a reviewer assigned in FORMAL review/,
+      );
+      await assert.rejects(
+        guardActor(db, 'investigator', () =>
+          db.query("select public.rpc_tlv5_reconcile_rubric('PILOT', 'R-HIST', $1, $2)", [
+            'c'.repeat(64),
+            GUARD_ATT,
+          ]),
+        ),
+        /already bound to R-ONE/,
+      );
       await assert.rejects(bind('b'.repeat(64)), /differs from the rubric bound to PILOT/);
       await guardActor(db, 'a', async () => {
         const row = await db.query<{ frozen: boolean; scope: string }>(

@@ -4,6 +4,7 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AREA_ITEMS, ROW_ITEMS } from '../src/lib/tlv5-codes';
 import { DEMO_ACTORS, getDb } from '../src/server/db';
+import { ServiceError } from '../src/server/service';
 import {
   getTlv5AdjudicatorCase,
   getTlv5Workspace,
@@ -50,4 +51,55 @@ test('an ALL_ITEMS activation reaches the adjudicator DTO as ALL_ITEMS and keeps
   assert.equal(detail.adjudicationScope, 'ALL_ITEMS');
   const scope = await db.query<{ s: string }>('select private.tlv5_scope() as s');
   assert.equal(scope.rows[0].s, 'ALL_ITEMS');
+});
+
+test('an unreconciled mode is reported to the investigator and reconciled once through the admin action', async () => {
+  const db = await getDb();
+  // Synthetic test database only: represent judgments that predate rubric binding (0019 sentinel).
+  await db.query(
+    "insert into public.tlv5_rubric_bindings (mode, rubric_version, rubric_sha256, bound_by) values ('TRAINING', 'UNRECONCILED-PRE-0017', private.tlv5_unreconciled_sha('TRAINING'), $1)",
+    [investigator.id],
+  );
+  let ws = await getTlv5Workspace(investigator);
+  if (ws.kind !== 'investigator') throw new Error('investigator');
+  const training = ws.rubricBindings.find((b) => b.mode === 'TRAINING');
+  assert.equal(training?.unreconciled, true);
+  assert.equal(training?.matchesRuntime, false);
+  assert.equal(
+    ws.rubricBindings.find((b) => b.mode === 'PILOT')?.matchesRuntime,
+    true,
+    'pilot bound by the submissions above',
+  );
+  ws = await tlv5AdminAction(investigator, {
+    action: 'reconcile-rubric',
+    mode: 'TRAINING',
+    rubricVersion: 'REVIEW_RUBRIC_HISTORICAL',
+    rubricSha256: 'c'.repeat(64),
+    attestation: 'Synthetic reconciliation attestation for the scope regression.',
+  });
+  const reconciled = ws.rubricBindings.find((b) => b.mode === 'TRAINING');
+  assert.deepEqual(
+    { v: reconciled?.rubricVersion, u: reconciled?.unreconciled, m: reconciled?.matchesRuntime },
+    { v: 'REVIEW_RUBRIC_HISTORICAL', u: false, m: false },
+  );
+  await assert.rejects(
+    tlv5AdminAction(investigator, {
+      action: 'reconcile-rubric',
+      mode: 'TRAINING',
+      rubricVersion: 'OTHER',
+      rubricSha256: 'd'.repeat(64),
+      attestation: 'Synthetic reconciliation attestation for the scope regression.',
+    }),
+    (e: unknown) => e instanceof ServiceError && e.status === 409,
+  );
+  await assert.rejects(
+    tlv5AdminAction(pilotA, {
+      action: 'reconcile-rubric',
+      mode: 'TRAINING',
+      rubricVersion: 'OTHER',
+      rubricSha256: 'd'.repeat(64),
+      attestation: 'Synthetic reconciliation attestation for the scope regression.',
+    }),
+    (e: unknown) => e instanceof ServiceError && e.status === 403,
+  );
 });

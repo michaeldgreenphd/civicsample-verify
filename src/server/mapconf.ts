@@ -92,10 +92,16 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
     'Evaluation import is disabled pending the approved condition set, sampling frame, frozen rubric and analysis specification.',
   ],
   [
-    /have no final response; an incomplete campaign cannot be locked/,
+    /have no final response; an incomplete campaign cannot be locked|lack two final responses; an incomplete campaign cannot be locked/,
     409,
-    'Every assigned mapping needs both final responses before the campaign can be locked.',
+    'Every mapping needs a final response from both reviewer slots before the campaign can be locked.',
   ],
+  [
+    /lack a second reviewer assignment; the campaign cannot be closed/,
+    409,
+    'Every mapping needs both reviewer slots assigned before the campaign can be closed.',
+  ],
+  [/require READ COMMITTED isolation/, 409, 'This phase transition or action is not allowed now.'],
   [
     /RUBRIC_ADDITION_REVIEWED applies only when|basis (REVIEWER_1|REVIEWER_2|NEITHER) does not match the reviewer answers for mapping/,
     400,
