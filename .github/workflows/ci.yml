@@ -73,3 +73,13 @@ jobs:
         env:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
+      - run: npm run test:handoff:postgres -- --report docs/test_runs/native-handoff.json
+        env:
+          VERIFY_PG_REQUIRE: '1'
+          VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-handoff-verification
+          path: docs/test_runs/native-handoff.json
+          if-no-files-found: error
