@@ -44,9 +44,12 @@ async function withClients(operation: (owner: Client, one: Client, two: Client) 
     try {
       for (const c of clients) await c.connect();
       await seedGuardDatabase(session(clients[0]));
-      await clients[0].query(
-        await readFile('migrations/0014_legacy_pilot_and_packet_guards.sql', 'utf8'),
-      );
+      for (const file of [
+        'migrations/0014_legacy_pilot_and_packet_guards.sql',
+        'migrations/0015_v5_review_fixes.sql',
+        'migrations/0017_v5_rubric_binding.sql',
+      ])
+        await clients[0].query(await readFile(file, 'utf8'));
       await operation(clients[0], clients[1], clients[2]);
     } finally {
       await Promise.allSettled(clients.map((c) => c.end()));
@@ -290,3 +293,49 @@ test('native v5 concurrent adjudications commit only one final item', options, a
     );
   });
 });
+
+test(
+  'native v5 review fixes: basis consistency and rubric binding behave on PostgreSQL 16',
+  options,
+  async () => {
+    await withClients(async (owner) => {
+      const db = session(owner);
+      await guardSubmit(db, 'a', 'YES');
+      await guardSubmit(db, 'b', 'NO');
+      await assert.rejects(
+        guardActor(db, 'adjudicator', () =>
+          db.query('select public.rpc_tlv5_record_adjudication($1::jsonb)', [
+            JSON.stringify({ ...guardAdjudication, decision: 'NO', basis: 'REVIEWER_1' }),
+          ]),
+        ),
+        /basis REVIEWER_1 does not match/,
+      );
+      await guardActor(db, 'adjudicator', () =>
+        db.query('select public.rpc_tlv5_record_adjudication($1::jsonb)', [
+          JSON.stringify(guardAdjudication),
+        ]),
+      );
+      const bind = (sha: string) =>
+        guardActor(
+          db,
+          'a',
+          async () =>
+            (
+              await db.query<{ r: string }>(
+                "select public.rpc_tlv5_bind_rubric('PILOT', 'R-ONE', $1) as r",
+                [sha],
+              )
+            ).rows[0].r,
+        );
+      assert.equal(await bind('a'.repeat(64)), 'BOUND');
+      assert.equal(await bind('a'.repeat(64)), 'VERIFIED');
+      await assert.rejects(bind('b'.repeat(64)), /differs from the rubric bound to PILOT/);
+      await guardActor(db, 'a', async () => {
+        const row = await db.query<{ frozen: boolean; scope: string }>(
+          'select private.tlv5_frozen() as frozen, private.tlv5_scope() as scope',
+        );
+        assert.deepEqual(row.rows[0], { frozen: false, scope: 'DISAGREEMENTS_ONLY' });
+      });
+    });
+  },
+);
