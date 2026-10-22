@@ -86,6 +86,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
       '6.0.0-mapping-confirmation',
       '6.0.1-mapping-confirmation-review-fixes',
       '6.0.2-mapping-confirmation-completeness-serialization',
+      '6.0.3-account-locks',
     ],
   );
   const initialAdmin = await getWorkspace(investigator);

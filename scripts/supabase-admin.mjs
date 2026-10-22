@@ -32,8 +32,10 @@ import {
   internalEmail,
   planSha256,
   readAdminConfig,
+  REPEATABLE_SCHEMA_FILES,
   SCHEMA_FILE_MARKERS,
   SupabaseIdentityError,
+  validateDatabaseDestination,
 } from './supabase-identity-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -185,11 +187,96 @@ async function provisionAccounts(client, config, credentials, result) {
   }
 }
 
-async function applySchema(config, result) {
+/** Plan the bootstrap against the lineage already present: every non-repeatable file carries a
+ *  version marker; a file is ALREADY_APPLIED when all its markers are present, PENDING when none
+ *  is, and the lineage is refused when a file is partially applied or an applied file follows a
+ *  pending one. Nothing is written until the whole plan is valid. Exported for the resume tests. */
+export function planSchemaApplication(appliedVersions) {
+  const applied = new Set(appliedVersions);
+  const steps = [];
+  let pending = false;
+  for (const path of HOSTED_SCHEMA_FILES) {
+    if (REPEATABLE_SCHEMA_FILES.includes(path)) {
+      steps.push({ path, action: 'RUN_REPEATABLE' });
+      continue;
+    }
+    const markers = SCHEMA_FILE_MARKERS[path];
+    if (!markers || !markers.length)
+      throw new SupabaseIdentityError(
+        'SCHEMA_MARKERS',
+        `${path} has no version marker; the lineage table is incomplete.`,
+      );
+    const present = markers.filter((m) => applied.has(m));
+    if (present.length === markers.length) {
+      if (pending)
+        throw new SupabaseIdentityError(
+          'SCHEMA_ORDER',
+          `${path} is applied but an earlier file is not; the lineage is out of order. Nothing was changed.`,
+        );
+      steps.push({ path, action: 'ALREADY_APPLIED' });
+    } else if (present.length) {
+      throw new SupabaseIdentityError(
+        'SCHEMA_PARTIAL',
+        `${path} is partially applied; inspect the project before resuming. Nothing was changed.`,
+      );
+    } else {
+      pending = true;
+      steps.push({ path, action: 'APPLY' });
+    }
+  }
+  const known = new Set(Object.values(SCHEMA_FILE_MARKERS).flat());
+  const unknown = appliedVersions.filter((v) => !known.has(v));
+  if (unknown.length)
+    throw new SupabaseIdentityError(
+      'SCHEMA_UNKNOWN',
+      `The project carries ${unknown.length} version marker(s) this repository does not define; refusing to write.`,
+    );
+  return steps;
+}
+
+/** Apply the lineage through an adapter ({ query(sql) }) so the resume logic is testable without a
+ *  server. Repeatable files run every time; applied files are skipped; pending files run in order. */
+export async function applySchemaWith(adapter, readFile, result) {
+  const existing = await adapter.query("select to_regclass('public.app_schema_version') as t");
+  const appliedVersions = existing.rows[0]?.t
+    ? (await adapter.query('select version from public.app_schema_version')).rows.map(
+        (r) => r.version,
+      )
+    : [];
+  const steps = planSchemaApplication(appliedVersions);
+  for (const step of steps) {
+    if (step.action === 'ALREADY_APPLIED') {
+      result.actions.push(step);
+      continue;
+    }
+    await adapter.query(readFile(step.path));
+    result.actions.push({
+      path: step.path,
+      action: step.action === 'APPLY' ? 'APPLIED' : 'RAN_REPEATABLE',
+    });
+  }
+  const versions = await adapter.query(
+    'select version from public.app_schema_version order by applied_at',
+  );
+  result.schemaVersions = versions.rows.map((r) => r.version);
+  return result;
+}
+
+async function applySchema(config, result, plan) {
   if (!config.databaseUrl)
     throw new SupabaseIdentityError(
       'DATABASE_URL',
       'apply-schema needs databaseUrl in the private configuration.',
+    );
+  // The destination is part of the reviewed plan: a changed host, port, user or database fails here.
+  const destination = validateDatabaseDestination(
+    config.databaseUrl,
+    config.project.stagingProjectRef,
+  );
+  if (JSON.stringify(destination) !== JSON.stringify(plan.database))
+    throw new SupabaseIdentityError(
+      'DESTINATION_MISMATCH',
+      'The database destination differs from the reviewed plan; regenerate and review the plan. Nothing was changed.',
     );
   const { Client } = await import('pg');
   const db = new Client({
@@ -198,43 +285,12 @@ async function applySchema(config, result) {
   });
   await db.connect();
   try {
-    const existing = await db.query("select to_regclass('public.app_schema_version') as t");
-    const applied = new Set(
-      existing.rows[0].t
-        ? (await db.query('select version from public.app_schema_version')).rows.map(
-            (r) => r.version,
-          )
-        : [],
+    result.destination = destination;
+    await applySchemaWith(
+      { query: (sql) => db.query(sql) },
+      (path) => readFileSync(`${root}/${path}`, 'utf8'),
+      result,
     );
-    // Resume path: a file is applied only when none of its version markers is present; a file
-    // whose markers are all present is skipped; a file with some markers present is a broken
-    // partial state that this runner refuses to guess about.
-    let pending = false;
-    for (const path of HOSTED_SCHEMA_FILES) {
-      const markers = SCHEMA_FILE_MARKERS[path] ?? [];
-      const present = markers.filter((m) => applied.has(m));
-      if (markers.length && present.length === markers.length) {
-        if (pending)
-          throw new SupabaseIdentityError(
-            'SCHEMA_ORDER',
-            `${path} is applied but an earlier file is not; the lineage is out of order. Nothing further was changed.`,
-          );
-        result.actions.push({ action: 'ALREADY_APPLIED', path });
-        continue;
-      }
-      if (present.length)
-        throw new SupabaseIdentityError(
-          'SCHEMA_PARTIAL',
-          `${path} is partially applied; inspect the project before resuming. Nothing further was changed.`,
-        );
-      pending = true;
-      await db.query(readFileSync(`${root}/${path}`, 'utf8'));
-      result.actions.push({ action: 'APPLIED', path });
-    }
-    const versions = await db.query(
-      'select version from public.app_schema_version order by applied_at',
-    );
-    result.schemaVersions = versions.rows.map((r) => r.version);
   } finally {
     await db.end();
   }
@@ -334,15 +390,16 @@ export async function main(argv, env) {
       result.actions.push({
         username: account.username,
         action: command === 'lock' ? 'LOCKED' : 'UNLOCKED',
+        accountLocked: outcome.locked,
         appUserActive: outcome.isActive,
         note:
           command === 'lock'
-            ? 'Sign-in and refresh are banned; the application row is inactive, so issued access tokens are refused by every RLS helper and RPC until they expire.'
-            : 'Sign-in restored; the application row is active again.',
+            ? 'Sign-in and refresh are banned and an account lock is recorded (migration 0021), so issued access tokens are refused by every RLS helper and RPC immediately; the account is not deactivated.'
+            : 'Sign-in restored and the account lock released.',
       });
     }
   } else if (command === 'apply-schema') {
-    await applySchema(config, result);
+    await applySchema(config, result, plan);
   }
   console.log(JSON.stringify(result, null, 2));
   return 0;

@@ -57,10 +57,27 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0016_mapping_confirmation.sql',
   'migrations/0017_v5_rubric_binding.sql',
   'migrations/0018_mapping_confirmation_review_fixes.sql',
+  'migrations/0019_v5_rubric_binding_reconciliation.sql',
+  'migrations/0020_mapping_confirmation_completeness_and_serialization.sql',
+  'migrations/0021_account_locks.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '6.0.1-mapping-confirmation-review-fixes';
+export const EXPECTED_SCHEMA_VERSION = '6.0.3-account-locks';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
+  'schema.sql': ['1.0.0'],
+  'migrations/0002_v3_review_design.sql': ['3.0.0'],
+  'migrations/0003_v4_record_categories_module_b.sql': ['4.0.0'],
+  'migrations/0004_synthetic_verify_workflow.sql': ['4.0.1-synthetic'],
+  'migrations/0005_review_integrity_fixes.sql': ['4.0.2-review-integrity'],
+  'migrations/0006_reference_integrity.sql': ['4.0.3-reference-integrity'],
+  'migrations/0007_frozen_contract_guards.sql': ['4.0.4-frozen-contract'],
+  'migrations/0008_trial_packet_and_concurrency_guards.sql': [
+    '4.0.5-trial-packet-concurrency-guards',
+  ],
+  'migrations/0009_canonical_packet_and_lock_state_guards.sql': [
+    '4.0.6-canonical-packet-lock-state',
+  ],
+  'migrations/0010_investigator_judgment_boundary.sql': ['4.0.7-investigator-judgment-boundary'],
   'migrations/0011_v5_trial_label_verification.sql': ['5.0.0'],
   'migrations/0012_v5_training_examples.sql': ['5.1.0'],
   'migrations/0013_v5_independent_finality_guards.sql': ['5.1.1-independent-finality'],
@@ -71,7 +88,16 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0018_mapping_confirmation_review_fixes.sql': [
     '6.0.1-mapping-confirmation-review-fixes',
   ],
+  'migrations/0019_v5_rubric_binding_reconciliation.sql': ['5.1.5-v5-rubric-reconciliation'],
+  'migrations/0020_mapping_confirmation_completeness_and_serialization.sql': [
+    '6.0.2-mapping-confirmation-completeness-serialization',
+  ],
+  'migrations/0021_account_locks.sql': ['6.0.3-account-locks'],
 });
+/** Files that write no marker and may run on every bootstrap (a check, not a change). */
+export const REPEATABLE_SCHEMA_FILES = Object.freeze([
+  'migrations/preflight_frozen_trial_compatibility.sql',
+]);
 /** Dashboard settings the plan requires; they are verified by hand, never set by this tool. */
 export const AUTH_SETTINGS = [
   {
@@ -185,24 +211,49 @@ export function validateAdminConfig(config, approvedRefs = APPROVED_STAGING_PROJ
       'SERVICE_ROLE_KEY_REQUIRED',
       'Privileged provisioning needs the service-role (secret) key of the staging project; the anon or publishable key cannot administer accounts.',
     );
-  if (config.databaseUrl !== null) {
-    let url;
-    try {
-      url = new URL(config.databaseUrl);
-    } catch {
-      refuse('DATABASE_URL', 'databaseUrl is null or a postgresql:// URL of the staging project.');
-    }
-    if (
-      !/^postgres(ql)?:$/.test(url.protocol) ||
-      !url.hostname.includes(config.project.stagingProjectRef)
-    )
-      refuse(
-        'DATABASE_URL',
-        'databaseUrl must be a postgresql:// URL whose host names the staging project reference.',
-      );
-  }
+  if (config.databaseUrl !== null)
+    validateDatabaseDestination(config.databaseUrl, config.project.stagingProjectRef);
   validateRoster(config.accounts);
   return config;
+}
+/** The exact PostgreSQL destination of the approved staging project: the direct host
+ *  db.<ref>.supabase.co (user postgres, port 5432) or a Supabase pooler host with the
+ *  project-qualified user postgres.<ref> (port 5432 session or 6543 transaction mode), database
+ *  postgres. Anything else, including look-alike hosts, is refused. Returns the non-secret
+ *  identity that the plan binds. */
+export function validateDatabaseDestination(databaseUrl, projectRef) {
+  let url;
+  try {
+    url = new URL(databaseUrl);
+  } catch {
+    refuse(
+      'DATABASE_URL',
+      'databaseUrl is null or a postgresql:// URL of the approved staging project.',
+    );
+  }
+  if (!/^postgres(ql)?:$/.test(url.protocol))
+    refuse('DATABASE_URL', 'databaseUrl must use the postgresql:// scheme.');
+  const host = url.hostname.toLowerCase();
+  const port = url.port ? Number(url.port) : 5432;
+  const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
+  const user = decodeURIComponent(url.username);
+  const direct = host === `db.${projectRef}.supabase.co` && port === 5432 && user === 'postgres';
+  const pooler =
+    /^aws-\d+-[a-z0-9-]+\.pooler\.supabase\.com$/.test(host) &&
+    (port === 5432 || port === 6543) &&
+    user === `postgres.${projectRef}`;
+  if (!(direct || pooler) || database !== 'postgres' || url.search || url.hash)
+    refuse(
+      'DATABASE_DESTINATION',
+      'databaseUrl must name the approved project exactly: db.<ref>.supabase.co:5432 as postgres, or a Supabase pooler host as postgres.<ref> on 5432/6543, database postgres.',
+    );
+  return {
+    host,
+    port,
+    database,
+    user,
+    mode: direct ? 'direct' : port === 6543 ? 'pooler-transaction' : 'pooler-session',
+  };
 }
 export function readAdminConfig(
   path,
@@ -273,7 +324,10 @@ export function buildBootstrapPlan(
       applicationUser:
         'public.users row with auth_uid linked by the service role; no invitation e-mail',
     })),
-    databaseUrlDeclared: config.databaseUrl !== null,
+    // The exact destination (non-secret identity) is bound into the reviewed hash; apply-schema
+    // refuses a configuration whose destination differs from the plan.
+    database:
+      config.databaseUrl === null ? null : validateDatabaseDestination(config.databaseUrl, ref),
     notes: [
       'Normal application access uses verified user sessions and RLS/RPC authorization; the service-role key never enters the web application.',
       'Password resets are investigator-managed through this tool (Auth Admin updateUserById); Supabase stores and checks passwords.',
@@ -351,25 +405,48 @@ export function adminClient(config, fetchImpl = fetch) {
     async setPassword(id, password) {
       await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, { password });
     },
-    /** Lock or unlock an account. A ban blocks new sign-ins and refreshes but Supabase documents
-     *  that already-issued access tokens stay valid until they expire, so the application row is
-     *  deactivated as well: every RLS helper and RPC checks public.users.is_active, which closes
-     *  the remaining window immediately for this application. */
-    async setLocked(id, locked) {
-      await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, {
-        ban_duration: locked ? '876000h' : 'none',
-      });
-      const rows = await call(
-        'PATCH',
-        `/rest/v1/users?auth_uid=eq.${encodeURIComponent(id)}`,
-        locked
-          ? { is_active: false, deactivated_at: new Date().toISOString() }
-          : { is_active: true, deactivated_at: null },
-        { Prefer: 'return=representation' },
+    /** Lock or unlock an account, reversibly. A ban blocks new sign-ins and refreshes but Supabase
+     *  documents that already-issued access tokens stay valid until they expire, so an
+     *  account_locks row (migration 0021) is written first: every identity helper and RPC
+     *  resolves a locked user to no user, which refuses the token immediately. Deactivation
+     *  (permanent by the preserved users_update_check trigger) is never used for a lock. */
+    async setLocked(id, locked, actor = 'supabase-admin-tool') {
+      const app = await this.findAppUserByAuthUid(id);
+      if (!app) refuse('APP_USER', 'No application row is linked to this Auth user.');
+      if (locked) {
+        const rows = await call(
+          'POST',
+          '/rest/v1/account_locks',
+          [{ user_id: app.user_id, locked_by: actor }],
+          {
+            Prefer: 'return=representation',
+          },
+        );
+        if (!Array.isArray(rows) || rows.length !== 1)
+          refuse('APP_USER', 'The account lock was not recorded.');
+        await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+          ban_duration: '876000h',
+        });
+      } else {
+        await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+          ban_duration: 'none',
+        });
+        await call(
+          'PATCH',
+          `/rest/v1/account_locks?user_id=eq.${encodeURIComponent(app.user_id)}&released_at=is.null`,
+          { released_at: new Date().toISOString(), released_by: actor },
+          { Prefer: 'return=representation' },
+        );
+      }
+      const open = await call(
+        'GET',
+        `/rest/v1/account_locks?user_id=eq.${encodeURIComponent(app.user_id)}&released_at=is.null&select=lock_id`,
       );
-      if (!Array.isArray(rows) || rows.length !== 1)
-        refuse('APP_USER', 'The application user row was not updated.');
-      return { appUserId: rows[0].user_id, isActive: rows[0].is_active };
+      return {
+        appUserId: app.user_id,
+        locked: Array.isArray(open) && open.length > 0,
+        isActive: app.is_active,
+      };
     },
     /** The application row linked to an Auth user, if any. */
     async findAppUserByAuthUid(id) {

@@ -19,6 +19,7 @@ import {
   SCHEMA_FILE_MARKERS,
   SupabaseIdentityError,
   validateAdminConfig,
+  validateDatabaseDestination,
 } from '../scripts/supabase-identity-tools.mjs';
 import { parse, privateOutputPath } from '../scripts/supabase-admin.mjs';
 
@@ -113,7 +114,7 @@ test('admin configuration: staging only, service-role key required, usernames in
   assert.equal(
     code(() =>
       validateAdminConfig(
-        config({ databaseUrl: `postgresql://u:p@db.${APPROVED}.supabase.co:5432/postgres` }),
+        config({ databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres` }),
       ),
     ),
     null,
@@ -121,10 +122,35 @@ test('admin configuration: staging only, service-role key required, usernames in
   assert.equal(
     code(() =>
       validateAdminConfig(
-        config({ databaseUrl: 'postgresql://u:p@db.elsewhere.supabase.co/postgres' }),
+        config({
+          databaseUrl: `postgresql://postgres.${APPROVED}:p@aws-0-eu-west-1.pooler.supabase.com:6543/postgres`,
+        }),
       ),
     ),
-    'DATABASE_URL',
+    null,
+  );
+  // Look-alike hosts, wrong users, ports or databases are refused.
+  for (const url of [
+    `postgresql://postgres:p@${APPROVED}.unrelated.invalid:5432/postgres`,
+    `postgresql://postgres:p@db.${APPROVED}.supabase.co.evil.invalid:5432/postgres`,
+    `postgresql://u:p@db.${APPROVED}.supabase.co:5432/postgres`,
+    `postgresql://postgres:p@db.${APPROVED}.supabase.co:6543/postgres`,
+    `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/other`,
+    `postgresql://postgres.other:p@aws-0-eu-west-1.pooler.supabase.com:6543/postgres`,
+    `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres?sslmode=disable`,
+  ])
+    assert.equal(
+      code(() => validateDatabaseDestination(url, APPROVED)),
+      'DATABASE_DESTINATION',
+      url,
+    );
+  assert.equal(
+    code(() =>
+      validateAdminConfig(
+        config({ databaseUrl: 'postgresql://postgres:p@db.elsewhere.supabase.co/postgres' }),
+      ),
+    ),
+    'DATABASE_DESTINATION',
   );
   assert.equal(
     code(() => validateAdminConfig({ ...config(), extra: 1 })),
@@ -164,8 +190,29 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
-  assert.equal(plan.schema.expectedFinalVersion, '6.0.1-mapping-confirmation-review-fixes');
-  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0018_mapping_confirmation_review_fixes.sql'));
+  assert.equal(plan.schema.expectedFinalVersion, '6.0.3-account-locks');
+  assert.equal(plan.database, null);
+  const withDb = config({
+    databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,
+  });
+  const planDb = buildBootstrapPlan(withDb, root);
+  assert.deepEqual(planDb.database, {
+    host: `db.${APPROVED}.supabase.co`,
+    port: 5432,
+    database: 'postgres',
+    user: 'postgres',
+    mode: 'direct',
+  });
+  assert.ok(!JSON.stringify(planDb).includes(':p@'), 'no password in the plan');
+  const movedDb = config({
+    databaseUrl: `postgresql://postgres.${APPROVED}:p@aws-0-eu-west-1.pooler.supabase.com:5432/postgres`,
+  });
+  assert.notEqual(
+    planSha256(buildBootstrapPlan(movedDb, root)),
+    planSha256(planDb),
+    'a changed destination changes the reviewed hash',
+  );
+  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0021_account_locks.sql'));
   assert.deepEqual(SCHEMA_FILE_MARKERS['migrations/0018_mapping_confirmation_review_fixes.sql'], [
     '6.0.1-mapping-confirmation-review-fixes',
   ]);
@@ -265,6 +312,8 @@ test('CLI parsing refuses --dry-run together with --apply, and output paths reso
 test('admin client: confirmed accounts with generated passwords, linked app rows, lock and reset', async () => {
   const c = config();
   const calls: { method: string; path: string; body: unknown; auth: string | null }[] = [];
+  const openLocks: string[] = [];
+  let linkedRows: unknown[] = [];
   const fetchMock = async (input: string | URL, options?: RequestInit) => {
     const url = new URL(String(input));
     assert.equal(url.origin, c.project.projectUrl);
@@ -288,7 +337,15 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
           is_active: (JSON.parse(String(options.body)) as { is_active: boolean }).is_active,
         },
       ];
-    else if (url.pathname === '/rest/v1/users' && options?.method === 'GET') body = [];
+    else if (url.pathname === '/rest/v1/users' && options?.method === 'GET') body = linkedRows;
+    else if (url.pathname === '/rest/v1/account_locks' && options?.method === 'POST') {
+      openLocks.push('lock');
+      body = [{ lock_id: '00000000-0000-4000-8000-000000000301' }];
+    } else if (url.pathname === '/rest/v1/account_locks' && options?.method === 'PATCH') {
+      openLocks.length = 0;
+      body = [{ lock_id: '00000000-0000-4000-8000-000000000301' }];
+    } else if (url.pathname === '/rest/v1/account_locks' && options?.method === 'GET')
+      body = openLocks.map(() => ({ lock_id: '00000000-0000-4000-8000-000000000301' }));
     else if (url.pathname === '/rest/v1/users')
       body = [{ user_id: '00000000-0000-4000-8000-000000000201' }];
     else if (url.pathname === '/rest/v1/app_schema_version') body = [{ version: 'x' }];
@@ -330,20 +387,45 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
   assert.equal(row[0].is_pilot_test_account, false);
   await client.setPassword(created.id, 'another-generated-password-value');
   assert.equal(await client.findAppUserByAuthUid(created.id), null);
+  await assert.rejects(client.setLocked(created.id, true), /No application row/);
+  linkedRows = [
+    {
+      user_id: '00000000-0000-4000-8000-000000000201',
+      email: 'x',
+      role: 'REVIEWER',
+      is_active: true,
+    },
+  ];
   const locked = await client.setLocked(created.id, true);
-  assert.equal(locked.isActive, false);
+  assert.deepEqual(
+    { locked: locked.locked, active: locked.isActive },
+    { locked: true, active: true },
+  );
   const puts = calls.filter((x) => x.method === 'PUT');
   assert.deepEqual(
     puts.map((x) => x.body),
     [{ password: 'another-generated-password-value' }, { ban_duration: '876000h' }],
   );
-  // A lock also deactivates the application row, so already-issued tokens are refused by RLS.
-  const patches = calls.filter((x) => x.method === 'PATCH');
-  assert.equal(patches.length, 1);
-  assert.ok(patches[0].path.startsWith(`/rest/v1/users?auth_uid=eq.${created.id}`));
-  assert.equal((patches[0].body as { is_active: boolean }).is_active, false);
+  // A lock records an account_locks row (reversible) and never PATCHes users.is_active.
+  const lockPost = calls.find(
+    (x) => x.method === 'POST' && x.path.startsWith('/rest/v1/account_locks'),
+  )!;
+  assert.equal(
+    (lockPost.body as { user_id: string }[])[0].user_id,
+    '00000000-0000-4000-8000-000000000201',
+  );
+  assert.ok(!calls.some((x) => x.method === 'PATCH' && x.path.startsWith('/rest/v1/users')));
   const unlocked = await client.setLocked(created.id, false);
-  assert.equal(unlocked.isActive, true);
+  assert.equal(unlocked.locked, false);
+  assert.deepEqual(calls.filter((x) => x.method === 'PUT').at(-1)!.body, { ban_duration: 'none' });
+  assert.ok(
+    calls.some(
+      (x) =>
+        x.method === 'PATCH' &&
+        x.path.startsWith('/rest/v1/account_locks') &&
+        x.path.includes('released_at=is.null'),
+    ),
+  );
   // Refusals: a redirect, a non-2xx status and a foreign origin.
   const refusing = adminClient(
     c,
