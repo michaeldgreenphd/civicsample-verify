@@ -16,6 +16,8 @@ The handoff recommends a Python frontend; the user prefers Next.js. This build u
 
 ## Remaining engineering work
 
+- Integrate approved, hashed training answers before enabling the optional private worked-example file hook. It is currently unconfigured; no real training file has been loaded into the persistent app by this audit.
+
 - Complete the local pilot using separate role passwords and browser profiles on the same computer. See [LOCAL_PILOT.md](LOCAL_PILOT.md). Record interface findings and acceptance without changing formal approval states.
 - Replace synthetic invitation/JWT scaffolding with a verified external identity provider in an authorized isolated Supabase staging project. Actual TOTP/MFA, invited enrollment, token refresh, and deployed PostgREST/JWT boundaries remain incomplete.
 - Extend case authoring and evidence preview to multi-project/campaign administration. Formal rubric/version registration, private sample import, freeze, and clinical lifecycle screens remain incomplete; `formalActivationAllowed` stays false.
