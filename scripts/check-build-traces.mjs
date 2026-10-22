@@ -25,6 +25,7 @@ const sqlInputs = new Set([
   'migrations/0019_v5_rubric_binding_reconciliation.sql',
   'migrations/0016_mapping_confirmation.sql',
   'migrations/0018_mapping_confirmation_review_fixes.sql',
+  'migrations/0020_mapping_confirmation_completeness_and_serialization.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {
