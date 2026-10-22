@@ -3,6 +3,12 @@ import type { Actor } from './types';
 
 export const COOKIE_NAME = 'verify_session';
 const MAX_AGE = 8 * 60 * 60 * 1000;
+const PASSWORD_VARIABLES: Record<string, string> = {
+  investigator: 'VERIFY_INVESTIGATOR_PASSWORD',
+  'reviewer-a': 'VERIFY_REVIEWER_A_PASSWORD',
+  'reviewer-b': 'VERIFY_REVIEWER_B_PASSWORD',
+  adjudicator: 'VERIFY_ADJUDICATOR_PASSWORD',
+};
 export const ACCOUNTS: Record<string, Actor> = {
   investigator: {
     id: '00000000-0000-4000-8000-000000000001',
@@ -95,7 +101,21 @@ export function getActor(request: Request): Actor | null {
   const token = tokenFrom(request);
   if (!token) return null;
   const entry = sessions.get(token);
-  if (!entry || entry.expires <= Date.now() || revokedUsers.has(entry.actor.id)) {
+  const invite = entry && invites.get(entry.actor.id);
+  const replacedSession = Boolean(
+    entry?.sessionId &&
+    (revokedSessionIds.has(entry.sessionId) ||
+      !invite ||
+      invite.revokedAt !== undefined ||
+      invite.claimedAt === undefined ||
+      invite.activeSessionId !== entry.sessionId),
+  );
+  if (
+    !entry ||
+    entry.expires <= Date.now() ||
+    revokedUsers.has(entry.actor.id) ||
+    replacedSession
+  ) {
     sessions.delete(token);
     return null;
   }
@@ -112,11 +132,22 @@ export function login(account: string, password: string): string {
     globals.verifyAttempts = { count: 0, until: now + 15 * 60 * 1000 };
   if (globals.verifyAttempts.count >= 40)
     throw new HttpError(429, 'Too many sign-in attempts. Try again in 15 minutes.');
-  const expected = process.env.VERIFY_DEMO_PASSWORD;
+  if (!Object.hasOwn(ACCOUNTS, account)) {
+    globals.verifyAttempts.count += 1;
+    throw new HttpError(401, 'Account or password was not accepted.');
+  }
+  // Existing pilots retain their legacy password until individually configured.
+  // Once any role password is configured, missing roles fail closed: no shared fallback.
+  const individualPasswords = Object.values(PASSWORD_VARIABLES).some((key) =>
+    Boolean(process.env[key]),
+  );
+  const expected = individualPasswords
+    ? process.env[PASSWORD_VARIABLES[account]]
+    : process.env.VERIFY_DEMO_PASSWORD;
   if (!expected || expected.length < 16)
     throw new HttpError(
       503,
-      'Run npm run setup, then restart the server to configure the local pilot password.',
+      'Run npm run setup -- --individual-credentials, then restart the server to configure local role passwords.',
     );
   const matches = timingSafeEqual(
     createHash('sha256').update(password).digest(),

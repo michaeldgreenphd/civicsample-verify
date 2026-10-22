@@ -405,9 +405,11 @@ export interface V4DbQueryable {
 }
 
 export interface V4DbExportOptions {
+  /** Commit identifying the running export build; supplied by the server/build environment. */
+  appGitSha: string;
   exportId?: string;
   createdAt?: string;
-  appGitSha?: string;
+  /** Optional assertions for callers migrating from the original override API. */
   dbSchemaVersion?: string;
   ontologyVersion?: string;
   rubricVersion?: string;
@@ -545,8 +547,11 @@ export async function verifyV4DatabaseIntegrity(db: V4DbQueryable): Promise<{
  */
 export async function loadV4SyntheticExportInputFromDb(
   db: V4DbQueryable,
-  options: V4DbExportOptions = {},
+  options: V4DbExportOptions,
 ): Promise<V4SyntheticExportInput> {
+  if (!/^[0-9a-f]{40}$/.test(options?.appGitSha ?? '') || /^0+$/.test(options.appGitSha)) {
+    throw new Error('Export requires an explicit nonzero 40-character lowercase Git commit SHA');
+  }
   const integrity = await verifyV4DatabaseIntegrity(db);
 
   const metaRes = await db.query<{
@@ -565,6 +570,7 @@ export async function loadV4SyntheticExportInputFromDb(
     formal_phase_closed_at: string | null;
     formal_phase_opened_at: string | null;
     db_schema_version: string | null;
+    sampling_design_version: string | null;
   }>(
     `select
        fm.freeze_id::text as freeze_manifest_id,
@@ -576,6 +582,7 @@ export async function loadV4SyntheticExportInputFromDb(
        fm.prediction_file_sha256 as frozen_prediction_set_sha256,
        fm.frozen_items,
        fm.extension_amendment_id,
+       sm.sampling_design_version,
        ${ISO_UTC_TS_SQL('fm.frozen_at')} as frozen_at,
        rl.lock_id::text as reference_lock_id,
        case when rl.locked_at is not null then ${ISO_UTC_TS_SQL('rl.locked_at')} end as reference_locked_at,
@@ -596,7 +603,8 @@ export async function loadV4SyntheticExportInputFromDb(
          limit 1
        ) as db_schema_version
      from public.freeze_manifests_v4 fm
-     left join public.reference_locks rl on rl.review_module = 'ONTOLOGY_AREA'`,
+     left join public.reference_locks rl on rl.review_module = 'ONTOLOGY_AREA'
+     left join public.sample_manifests sm on sm.review_module = 'ONTOLOGY_AREA'`,
   );
 
   const meta = metaRes.rows[0];
@@ -607,6 +615,76 @@ export async function loadV4SyntheticExportInputFromDb(
   const exportId = options.exportId ?? '00000000-0000-4000-8000-0000000000f4';
   const createdAt = options.createdAt ?? meta.reference_locked_at ?? new Date().toISOString();
   const frozenItems = meta.frozen_items ?? {};
+
+  // A bundle names one ontology/rubric pair. Resolve that pair from the versions
+  // actually attached to the frozen cases; unrelated later registrations cannot
+  // change it, and a mixed/missing registration cannot be represented honestly.
+  const registrations = await db.query<{
+    case_id: string;
+    version_set_id: string | null;
+    ontology_version: string | null;
+    rubric_version: string | null;
+    ontology_sha256: string | null;
+    rubric_sha256: string | null;
+    predates_freeze: boolean | null;
+  }>(
+    `select r.case_id, cv.version_set_id, o.ontology_version, o.rubric_version,
+       o.ontology_sha256, o.rubric_sha256,
+       (cv.created_at <= fm.frozen_at and o.registered_at <= fm.frozen_at
+        and o.frozen_at <= fm.frozen_at) as predates_freeze
+     from public.case_records_v4 r
+     join public.cases c on c.case_id = r.case_id and c.withdrawn_at is null
+     cross join public.freeze_manifests_v4 fm
+     left join lateral (
+       select version_set_id, created_at from public.case_versions
+       where case_id = r.case_id order by version desc limit 1
+     ) cv on true
+     left join public.ontology_versions o on o.version_set_id = cv.version_set_id
+     where r.record_category in ('HELDOUT_FORMAL', 'HELDOUT_EXTENSION_APPROVED')
+     order by r.case_id collate "C"`,
+  );
+  const registration = registrations.rows[0];
+  if (
+    !registration ||
+    registrations.rows.some(
+      (row) =>
+        row.predates_freeze !== true ||
+        !row.version_set_id?.trim() ||
+        !row.ontology_version?.trim() ||
+        !row.rubric_version?.trim() ||
+        row.version_set_id !== registration.version_set_id ||
+        row.ontology_version !== registration.ontology_version ||
+        row.rubric_version !== registration.rubric_version ||
+        row.ontology_sha256 !== registration.ontology_sha256 ||
+        row.rubric_sha256 !== registration.rubric_sha256,
+    ) ||
+    sha256(registrations.rows.map((row) => row.case_id).join('\n')) !==
+      meta.frozen_sample_case_list_sha256
+  ) {
+    throw new Error(
+      'Frozen cases must share one complete ontology/rubric registration predating freeze',
+    );
+  }
+  if (
+    registration.ontology_sha256 !== frozenItems.ontology_sha256 ||
+    registration.rubric_sha256 !== frozenItems.rubric_sha256
+  ) {
+    throw new Error('Frozen ontology/rubric hashes differ from the registered case versions');
+  }
+  if (!meta.db_schema_version?.trim() || !meta.sampling_design_version?.trim()) {
+    throw new Error('Database schema and frozen sampling-design versions are required');
+  }
+  for (const [option, actual] of [
+    ['dbSchemaVersion', meta.db_schema_version],
+    ['ontologyVersion', registration.ontology_version],
+    ['rubricVersion', registration.rubric_version],
+    ['samplingDesignVersion', meta.sampling_design_version],
+    ['formalPhaseOpenedAt', meta.formal_phase_opened_at],
+  ] as const) {
+    if (options[option] !== undefined && options[option] !== actual) {
+      throw new Error(`Export ${option} assertion differs from frozen database provenance`);
+    }
+  }
 
   const freezeManifestCanonical = canonicalJson({
     freeze_id: meta.freeze_manifest_id,
@@ -720,14 +798,13 @@ export async function loadV4SyntheticExportInputFromDb(
     mode: 'FORMAL',
     review_module: 'ONTOLOGY_AREA',
     created_at: createdAt,
-    app_git_sha: options.appGitSha ?? '0000000000000000000000000000000000000000',
-    db_schema_version: options.dbSchemaVersion ?? meta.db_schema_version ?? '4.0.0',
+    app_git_sha: options.appGitSha,
+    db_schema_version: meta.db_schema_version,
     is_synthetic_fixture: allCasesSynthetic,
     reference_locked: Boolean(meta.reference_lock_id),
     reference_lock_id: meta.reference_lock_id ?? '',
     reference_locked_at: meta.reference_locked_at ?? '',
-    formal_phase_opened_at:
-      options.formalPhaseOpenedAt ?? meta.formal_phase_opened_at ?? meta.frozen_at,
+    formal_phase_opened_at: meta.formal_phase_opened_at,
     formal_phase_closed_at: meta.formal_phase_closed_at ?? '',
     freeze_manifest_id: meta.freeze_manifest_id,
     freeze_manifest_sha256: frozenItems.freeze_manifest_sha256 ?? sha256(freezeManifestCanonical),
@@ -735,13 +812,13 @@ export async function loadV4SyntheticExportInputFromDb(
     frozen_sample_case_list_sha256: meta.frozen_sample_case_list_sha256,
     frozen_prediction_set_sha256: meta.frozen_prediction_set_sha256,
     tier1_version_frozen: meta.tier1_version_frozen,
-    ontology_version: options.ontologyVersion ?? 'SYN-MESH-2026',
-    ontology_sha256: frozenItems.ontology_sha256 ?? '',
+    ontology_version: registration.ontology_version,
+    ontology_sha256: registration.ontology_sha256,
     tier1_decision_file_sha256: frozenItems.tier1_decision_file_sha256 ?? '',
     tier0_mapping_sha256: frozenItems.tier0_mapping_sha256 ?? '',
-    rubric_version: options.rubricVersion ?? 'SYN-RUBRIC-V4',
-    rubric_sha256: frozenItems.rubric_sha256 ?? '',
-    sampling_design_version: options.samplingDesignVersion ?? meta.design_version,
+    rubric_version: registration.rubric_version,
+    rubric_sha256: registration.rubric_sha256,
+    sampling_design_version: meta.sampling_design_version,
     provenance_audit_sha256: frozenItems.provenance_audit_sha256 ?? '',
     extension_approved_by_amendment: Boolean(meta.extension_amendment_id),
     amendment_id: meta.extension_amendment_id ?? '',
@@ -764,10 +841,7 @@ export async function loadV4SyntheticExportInputFromDb(
  * Load the locked synthetic v4 dataset and its database-verified integrity results directly
  * from the database views/RPCs and build the validated v4 export bundle.
  */
-export async function exportV4SyntheticBundleFromDb(
-  db: V4DbQueryable,
-  options: V4DbExportOptions = {},
-) {
+export async function exportV4SyntheticBundleFromDb(db: V4DbQueryable, options: V4DbExportOptions) {
   const input = await loadV4SyntheticExportInputFromDb(db, options);
   return buildV4SyntheticBundle(input);
 }

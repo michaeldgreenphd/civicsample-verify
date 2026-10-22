@@ -9,6 +9,7 @@ import {
   verifyV4DatabaseIntegrity,
   type V4DbQueryable,
 } from '../src/lib/formal-export';
+import { applyTrialPacketUpgrades } from '../src/server/db';
 
 const ATT = 'Synthetic native PostgreSQL integration verification attestation.';
 const j = JSON.stringify;
@@ -257,11 +258,10 @@ test(
             'migrations/0005_review_integrity_fixes.sql',
             'migrations/0006_reference_integrity.sql',
             'migrations/0007_frozen_contract_guards.sql',
-            'migrations/0008_trial_packet_and_concurrency_guards.sql',
-            'migrations/0009_canonical_packet_and_lock_state_guards.sql',
           ]) {
             await admin.exec(await readFile(file, 'utf8'));
           }
+          await applyTrialPacketUpgrades(admin);
 
           const ACTORS = {
             investigator: '00000000-0000-4000-8000-0000000000c1',
@@ -640,10 +640,10 @@ test(
               tier1_version: 'v1.1',
               prediction_file_sha256: predictionFileSha256,
               frozen_items: {
-                ontology_sha256: '1'.repeat(64),
+                ontology_sha256: 'b'.repeat(64),
                 tier1_decision_file_sha256: '2'.repeat(64),
                 tier0_mapping_sha256: '3'.repeat(64),
-                rubric_sha256: '4'.repeat(64),
+                rubric_sha256: 'd'.repeat(64),
                 provenance_audit_sha256: '5'.repeat(64),
               },
               attestation: ATT,
@@ -920,7 +920,11 @@ test(
           assert.equal(integrity.frozenPredictionsMatch, true);
           assert.equal(integrity.judgmentSnapshotMatch, true);
 
-          const bundle = await exportV4SyntheticBundleFromDb(investigatorQueryable);
+          const bundle = await exportV4SyntheticBundleFromDb(investigatorQueryable, {
+            appGitSha: 'e'.repeat(40), // Explicit fictional build identity for this fixture.
+          });
+          assert.equal(bundle.manifest.ontology_version, '1.0.0');
+          assert.equal(bundle.manifest.rubric_version, 'R-TEST');
           assert.equal(bundle.files[0].rows, 6);
           assert.equal(bundle.files[1].rows, 3);
           assert.equal(bundle.files[2].rows, 3);

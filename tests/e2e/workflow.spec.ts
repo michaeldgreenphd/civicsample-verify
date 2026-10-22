@@ -27,7 +27,7 @@ const structuredContext = JSON.stringify({
 const hidden =
   /tier0_binary|tier1_binary|prediction_set|selection_probability|comparison_cell|frame_unit|request\.jwt|service_role|snapshot_hash/;
 
-test('served browser authors a canonical two-step synthetic case and reviewer completes Step 1 and Step 2', async ({
+test('served browser previews custom evidence and reviewers receive exactly the authored two-step case', async ({
   browser,
 }) => {
   const [admin, a] = await Promise.all([
@@ -35,15 +35,97 @@ test('served browser authors a canonical two-step synthetic case and reviewer co
     browser.newContext({ baseURL: origin }),
   ]);
   const [adminPage, aPage] = await Promise.all([admin.newPage(), a.newPage()]);
+  const custom = {
+    title: 'Fictional neurological condition Q',
+    area: 'Neurological',
+    descriptorName: 'Fictional neural condition Q',
+    descriptorId: 'TESTFX-D0111',
+    scopeNote: 'A fictional neural condition used only to verify synthetic case authoring.',
+    entryTerms: 'Fictional neural synonym Q',
+    treeNumber: 'TESTFX.111',
+    treeLabel: 'Fictional neurological branch',
+    areaDefinition: 'Synthetic neurological construct for engineering verification.',
+    source: 'Fictional investigator-authored neurology packet',
+    sourceVersion: 'synthetic-neurology-v2',
+    registryId: 'SYN-NCT-0111',
+    trialTitle: 'Fictional neurological intervention trial',
+    summary:
+      'A fictional neurological trial evaluates an invented neural intervention and cognition outcome.',
+    conditions: ['Fictional neural condition Q', 'Fictional neural condition R'],
+    interventions: ['Fictional neural training', 'Fictional neural comparison'],
+    primaryOutcomes: ['Fictional cognition score', 'Fictional recall score'],
+    studyType: 'Fictional randomized study',
+    primaryPurpose: 'Fictional neurological treatment',
+    phase: 'Fictional pilot phase',
+    ageRange: 'Fictional adults aged 40 to 70',
+  };
   try {
     await signIn(adminPage, 'investigator');
     await expect(adminPage.getByRole('heading', { name: 'Pilot overview' })).toBeVisible();
     await adminPage.locator('summary').filter({ hasText: 'Author a synthetic pilot case' }).click();
     await expect(adminPage.getByLabel('New synthetic case ID')).toHaveValue('SYN-011');
-    await expect(adminPage.getByLabel('Case kind')).toHaveValue('TWO_STEP');
-    await expect(adminPage.getByLabel('Synthetic descriptor ID')).toHaveValue('TESTFX-D0011');
-    await expect(adminPage.getByLabel('Synthetic trial registry ID')).toHaveValue('SYN-NCT-0011');
+    const fields = [
+      ['Case title', custom.title],
+      ['Construct area', custom.area],
+      ['Descriptor name', custom.descriptorName],
+      ['Synthetic descriptor ID', custom.descriptorId],
+      ['Descriptor scope note', custom.scopeNote],
+      ['Entry terms', custom.entryTerms],
+      ['Tree number', custom.treeNumber],
+      ['Tree placement label', custom.treeLabel],
+      ['Area definition', custom.areaDefinition],
+      ['Evidence source', custom.source],
+      ['Evidence source version', custom.sourceVersion],
+      ['Synthetic trial registry ID', custom.registryId],
+      ['Trial title', custom.trialTitle],
+      ['Trial summary', custom.summary],
+      ['Conditions', custom.conditions.join(', ')],
+      ['Interventions', custom.interventions.join(', ')],
+      ['Primary outcomes', custom.primaryOutcomes.join(', ')],
+      ['Study type', custom.studyType],
+      ['Primary purpose', custom.primaryPurpose],
+      ['Trial phase', custom.phase],
+      ['Age range', custom.ageRange],
+    ];
+    for (const [label, value] of fields) {
+      await adminPage.getByLabel(label, { exact: true }).fill(value);
+    }
+    const preview = adminPage.getByRole('region', { name: 'Evidence preview' });
+    await expect(preview.getByText(custom.scopeNote, { exact: true })).toBeVisible();
+    await expect(preview.getByText(custom.summary, { exact: true })).toBeVisible();
+    await expect(preview.getByText(custom.conditions.join('; '), { exact: true })).toBeVisible();
+    await expect(preview.getByText(custom.interventions.join('; '), { exact: true })).toBeVisible();
+    await expect(
+      preview.getByText(custom.primaryOutcomes.join('; '), { exact: true }),
+    ).toBeVisible();
+    await expect(
+      preview.getByText(`${custom.source} · ${custom.sourceVersion}`, { exact: true }),
+    ).toHaveCount(2);
+    await expect(preview).not.toContainText('Fictional respiratory symptom score');
+    await adminPage.getByLabel('Case kind', { exact: true }).selectOption('DESCRIPTOR');
+    await expect(preview.getByText('Disclosed trial evidence')).toHaveCount(0);
+    await adminPage.getByLabel('Case kind', { exact: true }).selectOption('TWO_STEP');
+    await expect(preview.getByText(custom.summary, { exact: true })).toBeVisible();
+    const submittedRequest = adminPage.waitForRequest(
+      (request) =>
+        request.method() === 'POST' && new URL(request.url()).pathname === '/api/admin/cases',
+    );
     await adminPage.getByRole('button', { name: 'Author synthetic case' }).click();
+    const submitted = (await submittedRequest).postDataJSON();
+    expect(submitted.trialPacket).toEqual({
+      registryId: custom.registryId,
+      title: custom.trialTitle,
+      summary: custom.summary,
+      conditions: custom.conditions,
+      interventions: custom.interventions,
+      primaryOutcomes: custom.primaryOutcomes,
+      studyType: custom.studyType,
+      primaryPurpose: custom.primaryPurpose,
+      phase: custom.phase,
+      ageRange: custom.ageRange,
+      source: custom.source,
+      sourceVersion: custom.sourceVersion,
+    });
     await expect(
       adminPage.getByText('Synthetic case SYN-011 authored and assigned to both reviewers.'),
     ).toBeVisible();
@@ -59,15 +141,18 @@ test('served browser authors a canonical two-step synthetic case and reviewer co
       ).status(),
     ).toBe(403);
 
-    await aPage.getByRole('button', { name: /Fictional condition K/ }).click();
-    await expect(aPage.getByRole('heading', { name: 'Fictional condition K' })).toBeVisible();
+    await aPage.getByRole('button', { name: new RegExp(custom.title) }).click();
+    await expect(aPage.getByRole('heading', { name: custom.title })).toBeVisible();
     await expect(aPage.getByText('Step 1 of 2')).toBeVisible();
-    await expect(aPage.getByText('TESTFX-D0011')).toBeVisible();
-    await expect(aPage.getByText('Fictional synonym 11')).toBeVisible();
+    await expect(aPage.getByText(custom.descriptorId, { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.entryTerms, { exact: true })).toBeVisible();
     await expect(
-      aPage.getByText('TESTFX.011 — Synthetic branch — no real MeSH classification'),
+      aPage.getByText(`${custom.treeNumber} — ${custom.treeLabel}`, { exact: true }),
     ).toBeVisible();
-    await expect(aPage.getByText('SYN-NCT-0011')).toHaveCount(0);
+    await expect(aPage.getByText(custom.scopeNote, { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.areaDefinition, { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.registryId)).toHaveCount(0);
+    await expect(aPage.getByText(custom.summary)).toHaveCount(0);
     await expect(aPage.getByText('Disclosed trial evidence')).toHaveCount(0);
 
     await aPage.getByRole('radio', { name: /^Include\b/ }).check();
@@ -80,16 +165,23 @@ test('served browser authors a canonical two-step synthetic case and reviewer co
     await expect(aPage.getByText(/Step 1 locked:\s*Include/)).toBeVisible();
     await expect(aPage.getByText('Step 2 of 2')).toBeVisible();
     await expect(aPage.getByText('Disclosed trial evidence')).toBeVisible();
-    await expect(aPage.getByRole('heading', { name: 'Fictional trial 11' })).toBeVisible();
-    await expect(aPage.getByText('SYN-NCT-0011')).toBeVisible();
-    await expect(aPage.getByText('Fictional nebulized intervention')).toBeVisible();
-    await expect(aPage.getByText('Fictional respiratory symptom score')).toBeVisible();
+    await expect(aPage.getByRole('heading', { name: custom.trialTitle })).toBeVisible();
+    await expect(aPage.getByText(custom.registryId, { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.summary, { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.conditions.join('; '), { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.interventions.join('; '), { exact: true })).toBeVisible();
+    await expect(aPage.getByText(custom.primaryOutcomes.join('; '), { exact: true })).toBeVisible();
     await expect(
-      aPage.getByText('Synthetic interventional example · Synthetic treatment example'),
+      aPage.getByText(`${custom.studyType} · ${custom.primaryPurpose}`, { exact: true }),
     ).toBeVisible();
     await expect(
-      aPage.getByText('Not applicable to fictional study · Fictional adult population'),
+      aPage.getByText(`${custom.phase} · ${custom.ageRange}`, { exact: true }),
     ).toBeVisible();
+    await expect(
+      aPage.getByText(`${custom.source} · ${custom.sourceVersion}`, { exact: true }),
+    ).toHaveCount(2);
+    await expect(aPage.getByText('Fictional nebulized intervention')).toHaveCount(0);
+    await expect(aPage.getByText('Fictional respiratory symptom score')).toHaveCount(0);
 
     await aPage.getByLabel(/Descriptor role in this trial/).selectOption('DISEASE_STUDIED');
     await aPage.getByRole('radio', { name: /^Include\b/ }).check();

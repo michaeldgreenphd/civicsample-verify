@@ -13,11 +13,13 @@ import {
   exportV4SyntheticBundleFromDb,
   renderV4SyntheticPredictions,
   verifyV4DatabaseIntegrity,
+  type V4DbExportOptions,
   type V4DbQueryable,
   type V4Row,
   type V4SyntheticExportInput,
 } from '../src/lib/formal-export';
 import { sha256 } from '../src/lib/export';
+import { applyTrialPacketUpgrades } from '../src/server/db';
 
 // Fixture reader for the exact RFC-style CSV produced by the inspected Python generator.
 function parseCsv(text: string): V4Row[] {
@@ -281,6 +283,24 @@ test('writer validates extension approval metadata and unit_type/determination_l
   assert.equal(extBundle.manifest.amendment_id, 'SYN-AMEND-01');
 });
 
+test('database export requires an explicit build commit before reading provenance', async () => {
+  const neverQueried: V4DbQueryable = {
+    query: async () => {
+      assert.fail('Invalid build identity must be rejected before querying the database');
+    },
+  };
+  for (const appGitSha of ['', 'abc123', '0'.repeat(40), 'A'.repeat(40), 'not-a-commit']) {
+    await assert.rejects(
+      exportV4SyntheticBundleFromDb(neverQueried, { appGitSha }),
+      /explicit nonzero 40-character lowercase Git commit SHA/,
+    );
+  }
+  await assert.rejects(
+    exportV4SyntheticBundleFromDb(neverQueried, {} as V4DbExportOptions),
+    /explicit nonzero 40-character lowercase Git commit SHA/,
+  );
+});
+
 test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB RPCs and validates in Python', async () => {
   const db = new PGlite({ extensions: { pgcrypto } });
   await db.waitReady;
@@ -294,10 +314,10 @@ test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB
       'migrations/0005_review_integrity_fixes.sql',
       'migrations/0006_reference_integrity.sql',
       'migrations/0007_frozen_contract_guards.sql',
-      'migrations/0008_trial_packet_and_concurrency_guards.sql',
     ]) {
       await db.exec(await readFile(file, 'utf8'));
     }
+    await applyTrialPacketUpgrades(db);
 
     const ACTORS = {
       investigator: '00000000-0000-4000-8000-0000000000b1',
@@ -309,6 +329,8 @@ test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB
     } as const;
     type Role = keyof typeof ACTORS;
     const ATT = 'Synthetic database-to-v4-export engineering verification.';
+    // Explicit fictional build identity for this engineering fixture, never an inferred default.
+    const exportOptions = { appGitSha: 'e'.repeat(40) };
     const j = JSON.stringify;
 
     for (const [role, id] of Object.entries(ACTORS)) {
@@ -659,10 +681,10 @@ test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB
         prediction_file_sha256: predictionFileSha256,
         extension_amendment_id: 'AMD4-TESTFX-EXT1',
         frozen_items: {
-          ontology_sha256: '1'.repeat(64),
+          ontology_sha256: 'b'.repeat(64),
           tier1_decision_file_sha256: '2'.repeat(64),
           tier0_mapping_sha256: '3'.repeat(64),
-          rubric_sha256: '4'.repeat(64),
+          rubric_sha256: 'd'.repeat(64),
           provenance_audit_sha256: '5'.repeat(64),
         },
         attestation: ATT,
@@ -751,12 +773,111 @@ test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB
     assert.equal(integrity.judgmentSnapshotMatch, true);
 
     // Export full bundle from DB views/RPCs
-    const bundle = await exportV4SyntheticBundleFromDb(investigatorQueryable);
+    const bundle = await exportV4SyntheticBundleFromDb(investigatorQueryable, exportOptions);
+    assert.equal(bundle.manifest.app_git_sha, exportOptions.appGitSha);
+    assert.equal(bundle.manifest.ontology_version, '1.0.0');
+    assert.equal(bundle.manifest.ontology_sha256, 'b'.repeat(64));
+    assert.equal(bundle.manifest.rubric_version, 'R-TEST');
+    assert.equal(bundle.manifest.rubric_sha256, 'd'.repeat(64));
+    assert.equal(bundle.manifest.sampling_design_version, 'SYN-DB-V4');
+    assert.equal(bundle.manifest.db_schema_version, '4.0.6-canonical-packet-lock-state');
     assert.equal(bundle.manifest.extension_approved_by_amendment, true);
     assert.equal(bundle.manifest.amendment_id, 'AMD4-TESTFX-EXT1');
     assert.equal(bundle.files[0].rows, 10); // 3 descriptor cases * 2 + 1 trial case * 2 levels * 2 reviewers
     assert.equal(bundle.files[1].rows, 5); // 5 case levels
     assert.equal(bundle.files[2].rows, 5); // 5 prediction rows
+
+    // A later development version is legitimate, but cannot relabel the evaluated cases.
+    await asRole('investigator', 'select public.rpc_register_ontology_version($1)', [
+      j({
+        ontology_version: '1.0.1-DVF',
+        rule_version: '1.0.1',
+        rubric_version: 'R-NEXT',
+        classification_schema_version: '1.0.0',
+        protocol_version: 'P-TEST',
+        sampling_design_version: 'SYN-NEXT',
+        ontology_sha256: '6'.repeat(64),
+        classification_schema_sha256: '7'.repeat(64),
+        rubric_sha256: '8'.repeat(64),
+        frozen_at: new Date().toISOString(),
+        notes: 'Synthetic later development version, excluded from this evaluation',
+      }),
+    ]);
+    assert.deepEqual(
+      await exportV4SyntheticBundleFromDb(investigatorQueryable, exportOptions),
+      bundle,
+    );
+
+    // Compatibility options assert registered values; none can rewrite frozen provenance.
+    for (const option of [
+      'ontologyVersion',
+      'rubricVersion',
+      'samplingDesignVersion',
+      'dbSchemaVersion',
+      'formalPhaseOpenedAt',
+    ] as const) {
+      await assert.rejects(
+        exportV4SyntheticBundleFromDb(investigatorQueryable, {
+          ...exportOptions,
+          [option]: 'SYN-CONTRADICTORY-PROVENANCE',
+        }),
+        /assertion differs from frozen database provenance/,
+      );
+    }
+    assert.deepEqual(
+      await exportV4SyntheticBundleFromDb(investigatorQueryable, {
+        ...exportOptions,
+        ontologyVersion: '1.0.0',
+        rubricVersion: 'R-TEST',
+        samplingDesignVersion: 'SYN-DB-V4',
+        dbSchemaVersion: '4.0.6-canonical-packet-lock-state',
+        formalPhaseOpenedAt: String(bundle.manifest.formal_phase_opened_at),
+      }),
+      bundle,
+    );
+
+    // This simulates a malformed legacy freeze without rewriting any actual study data.
+    // Matching prediction/snapshot RPCs alone do not prove version provenance.
+    for (const [key, registeredHash] of [
+      ['ontology_sha256', 'b'.repeat(64)],
+      ['rubric_sha256', 'd'.repeat(64)],
+    ] as const) {
+      await db.exec('set session_replication_role = replica');
+      await db.query(
+        'update public.freeze_manifests_v4 set frozen_items = jsonb_set(frozen_items, array[$1], to_jsonb($2::text))',
+        [key, 'f'.repeat(64)],
+      );
+      await db.exec('set session_replication_role = origin');
+      await assert.rejects(
+        exportV4SyntheticBundleFromDb(investigatorQueryable, exportOptions),
+        /Frozen ontology\/rubric hashes differ from the registered case versions/,
+      );
+      await db.exec('set session_replication_role = replica');
+      await db.query(
+        'update public.freeze_manifests_v4 set frozen_items = jsonb_set(frozen_items, array[$1], to_jsonb($2::text))',
+        [key, registeredHash],
+      );
+      await db.exec('set session_replication_role = origin');
+    }
+
+    // Missing, mixed or later registrations cannot silently replace the evaluated version.
+    for (const versionSetId of ['SYN-MISSING-REGISTRATION', '1.0.1-DVF+R-NEXT']) {
+      await db.exec('set session_replication_role = replica');
+      await db.query(
+        "update public.case_versions set version_set_id=$1 where case_id='HO4-TESTFX-002'",
+        [versionSetId],
+      );
+      await db.exec('set session_replication_role = origin');
+      await assert.rejects(
+        exportV4SyntheticBundleFromDb(investigatorQueryable, exportOptions),
+        /Frozen cases must share one complete ontology\/rubric registration predating freeze/,
+      );
+      await db.exec('set session_replication_role = replica');
+      await db.query(
+        "update public.case_versions set version_set_id='1.0.0+R-TEST' where case_id='HO4-TESTFX-002'",
+      );
+      await db.exec('set session_replication_role = origin');
+    }
 
     // Negative test: if database judgment_snapshots_v4 or freeze_manifests_v4 mismatches,
     // verifyV4DatabaseIntegrity returns false from the DB RPC and exportV4SyntheticBundleFromDb refuses to export!
@@ -772,7 +893,7 @@ test('database-to-v4-export-to-Python round-trip obtains integrity flags from DB
     assert.equal(badIntegrity.judgmentSnapshotMatch, false);
     assert.equal(badIntegrity.frozenPredictionsMatch, true);
     await assert.rejects(
-      exportV4SyntheticBundleFromDb(investigatorQueryable),
+      exportV4SyntheticBundleFromDb(investigatorQueryable, exportOptions),
       /Both database integrity verifications must match before export/,
     );
     await db.exec('set session_replication_role = replica');

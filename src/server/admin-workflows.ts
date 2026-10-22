@@ -282,7 +282,7 @@ export async function authorSyntheticPilotCase(
  */
 export async function exportFormalV4BundleForInvestigator(
   actor: Actor,
-  options: V4DbExportOptions = {},
+  options: V4DbExportOptions,
 ) {
   requireInvestigator(actor);
   return withActor(actor, async (tx) => exportV4SyntheticBundleFromDb(tx, options));

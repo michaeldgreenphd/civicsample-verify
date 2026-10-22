@@ -233,7 +233,7 @@ function Login({ onLogin }: { onLogin: (user: Actor) => void }) {
           <Icon name="arrow" size={14} />
         </button>
         <div className="auth-note">
-          Use the pilot password generated during local setup. Access is limited to synthetic
+          Use the password for your assigned role from local setup. Access is limited to synthetic
           fixtures; formal-study activation is disabled.
         </div>
       </form>
@@ -1114,7 +1114,7 @@ function ReviewerCase({
     </section>
   );
 }
-function Evidence({ detail }: { detail: CaseDetail }) {
+function Evidence({ detail }: { detail: Pick<CaseDetail, 'packet'> }) {
   const p = detail.packet;
   return (
     <>
@@ -1157,7 +1157,7 @@ function Evidence({ detail }: { detail: CaseDetail }) {
     </>
   );
 }
-function TrialEvidence({ detail }: { detail: CaseDetail }) {
+function TrialEvidence({ detail }: { detail: Pick<CaseDetail, 'trialPacket'> }) {
   const p = detail.trialPacket!;
   return (
     <>
@@ -1308,54 +1308,55 @@ function Investigator({
     trialPhase: 'Not applicable to fictional study',
     ageRange: 'Fictional adult population',
   });
+  // Preview exactly the evidence that will be submitted, including trimmed list values.
+  const splitList = (value: string) =>
+    value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  const authoredPayload = {
+    id: newCase.id.trim(),
+    kind: newCase.kind,
+    packet: {
+      title: newCase.title.trim(),
+      area: newCase.area.trim(),
+      descriptorName: newCase.descriptorName.trim(),
+      descriptorId: newCase.descriptorId.trim(),
+      scopeNote: newCase.scopeNote.trim(),
+      entryTerms: splitList(newCase.entryTerms),
+      treeNumbers: [{ number: newCase.treeNumber.trim(), label: newCase.treeLabel.trim() }],
+      areaDefinition: newCase.areaDefinition.trim(),
+      source: newCase.source.trim(),
+      sourceVersion: newCase.sourceVersion.trim(),
+    },
+    ...(newCase.kind === 'TWO_STEP'
+      ? {
+          trialPacket: {
+            registryId: newCase.registryId.trim(),
+            title: newCase.trialTitle.trim(),
+            summary: newCase.trialSummary.trim(),
+            conditions: splitList(newCase.conditions),
+            interventions: splitList(newCase.interventions),
+            primaryOutcomes: splitList(newCase.primaryOutcomes),
+            studyType: newCase.studyType.trim(),
+            primaryPurpose: newCase.primaryPurpose.trim(),
+            phase: newCase.trialPhase.trim(),
+            ageRange: newCase.ageRange.trim(),
+            source: newCase.source.trim(),
+            sourceVersion: newCase.sourceVersion.trim(),
+          },
+        }
+      : {}),
+  };
   async function authorCase(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      const splitList = (value: string) =>
-        value
-          .split(',')
-          .map((item) => item.trim())
-          .filter(Boolean);
-      const payload = {
-        id: newCase.id.trim(),
-        kind: newCase.kind,
-        packet: {
-          title: newCase.title.trim(),
-          area: newCase.area.trim(),
-          descriptorName: newCase.descriptorName.trim(),
-          descriptorId: newCase.descriptorId.trim(),
-          scopeNote: newCase.scopeNote.trim(),
-          entryTerms: splitList(newCase.entryTerms),
-          treeNumbers: [{ number: newCase.treeNumber.trim(), label: newCase.treeLabel.trim() }],
-          areaDefinition: newCase.areaDefinition.trim(),
-          source: newCase.source.trim(),
-          sourceVersion: newCase.sourceVersion.trim(),
-        },
-        ...(newCase.kind === 'TWO_STEP'
-          ? {
-              trialPacket: {
-                registryId: newCase.registryId.trim(),
-                title: newCase.trialTitle.trim(),
-                summary: newCase.trialSummary.trim(),
-                conditions: splitList(newCase.conditions),
-                interventions: splitList(newCase.interventions),
-                primaryOutcomes: splitList(newCase.primaryOutcomes),
-                studyType: newCase.studyType.trim(),
-                primaryPurpose: newCase.primaryPurpose.trim(),
-                phase: newCase.trialPhase.trim(),
-                ageRange: newCase.ageRange.trim(),
-                source: newCase.source.trim(),
-                sourceVersion: newCase.sourceVersion.trim(),
-              },
-            }
-          : {}),
-      };
       await api('/api/admin/cases', {
         method: 'POST',
-        body: JSON.stringify(payload),
+        body: JSON.stringify(authoredPayload),
       });
       const refreshed = await onRefresh();
       setConfig(refreshed.configuration);
@@ -1653,8 +1654,9 @@ function Investigator({
             <summary>Author a synthetic pilot case</summary>
             <form className="panel-body" style={{ paddingTop: 0 }} onSubmit={authorCase}>
               <p className="muted" style={{ fontSize: 12, marginBottom: 15 }}>
-                Enrolls a fabricated pilot case (`SYN-NNN`) with canonical descriptor and optional
-                Step-2 trial evidence, assigning it independently to Reviewer A and Reviewer B.
+                Create a fictional pilot case with descriptor evidence and optional trial evidence.
+                Review the complete preview before assigning it to both reviewers. Source details
+                apply to both evidence packets.
               </p>
               <div className="context-grid">
                 <div className="field">
@@ -1747,6 +1749,7 @@ function Investigator({
                   </label>
                   <input
                     id="author-entry-terms"
+                    aria-describedby="author-list-help"
                     value={newCase.entryTerms}
                     onChange={(e) => setNewCase({ ...newCase, entryTerms: e.target.value })}
                   />
@@ -1763,6 +1766,18 @@ function Investigator({
                 </div>
               </div>
               <div className="field">
+                <label className="form-label" htmlFor="author-tree-label">
+                  Tree placement label
+                </label>
+                <input
+                  id="author-tree-label"
+                  value={newCase.treeLabel}
+                  required
+                  maxLength={200}
+                  onChange={(e) => setNewCase({ ...newCase, treeLabel: e.target.value })}
+                />
+              </div>
+              <div className="field">
                 <label className="form-label" htmlFor="author-area-definition">
                   Area definition
                 </label>
@@ -1772,6 +1787,35 @@ function Investigator({
                   onChange={(e) => setNewCase({ ...newCase, areaDefinition: e.target.value })}
                 />
               </div>
+              <div className="context-grid">
+                <div className="field">
+                  <label className="form-label" htmlFor="author-source">
+                    Evidence source
+                  </label>
+                  <input
+                    id="author-source"
+                    value={newCase.source}
+                    required
+                    maxLength={200}
+                    onChange={(e) => setNewCase({ ...newCase, source: e.target.value })}
+                  />
+                </div>
+                <div className="field">
+                  <label className="form-label" htmlFor="author-source-version">
+                    Evidence source version
+                  </label>
+                  <input
+                    id="author-source-version"
+                    value={newCase.sourceVersion}
+                    required
+                    maxLength={100}
+                    onChange={(e) => setNewCase({ ...newCase, sourceVersion: e.target.value })}
+                  />
+                </div>
+              </div>
+              <p className="muted" id="author-list-help">
+                Separate multiple entry terms, conditions, interventions, or outcomes with a comma.
+              </p>
               {newCase.kind === 'TWO_STEP' && (
                 <>
                   <div className="context-grid">
@@ -1806,8 +1850,85 @@ function Investigator({
                       onChange={(e) => setNewCase({ ...newCase, trialSummary: e.target.value })}
                     />
                   </div>
+                  {(
+                    [
+                      ['conditions', 'Conditions'],
+                      ['interventions', 'Interventions'],
+                      ['primaryOutcomes', 'Primary outcomes'],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <div className="field" key={key}>
+                      <label className="form-label" htmlFor={`author-${key}`}>
+                        {label}
+                      </label>
+                      <textarea
+                        id={`author-${key}`}
+                        aria-describedby="author-list-help"
+                        value={newCase[key]}
+                        required
+                        onChange={(e) => setNewCase({ ...newCase, [key]: e.target.value })}
+                      />
+                    </div>
+                  ))}
+                  <div className="context-grid">
+                    {(
+                      [
+                        ['studyType', 'Study type'],
+                        ['primaryPurpose', 'Primary purpose'],
+                        ['trialPhase', 'Trial phase'],
+                        ['ageRange', 'Age range'],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <div className="field" key={key}>
+                        <label className="form-label" htmlFor={`author-${key}`}>
+                          {label}
+                        </label>
+                        <input
+                          id={`author-${key}`}
+                          value={newCase[key]}
+                          required
+                          maxLength={200}
+                          onChange={(e) => setNewCase({ ...newCase, [key]: e.target.value })}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </>
               )}
+              <section aria-labelledby="author-evidence-preview-heading">
+                <hr className="section-divider" />
+                <h3 id="author-evidence-preview-heading">Evidence preview</h3>
+                <p className="muted">
+                  These values will be saved. Trial evidence is available to reviewers only after
+                  they lock Step 1.
+                </p>
+                <dl className="metadata-list">
+                  <div>
+                    <dt>Case ID</dt>
+                    <dd>{authoredPayload.id}</dd>
+                  </div>
+                  <div>
+                    <dt>Case title</dt>
+                    <dd>{authoredPayload.packet.title}</dd>
+                  </div>
+                  <div>
+                    <dt>Construct area</dt>
+                    <dd>{authoredPayload.packet.area}</dd>
+                  </div>
+                  <div>
+                    <dt>Case kind</dt>
+                    <dd>
+                      {authoredPayload.kind === 'TWO_STEP'
+                        ? 'Two-step trial case'
+                        : 'Descriptor only'}
+                    </dd>
+                  </div>
+                </dl>
+                <Evidence detail={{ packet: authoredPayload.packet }} />
+                {authoredPayload.trialPacket && (
+                  <TrialEvidence detail={{ trialPacket: authoredPayload.trialPacket }} />
+                )}
+              </section>
               <button className="button secondary" disabled={phase !== 'OPEN' || busy}>
                 Author synthetic case
               </button>

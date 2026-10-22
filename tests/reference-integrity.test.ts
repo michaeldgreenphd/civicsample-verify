@@ -110,9 +110,11 @@ async function fixture(
     freeze?: boolean;
     through?: number;
     scope?: 'DISAGREEMENTS_ONLY' | 'ALL_CASE_LEVELS';
+    dataDir?: string;
+    trialDesign?: 'one-step' | 'two-step';
   } = {},
 ) {
-  const db = await migratedDb(options.latest ?? true, undefined, options.through ?? 8);
+  const db = await migratedDb(options.latest ?? true, options.dataDir, options.through ?? 9);
   try {
     for (const [role, id] of Object.entries(ACTORS)) {
       const email = `synthetic-${role.toLowerCase()}@example.invalid`;
@@ -221,7 +223,24 @@ async function fixture(
       ATT,
     ]);
     for (const id of ids) {
-      await investigator('select public.rpc_import_case($1)', [j(caseInput(id, 'FORMAL'))]);
+      const input = caseInput(id, 'FORMAL');
+      const trial = { nct_id: 'SYN-NCT-9001', brief_title: 'Fictional upgrade trial' };
+      await investigator('select public.rpc_import_case($1)', [
+        j(
+          options.trialDesign
+            ? {
+                ...input,
+                unit_type: 'TRIAL_AREA',
+                packet: {
+                  ...input.packet,
+                  unit: { ...input.packet.unit, unit_type: 'TRIAL_AREA' },
+                  trial,
+                },
+                design: { ...input.design, nct_id: trial.nct_id },
+              }
+            : input,
+        ),
+      ]);
       await investigator('select public.rpc_set_case_design_v3($1)', [
         j({
           case_id: id,
@@ -234,9 +253,10 @@ async function fixture(
           selection_probability: 0.5,
           comparison_cell_v11: 'OPOS_CPOS',
           original_binary: 'INCLUDE',
-          curated_v11_status_raw: 'INCLUDE',
+          curated_v11_status_raw:
+            options.trialDesign === 'two-step' ? 'CONTEXT_DEPENDENT' : 'INCLUDE',
           curated_v11_binary: 'INCLUDE',
-          two_step_required: false,
+          two_step_required: options.trialDesign === 'two-step',
           sampling_design_version: 'SYN-REF-TEST',
         }),
       ]);
@@ -249,17 +269,34 @@ async function fixture(
         }),
       ]);
     }
+    if (options.trialDesign === 'two-step') {
+      for (const id of ids)
+        await investigator('select public.rpc_add_trial_context_packet($1,$2)', [
+          id,
+          j({
+            schema_version: '1.0',
+            trial: { nct_id: 'SYN-NCT-9001', brief_title: 'Fictional upgrade trial context' },
+            notices: ['SYNTHETIC ENGINEERING ONLY'],
+          }),
+        ]);
+    }
     await investigator('select public.rpc_import_frozen_predictions_v4($1)', [
       j(
-        ids.map((id) => ({
-          prediction_set_id: 'SYN-PREDICTION-REF',
-          case_id: id,
-          determination_level: 'DESCRIPTOR_LEVEL',
-          tier0_binary: 'INCLUDE',
-          tier1_version: 'v1.1',
-          tier1_status_raw: 'INCLUDE',
-          tier1_binary: 'INCLUDE',
-        })),
+        ids.flatMap((id) =>
+          (options.trialDesign === 'two-step'
+            ? ['DESCRIPTOR_LEVEL_IN_TRIAL_CASE', 'TRIAL_LEVEL']
+            : ['DESCRIPTOR_LEVEL']
+          ).map((level) => ({
+            prediction_set_id: 'SYN-PREDICTION-REF',
+            case_id: id,
+            determination_level: level,
+            tier0_binary: 'INCLUDE',
+            tier1_version: 'v1.1',
+            tier1_status_raw: options.trialDesign === 'two-step' ? 'CONTEXT_DEPENDENT' : 'INCLUDE',
+            tier1_binary: 'INCLUDE',
+            ...(level === 'TRIAL_LEVEL' ? { stage_c_trial_status: 'INCLUDE' } : {}),
+          })),
+        ),
       ),
     ]);
     const freeze = async (extra: Record<string, unknown> = {}) => {
@@ -1756,3 +1793,138 @@ test('0009 refuses an already locked formal reference without changing records o
     await pilot.db.close();
   }
 });
+
+async function frozenUpgradeState(db: PGlite) {
+  const records: Record<string, unknown> = {};
+  for (const table of [
+    'cases',
+    'case_versions',
+    'case_design_v3',
+    'case_records_v4',
+    'sample_manifests',
+    'sample_manifest_cases',
+    'freeze_manifests_v4',
+    'frozen_predictions_v4',
+    'trial_context_packets',
+    'assignments',
+    'reviews',
+    'trial_step1_records',
+    'verify_cases',
+  ]) {
+    records[table] = (
+      await db.query(
+        `select to_jsonb(t) as record from public.${table} t order by to_jsonb(t)::text`,
+      )
+    ).rows;
+  }
+  records.levels = (
+    await db.query(
+      'select case_id, private.case_levels_v4(case_id) as level from public.case_records_v4 order by case_id, level',
+    )
+  ).rows;
+  return JSON.parse(JSON.stringify(records));
+}
+
+for (const existingVersion of [7, 8, 9]) {
+  test(`loader refuses incompatible frozen one-step trials at 000${existingVersion} without changing study records or schema`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), `verify-frozen-trial-000${existingVersion}-`));
+    try {
+      const f = await fixture({ through: 7, dataDir: dir, trialDesign: 'one-step' });
+      await f.submit('reviewerA', ids[0]);
+      // Reproduce databases already changed by older application binaries too.
+      if (existingVersion >= 8)
+        await f.db.exec(await readFile(TRIAL_CONCURRENCY_MIGRATION, 'utf8'));
+      if (existingVersion >= 9)
+        await f.db.exec(await readFile(CANONICAL_LOCK_STATE_MIGRATION, 'utf8'));
+      const before = await frozenUpgradeState(f.db);
+      const beforeVersions = (
+        await f.db.query('select version from public.app_schema_version order by version')
+      ).rows;
+      const beforeFunction = (
+        await f.db.query(
+          "select pg_get_functiondef('private.case_levels_v4(text)'::regprocedure) as body",
+        )
+      ).rows;
+      await f.db.close();
+
+      const script = `import {getDb} from './src/server/db.ts';
+        try { const db = await getDb(); await db.close(); console.log(JSON.stringify({rejected:false})); }
+        catch (error) { console.log(JSON.stringify({rejected:true,message:error.message})); }`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await promisify(execFile)(
+          process.execPath,
+          ['--import', 'tsx', '--input-type=module', '-e', script],
+          { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+        );
+        assert.deepEqual(JSON.parse(result.stdout.trim()), {
+          rejected: true,
+          message:
+            'Frozen trial contract is incompatible with the current schema; explicit investigator migration review is required',
+        });
+        const persisted = new PGlite({ dataDir: dir, extensions: { pgcrypto } });
+        try {
+          await persisted.waitReady;
+          assert.deepEqual(await frozenUpgradeState(persisted), before);
+          assert.deepEqual(
+            (
+              await persisted.query(
+                'select version from public.app_schema_version order by version',
+              )
+            ).rows,
+            beforeVersions,
+          );
+          assert.deepEqual(
+            (
+              await persisted.query(
+                "select pg_get_functiondef('private.case_levels_v4(text)'::regprocedure) as body",
+              )
+            ).rows,
+            beforeFunction,
+          );
+        } finally {
+          await persisted.close();
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const trialDesign of [undefined, 'two-step'] as const) {
+  test(`loader upgrades compatible frozen ${trialDesign ?? 'descriptor'} cases without reinterpreting the manifest or evidence`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'verify-compatible-frozen-upgrade-'));
+    try {
+      const f = await fixture({ through: 7, dataDir: dir, trialDesign });
+      // Prevent the local pilot auto-seed from obscuring the upgrade comparison.
+      await f.db.query(
+        "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+        [j({ title: 'Preserved synthetic pilot packet', area: 'Fictional construct' })],
+      );
+      const before = await frozenUpgradeState(f.db);
+      await f.db.close();
+      const script = `import {getDb} from './src/server/db.ts'; const db=await getDb();
+        console.log(JSON.stringify((await db.query("select version from public.app_schema_version where version in ('4.0.5-trial-packet-concurrency-guards','4.0.6-canonical-packet-lock-state') order by version")).rows)); await db.close();`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await promisify(execFile)(
+          process.execPath,
+          ['--import', 'tsx', '--input-type=module', '-e', script],
+          { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+        );
+        assert.deepEqual(JSON.parse(result.stdout.trim()), [
+          { version: '4.0.5-trial-packet-concurrency-guards' },
+          { version: '4.0.6-canonical-packet-lock-state' },
+        ]);
+        const persisted = new PGlite({ dataDir: dir, extensions: { pgcrypto } });
+        try {
+          await persisted.waitReady;
+          assert.deepEqual(await frozenUpgradeState(persisted), before);
+        } finally {
+          await persisted.close();
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}

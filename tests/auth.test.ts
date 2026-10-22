@@ -7,6 +7,13 @@ import {
   logout,
   sessionCookie,
   HttpError,
+  ACCOUNTS,
+  COOKIE_NAME,
+  issueSyntheticInvite,
+  claimInvitedSession,
+  resetInvitedAuthStateForTests,
+  signSyntheticJwt,
+  verifySignedJwtClaims,
 } from '../src/lib/auth';
 import { judgmentSchema, adjudicationSchema } from '../src/lib/validation';
 
@@ -121,4 +128,83 @@ test('unresolved adjudication remains distinct from an insufficient-information 
     }).success,
     true,
   );
+});
+
+test('individual local role passwords prevent role switching and disable the shared fallback', (t) => {
+  const names = [
+    'VERIFY_INVESTIGATOR_PASSWORD',
+    'VERIFY_REVIEWER_A_PASSWORD',
+    'VERIFY_REVIEWER_B_PASSWORD',
+    'VERIFY_ADJUDICATOR_PASSWORD',
+    'VERIFY_DEMO_PASSWORD',
+  ];
+  const before = names.map((name) => process.env[name]);
+  t.after(() =>
+    names.forEach((name, i) => {
+      if (before[i] === undefined) delete process.env[name];
+      else process.env[name] = before[i];
+    }),
+  );
+  resetInvitedAuthStateForTests();
+  process.env.VERIFY_DEMO_PASSWORD = 'synthetic-legacy-shared-password';
+  process.env.VERIFY_INVESTIGATOR_PASSWORD = 'synthetic-investigator-password';
+  process.env.VERIFY_REVIEWER_A_PASSWORD = 'synthetic-reviewer-a-password';
+  process.env.VERIFY_REVIEWER_B_PASSWORD = 'synthetic-reviewer-b-password';
+  process.env.VERIFY_ADJUDICATOR_PASSWORD = 'synthetic-adjudicator-password';
+  for (const [account, password] of [
+    ['investigator', process.env.VERIFY_INVESTIGATOR_PASSWORD],
+    ['reviewer-a', process.env.VERIFY_REVIEWER_A_PASSWORD],
+    ['reviewer-b', process.env.VERIFY_REVIEWER_B_PASSWORD],
+    ['adjudicator', process.env.VERIFY_ADJUDICATOR_PASSWORD],
+  ]) {
+    const request = new Request('http://localhost/api/session', {
+      headers: { cookie: sessionCookie(login(account, password)) },
+    });
+    assert.equal(getActor(request)?.id, ACCOUNTS[account].id);
+    logout(request);
+    assert.throws(
+      () => login(account, process.env.VERIFY_DEMO_PASSWORD!),
+      (err: unknown) => err instanceof HttpError && err.status === 401,
+    );
+  }
+  assert.throws(() => login('investigator', process.env.VERIFY_REVIEWER_B_PASSWORD!), HttpError);
+  assert.throws(() => login('reviewer-a', process.env.VERIFY_REVIEWER_B_PASSWORD!), HttpError);
+  delete process.env.VERIFY_REVIEWER_A_PASSWORD;
+  assert.throws(
+    () => login('reviewer-a', process.env.VERIFY_DEMO_PASSWORD!),
+    (err: unknown) => err instanceof HttpError && err.status === 503,
+  );
+});
+
+test('replacing an invitation rejects both its old cookie and JWT before and after the new claim', () => {
+  resetInvitedAuthStateForTests();
+  const input = {
+    userId: '00000000-0000-4000-8000-000000000077',
+    email: 'replacement@example.invalid',
+    displayName: 'Synthetic replacement regression',
+    role: 'REVIEWER' as const,
+  };
+  const original = issueSyntheticInvite(ACCOUNTS.investigator, input);
+  const claimed = claimInvitedSession(input.userId, original.inviteToken, { aal: 'aal2' });
+  const request = new Request('http://localhost/api/session', {
+    headers: { cookie: `${COOKIE_NAME}=${claimed.sessionToken}` },
+  });
+  const secret = 'synthetic-replacement-signing-secret';
+  const jwt = signSyntheticJwt(claimed.claims, secret);
+  assert.equal(getActor(request)?.id, input.userId);
+  const replacement = issueSyntheticInvite(ACCOUNTS.investigator, input);
+  assert.equal(getActor(request), null);
+  assert.throws(() => verifySignedJwtClaims(jwt, secret), HttpError);
+  const current = claimInvitedSession(input.userId, replacement.inviteToken, { aal: 'aal2' });
+  assert.equal(getActor(request), null);
+  assert.throws(() => verifySignedJwtClaims(jwt, secret), HttpError);
+  const currentRequest = new Request('http://localhost/api/session', {
+    headers: { cookie: `${COOKIE_NAME}=${current.sessionToken}` },
+  });
+  assert.equal(getActor(currentRequest)?.id, input.userId);
+  assert.equal(
+    verifySignedJwtClaims(signSyntheticJwt(current.claims, secret), secret).actor.id,
+    input.userId,
+  );
+  resetInvitedAuthStateForTests();
 });
