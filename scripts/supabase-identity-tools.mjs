@@ -23,6 +23,10 @@ const exactKeys = (value, keys) =>
   Object.keys(value).length === keys.length &&
   keys.every((key) => Object.hasOwn(value, key));
 
+/** The staging project this repository is approved to administer (docs/SUPABASE_IDENTITY.md). A
+ *  privileged configuration naming any other reference is refused before any request, whatever
+ *  it calls itself; this list changes only through a reviewed commit. */
+export const APPROVED_STAGING_PROJECT_REFS = Object.freeze(['xmuiduugdrqvhssmeacz']);
 export const ROLES = ['INVESTIGATOR', 'REVIEWER', 'ADJUDICATOR'];
 export const USERNAME = /^[a-z][a-z0-9._-]{2,31}$/;
 /** Reserved, never-deliverable domain (RFC 2606): usernames map to internal Auth identities and
@@ -51,8 +55,23 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0014_legacy_pilot_and_packet_guards.sql',
   'migrations/0015_v5_review_fixes.sql',
   'migrations/0016_mapping_confirmation.sql',
+  'migrations/0017_v5_rubric_binding.sql',
+  'migrations/0018_mapping_confirmation_review_fixes.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '6.0.0-mapping-confirmation';
+export const EXPECTED_SCHEMA_VERSION = '6.0.1-mapping-confirmation-review-fixes';
+/** app_schema_version markers each file writes; used by the resumable schema runner. */
+export const SCHEMA_FILE_MARKERS = Object.freeze({
+  'migrations/0011_v5_trial_label_verification.sql': ['5.0.0'],
+  'migrations/0012_v5_training_examples.sql': ['5.1.0'],
+  'migrations/0013_v5_independent_finality_guards.sql': ['5.1.1-independent-finality'],
+  'migrations/0014_legacy_pilot_and_packet_guards.sql': ['5.1.2-legacy-pilot-packet-guards'],
+  'migrations/0015_v5_review_fixes.sql': ['5.1.3-v5-review-fixes'],
+  'migrations/0016_mapping_confirmation.sql': ['6.0.0-mapping-confirmation'],
+  'migrations/0017_v5_rubric_binding.sql': ['5.1.4-v5-rubric-binding'],
+  'migrations/0018_mapping_confirmation_review_fixes.sql': [
+    '6.0.1-mapping-confirmation-review-fixes',
+  ],
+});
 /** Dashboard settings the plan requires; they are verified by hand, never set by this tool. */
 export const AUTH_SETTINGS = [
   {
@@ -145,7 +164,7 @@ export function validateRoster(accounts) {
 }
 /** The private admin configuration: project declaration, service-role key, optional database URL
  *  and the username roster. Refused unless it names the staging project exactly. */
-export function validateAdminConfig(config) {
+export function validateAdminConfig(config, approvedRefs = APPROVED_STAGING_PROJECT_REFS) {
   if (!exactKeys(config, ['project', 'serviceRoleKey', 'databaseUrl', 'accounts']))
     refuse(
       'ADMIN_CONFIG_KEYS',
@@ -156,6 +175,11 @@ export function validateAdminConfig(config) {
   } catch (error) {
     refuse('ADMIN_CONFIG_PROJECT', error.message);
   }
+  if (!approvedRefs.includes(config.project.stagingProjectRef))
+    refuse(
+      'PROJECT_NOT_APPROVED',
+      'The configuration names a project that this repository is not approved to administer; only the recorded staging reference is accepted.',
+    );
   if (!looksLikeServiceRoleKey(config.serviceRoleKey))
     refuse(
       'SERVICE_ROLE_KEY_REQUIRED',
@@ -180,9 +204,13 @@ export function validateAdminConfig(config) {
   validateRoster(config.accounts);
   return config;
 }
-export function readAdminConfig(path, repositoryRoot) {
+export function readAdminConfig(
+  path,
+  repositoryRoot,
+  approvedRefs = APPROVED_STAGING_PROJECT_REFS,
+) {
   const config = readPrivateJson(path, repositoryRoot);
-  return validateAdminConfig(config);
+  return validateAdminConfig(config, approvedRefs);
 }
 
 export const sha256 = (text) => createHash('sha256').update(text).digest('hex');
@@ -195,8 +223,9 @@ export function buildBootstrapPlan(
   config,
   repositoryRoot,
   readFile = (p) => readFileSync(`${repositoryRoot}/${p}`, 'utf8'),
+  approvedRefs = APPROVED_STAGING_PROJECT_REFS,
 ) {
-  validateAdminConfig(config);
+  validateAdminConfig(config, approvedRefs);
   const files = HOSTED_SCHEMA_FILES.map((path) => {
     const text = readFile(path);
     if (
@@ -235,6 +264,9 @@ export function buildBootstrapPlan(
       username: a.username,
       internalEmail: internalEmail(a.username, ref),
       role: a.role,
+      // Every field the apply provisions is bound into the reviewed hash; the display name as a
+      // digest so the plan discloses no name.
+      displayNameSha256: sha256(a.displayName.normalize('NFKC')),
       isPilotTestAccount: false,
       authUser:
         'created with email_confirm: true and a generated password written only to the private credentials file',
@@ -319,11 +351,33 @@ export function adminClient(config, fetchImpl = fetch) {
     async setPassword(id, password) {
       await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, { password });
     },
-    /** Lock or unlock an account immediately (ban_duration, documented Auth Admin attribute). */
+    /** Lock or unlock an account. A ban blocks new sign-ins and refreshes but Supabase documents
+     *  that already-issued access tokens stay valid until they expire, so the application row is
+     *  deactivated as well: every RLS helper and RPC checks public.users.is_active, which closes
+     *  the remaining window immediately for this application. */
     async setLocked(id, locked) {
       await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, {
         ban_duration: locked ? '876000h' : 'none',
       });
+      const rows = await call(
+        'PATCH',
+        `/rest/v1/users?auth_uid=eq.${encodeURIComponent(id)}`,
+        locked
+          ? { is_active: false, deactivated_at: new Date().toISOString() }
+          : { is_active: true, deactivated_at: null },
+        { Prefer: 'return=representation' },
+      );
+      if (!Array.isArray(rows) || rows.length !== 1)
+        refuse('APP_USER', 'The application user row was not updated.');
+      return { appUserId: rows[0].user_id, isActive: rows[0].is_active };
+    },
+    /** The application row linked to an Auth user, if any. */
+    async findAppUserByAuthUid(id) {
+      const rows = await call(
+        'GET',
+        `/rest/v1/users?auth_uid=eq.${encodeURIComponent(id)}&select=user_id,email,role,is_active`,
+      );
+      return Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
     },
     /** Application roster row, linked by auth_uid so no claim-by-e-mail step is needed. */
     async upsertAppUser(authUid, email, displayName, role) {
@@ -357,7 +411,15 @@ export function adminClient(config, fetchImpl = fetch) {
 
 /** Apply guards: explicit environment opt-in, the staging reference typed back, and the hash of a
  *  reviewed plan generated from the same configuration. */
-export function assertApplyAuthorized({ env, confirmProject, planHash, config, repositoryRoot }) {
+export function assertApplyAuthorized({
+  env,
+  confirmProject,
+  planHash,
+  config,
+  repositoryRoot,
+  approvedRefs = APPROVED_STAGING_PROJECT_REFS,
+}) {
+  validateAdminConfig(config, approvedRefs);
   if (env.VERIFY_SUPABASE_ADMIN_APPLY !== '1')
     refuse(
       'APPLY_NOT_ENABLED',
@@ -368,7 +430,7 @@ export function assertApplyAuthorized({ env, confirmProject, planHash, config, r
       'CONFIRM_PROJECT',
       'Pass --confirm-project with the exact staging project reference. Nothing was changed.',
     );
-  const expected = planSha256(buildBootstrapPlan(config, repositoryRoot));
+  const expected = planSha256(buildBootstrapPlan(config, repositoryRoot, undefined, approvedRefs));
   if (typeof planHash !== 'string' || planHash.toLowerCase() !== expected)
     refuse(
       'PLAN_HASH',

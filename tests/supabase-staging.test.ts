@@ -30,6 +30,7 @@ function configuration() {
       calibrationCaseId: 'CAL4-TESTFX-STAGING1',
       pilotCaseId: 'SYN-STAGING1',
       mappingCaseId: 'MC-SYN-STAGING1',
+      mappingReviewerAResponseId: id(31),
     },
   };
 }
@@ -63,7 +64,12 @@ function mockGateway(config: Config, override?: Override) {
           investigator_session_ok: account < 2,
         },
       ];
-    else if (url.pathname === '/rest/v1/reviews') {
+    else if (url.pathname === '/rest/v1/mc_responses') {
+      if (account === 2 && url.searchParams.get('response_id') === `eq.${id(31)}`)
+        body = [
+          { response_id: id(31), case_id: 'MC-SYN-STAGING1', reviewer_pseudo_id: 'SYN-REVIEWER-2' },
+        ];
+    } else if (url.pathname === '/rest/v1/reviews') {
       const wanted = url.searchParams.get('review_id');
       if (
         (account === 2 && wanted === `eq.${id(21)}`) ||

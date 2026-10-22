@@ -1,18 +1,27 @@
 // Privileged Supabase staging administration, separate from the web application.
 //
-//   node scripts/supabase-admin.mjs plan      --config /abs/private/supabase-admin.json
-//   node scripts/supabase-admin.mjs accounts  --config ... --dry-run
-//   node scripts/supabase-admin.mjs accounts  --config ... --apply --confirm-project <ref> --plan-sha256 <hash> --credentials-out /abs/private/credentials.json
+//   node scripts/supabase-admin.mjs plan           --config /abs/private/supabase-admin.json
+//   node scripts/supabase-admin.mjs accounts       --config ... [--dry-run]
+//   node scripts/supabase-admin.mjs accounts       --config ... --apply --confirm-project <ref> --plan-sha256 <hash> --credentials-out /abs/private/credentials.json
 //   node scripts/supabase-admin.mjs reset-password --config ... --username <name> --apply --confirm-project <ref> --plan-sha256 <hash> --credentials-out ...
-//   node scripts/supabase-admin.mjs lock|unlock --config ... --username <name> --apply --confirm-project <ref> --plan-sha256 <hash>
-//   node scripts/supabase-admin.mjs apply-schema --config ... --apply --confirm-project <ref> --plan-sha256 <hash>
+//   node scripts/supabase-admin.mjs lock|unlock    --config ... --username <name> --apply --confirm-project <ref> --plan-sha256 <hash>
+//   node scripts/supabase-admin.mjs apply-schema   --config ... --apply --confirm-project <ref> --plan-sha256 <hash>
 //
-// The default is a dry run that prints the plan and performs no remote request. Every mutation
-// needs VERIFY_SUPABASE_ADMIN_APPLY=1, the staging reference typed back, and the SHA-256 of the
-// plan generated for the same private configuration. Passwords are generated here, written only
-// to the private credentials file (mode 600, outside every repository) and never printed.
-import { existsSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, resolve } from 'node:path';
+// The default is a dry run: the plan is printed and no remote request is made. Every mutation needs
+// VERIFY_SUPABASE_ADMIN_APPLY=1, the staging reference typed back, and the SHA-256 of the plan
+// generated for the same private configuration; the configuration must name the approved staging
+// project. --dry-run together with --apply is refused. Passwords are generated here, appended to
+// the private credentials file (mode 600, outside every repository, resolved through real paths)
+// before the account is created, and never printed.
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   adminClient,
@@ -23,13 +32,14 @@ import {
   internalEmail,
   planSha256,
   readAdminConfig,
+  SCHEMA_FILE_MARKERS,
   SupabaseIdentityError,
 } from './supabase-identity-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMMANDS = ['plan', 'accounts', 'reset-password', 'lock', 'unlock', 'apply-schema'];
 
-function parse(argv) {
+export function parse(argv) {
   const [command, ...rest] = argv;
   const options = { flags: new Set(), values: {} };
   for (let i = 0; i < rest.length; i++) {
@@ -46,51 +56,195 @@ function parse(argv) {
       options.values[name] = rest[++i];
     } else throw new SupabaseIdentityError('USAGE', `Unknown option --${name}.`);
   }
+  if (options.flags.has('dry-run') && options.flags.has('apply'))
+    throw new SupabaseIdentityError(
+      'CONFLICTING_FLAGS',
+      '--dry-run and --apply contradict each other; nothing was done.',
+    );
   return { command, ...options };
 }
-function privateOutputPath(path) {
+
+/** A private output path: absolute, its existing parent resolved through real paths, no Git
+ *  repository among the real ancestors, and the file itself not yet present. */
+export function privateOutputPath(path, repositoryRoot = root) {
   if (typeof path !== 'string' || !isAbsolute(path))
     throw new SupabaseIdentityError(
       'CREDENTIALS_OUT',
       'Pass --credentials-out with an absolute path outside every repository.',
     );
-  const resolved = resolve(path);
-  if (existsSync(resolved))
+  const parent = dirname(resolve(path));
+  let realParent;
+  try {
+    realParent = realpathSync(parent);
+  } catch {
     throw new SupabaseIdentityError(
       'CREDENTIALS_OUT',
-      'The credentials file exists; it is never overwritten.',
+      'The credentials directory must exist before the run.',
     );
-  for (let parent = dirname(resolved); ; parent = dirname(parent)) {
-    if (existsSync(`${parent}/.git`))
+  }
+  const target = join(realParent, basename(path));
+  if (existsSync(target))
+    throw new SupabaseIdentityError(
+      'CREDENTIALS_OUT',
+      'The credentials file exists; it is never overwritten or appended across runs.',
+    );
+  let realRoot = repositoryRoot;
+  try {
+    realRoot = realpathSync(repositoryRoot);
+  } catch {
+    /* keep the lexical root */
+  }
+  for (let dir = realParent; ; dir = dirname(dir)) {
+    if (dir === realRoot || existsSync(join(dir, '.git')))
       throw new SupabaseIdentityError(
         'CREDENTIALS_OUT',
-        'Credentials never go inside a Git repository.',
+        'Credentials never go inside a Git repository (real path checked).',
       );
-    if (dirname(parent) === parent) break;
+    if (dirname(dir) === dir) break;
   }
-  return resolved;
-}
-function writeCredentials(path, entries) {
-  writeFileSync(
-    path,
-    JSON.stringify(
-      {
-        writtenAt: new Date().toISOString(),
-        note: 'Private. Hand each line to its account holder out of band; delete after use.',
-        entries,
-      },
-      null,
-      2,
-    ) + '\n',
-    { mode: 0o600, flag: 'wx' },
-  );
+  return target;
 }
 
-async function main(argv, env) {
+/** Credentials are persisted one line per account, before the account exists remotely, so a
+ *  failure after creation never loses a generated password. */
+class CredentialsFile {
+  constructor(path) {
+    this.path = path;
+    this.fd = openSync(path, 'wx', 0o600);
+    appendFileSync(
+      this.fd,
+      JSON.stringify({
+        note: 'Private. One JSON object per line. Hand each line to its account holder out of band; delete after use.',
+        writtenAt: new Date().toISOString(),
+      }) + '\n',
+    );
+  }
+  record(entry) {
+    appendFileSync(this.fd, JSON.stringify(entry) + '\n');
+  }
+  close() {
+    closeSync(this.fd);
+  }
+}
+
+async function provisionAccounts(client, config, credentials, result) {
+  const ref = config.project.stagingProjectRef;
+  for (const account of config.accounts) {
+    const email = internalEmail(account.username, ref);
+    const existing = await client.findAuthUserByEmail(email);
+    if (existing) {
+      // Reconcile a partial earlier run: an Auth user without its application row is linked now;
+      // a linked one is left alone (its password is reset only through reset-password).
+      const linked = await client.findAppUserByAuthUid(existing.id);
+      if (linked) {
+        if (linked.role !== account.role)
+          throw new SupabaseIdentityError(
+            'ROLE_CONFLICT',
+            `Account ${account.username} exists with another role; refusing to continue.`,
+          );
+        result.actions.push({
+          username: account.username,
+          action: 'EXISTS_LINKED',
+          authUserId: existing.id,
+          appUserId: linked.user_id,
+        });
+      } else {
+        const { userId } = await client.upsertAppUser(
+          existing.id,
+          email,
+          account.displayName,
+          account.role,
+        );
+        result.actions.push({
+          username: account.username,
+          action: 'LINKED_EXISTING_AUTH_USER',
+          authUserId: existing.id,
+          appUserId: userId,
+          note: 'No password was generated; use reset-password if the original credential was never delivered.',
+        });
+      }
+      continue;
+    }
+    const password = generatePassword();
+    credentials.record({
+      username: account.username,
+      role: account.role,
+      password,
+      status: 'PENDING_CREATE',
+    });
+    const { id } = await client.createAuthUser(email, password, account.displayName, account.role);
+    credentials.record({ username: account.username, authUserId: id, status: 'AUTH_USER_CREATED' });
+    const { userId } = await client.upsertAppUser(id, email, account.displayName, account.role);
+    credentials.record({ username: account.username, appUserId: userId, status: 'LINKED' });
+    result.actions.push({
+      username: account.username,
+      action: 'CREATED',
+      authUserId: id,
+      appUserId: userId,
+    });
+  }
+}
+
+async function applySchema(config, result) {
+  if (!config.databaseUrl)
+    throw new SupabaseIdentityError(
+      'DATABASE_URL',
+      'apply-schema needs databaseUrl in the private configuration.',
+    );
+  const { Client } = await import('pg');
+  const db = new Client({
+    connectionString: config.databaseUrl,
+    ssl: { rejectUnauthorized: true },
+  });
+  await db.connect();
+  try {
+    const existing = await db.query("select to_regclass('public.app_schema_version') as t");
+    const applied = new Set(
+      existing.rows[0].t
+        ? (await db.query('select version from public.app_schema_version')).rows.map(
+            (r) => r.version,
+          )
+        : [],
+    );
+    // Resume path: a file is applied only when none of its version markers is present; a file
+    // whose markers are all present is skipped; a file with some markers present is a broken
+    // partial state that this runner refuses to guess about.
+    let pending = false;
+    for (const path of HOSTED_SCHEMA_FILES) {
+      const markers = SCHEMA_FILE_MARKERS[path] ?? [];
+      const present = markers.filter((m) => applied.has(m));
+      if (markers.length && present.length === markers.length) {
+        if (pending)
+          throw new SupabaseIdentityError(
+            'SCHEMA_ORDER',
+            `${path} is applied but an earlier file is not; the lineage is out of order. Nothing further was changed.`,
+          );
+        result.actions.push({ action: 'ALREADY_APPLIED', path });
+        continue;
+      }
+      if (present.length)
+        throw new SupabaseIdentityError(
+          'SCHEMA_PARTIAL',
+          `${path} is partially applied; inspect the project before resuming. Nothing further was changed.`,
+        );
+      pending = true;
+      await db.query(readFileSync(`${root}/${path}`, 'utf8'));
+      result.actions.push({ action: 'APPLIED', path });
+    }
+    const versions = await db.query(
+      'select version from public.app_schema_version order by applied_at',
+    );
+    result.schemaVersions = versions.rows.map((r) => r.version);
+  } finally {
+    await db.end();
+  }
+}
+
+export async function main(argv, env) {
   const { command, flags, values } = parse(argv);
   if (!command || flags.has('help') || !COMMANDS.includes(command)) {
     console.log(
-      `Commands: ${COMMANDS.join(', ')}. Dry run by default; --apply needs VERIFY_SUPABASE_ADMIN_APPLY=1, --confirm-project <staging ref> and --plan-sha256 <hash of the reviewed plan>.`,
+      `Commands: ${COMMANDS.join(', ')}. Dry run by default; --apply needs VERIFY_SUPABASE_ADMIN_APPLY=1, --confirm-project <staging ref> and --plan-sha256 <hash of the reviewed plan>. --dry-run and --apply never combine.`,
     );
     return 0;
   }
@@ -141,103 +295,73 @@ async function main(argv, env) {
     actions: [],
   };
   if (command === 'accounts') {
-    const out = privateOutputPath(values['credentials-out']);
-    const credentials = [];
-    for (const account of config.accounts) {
-      const email = internalEmail(account.username, ref);
-      if (await client.findAuthUserByEmail(email)) {
-        result.actions.push({ username: account.username, action: 'SKIPPED_EXISTS' });
-        continue;
-      }
-      const password = generatePassword();
-      const { id } = await client.createAuthUser(
-        email,
-        password,
-        account.displayName,
-        account.role,
-      );
-      const { userId } = await client.upsertAppUser(id, email, account.displayName, account.role);
-      credentials.push({ username: account.username, password, role: account.role });
-      result.actions.push({
-        username: account.username,
-        action: 'CREATED',
-        authUserId: id,
-        appUserId: userId,
-      });
+    const credentials = new CredentialsFile(privateOutputPath(values['credentials-out']));
+    try {
+      await provisionAccounts(client, config, credentials, result);
+    } finally {
+      credentials.close();
     }
-    writeCredentials(out, credentials);
-    result.credentialsFile = out;
+    result.credentialsFile = credentials.path;
   } else if (command === 'reset-password' || command === 'lock' || command === 'unlock') {
     const account = config.accounts.find((a) => a.username === values.username);
     if (!account) throw new SupabaseIdentityError('USERNAME', 'The username is not in the roster.');
-    const email = internalEmail(account.username, ref);
-    const user = await client.findAuthUserByEmail(email);
+    const user = await client.findAuthUserByEmail(internalEmail(account.username, ref));
     if (!user)
       throw new SupabaseIdentityError('USERNAME', 'No Auth account exists for that username.');
     if (command === 'reset-password') {
-      const out = privateOutputPath(values['credentials-out']);
-      const password = generatePassword();
-      await client.setPassword(user.id, password);
-      writeCredentials(out, [{ username: account.username, password, role: account.role }]);
+      const credentials = new CredentialsFile(privateOutputPath(values['credentials-out']));
+      try {
+        const password = generatePassword();
+        credentials.record({
+          username: account.username,
+          role: account.role,
+          password,
+          status: 'PENDING_RESET',
+        });
+        await client.setPassword(user.id, password);
+        credentials.record({ username: account.username, status: 'RESET' });
+      } finally {
+        credentials.close();
+      }
       result.actions.push({
         username: account.username,
         action: 'PASSWORD_RESET',
-        note: 'Existing sessions are not revoked by a password change; lock the account first when a session may be compromised.',
+        note: 'A password change does not revoke issued tokens; run lock first when a session may be compromised, then unlock after the reset.',
       });
-      result.credentialsFile = out;
+      result.credentialsFile = credentials.path;
     } else {
-      await client.setLocked(user.id, command === 'lock');
+      const outcome = await client.setLocked(user.id, command === 'lock');
       result.actions.push({
         username: account.username,
         action: command === 'lock' ? 'LOCKED' : 'UNLOCKED',
+        appUserActive: outcome.isActive,
+        note:
+          command === 'lock'
+            ? 'Sign-in and refresh are banned; the application row is inactive, so issued access tokens are refused by every RLS helper and RPC until they expire.'
+            : 'Sign-in restored; the application row is active again.',
       });
     }
   } else if (command === 'apply-schema') {
-    if (!config.databaseUrl)
-      throw new SupabaseIdentityError(
-        'DATABASE_URL',
-        'apply-schema needs databaseUrl in the private configuration.',
-      );
-    const { Client } = await import('pg');
-    const { readFileSync } = await import('node:fs');
-    const db = new Client({
-      connectionString: config.databaseUrl,
-      ssl: { rejectUnauthorized: true },
-    });
-    await db.connect();
-    try {
-      const existing = await db.query("select to_regclass('public.app_schema_version') as t");
-      if (existing.rows[0].t)
-        throw new SupabaseIdentityError(
-          'SCHEMA_EXISTS',
-          'The project already carries a schema lineage; this runner applies to a fresh project only. Nothing was changed.',
-        );
-      for (const path of HOSTED_SCHEMA_FILES) {
-        await db.query(readFileSync(`${root}/${path}`, 'utf8'));
-        result.actions.push({ action: 'APPLIED', path });
-      }
-      const versions = await db.query(
-        'select version from public.app_schema_version order by applied_at',
-      );
-      result.schemaVersions = versions.rows.map((r) => r.version);
-    } finally {
-      await db.end();
-    }
+    await applySchema(config, result);
   }
   console.log(JSON.stringify(result, null, 2));
   return 0;
 }
 
-try {
-  process.exitCode = await main(process.argv.slice(2), process.env);
-} catch (error) {
-  const safe =
-    error instanceof SupabaseIdentityError
-      ? error
-      : new SupabaseIdentityError(
-          'FAILED',
-          'The command could not be completed; no secret is shown.',
-        );
-  console.error(JSON.stringify({ code: safe.code, message: safe.message }));
-  process.exitCode = 1;
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main(process.argv.slice(2), process.env)
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      const safe =
+        error instanceof SupabaseIdentityError
+          ? error
+          : new SupabaseIdentityError(
+              'FAILED',
+              'The command could not be completed; no secret is shown.',
+            );
+      console.error(JSON.stringify({ code: safe.code, message: safe.message }));
+      process.exitCode = 1;
+    });
 }

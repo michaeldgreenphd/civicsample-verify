@@ -3,11 +3,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   adminClient,
+  APPROVED_STAGING_PROJECT_REFS,
   assertApplyAuthorized,
   buildBootstrapPlan,
   EXPECTED_SCHEMA_VERSION,
@@ -15,20 +16,23 @@ import {
   HOSTED_SCHEMA_FILES,
   internalEmail,
   planSha256,
+  SCHEMA_FILE_MARKERS,
   SupabaseIdentityError,
   validateAdminConfig,
 } from '../scripts/supabase-identity-tools.mjs';
+import { parse, privateOutputPath } from '../scripts/supabase-admin.mjs';
 
 const root = resolve('.');
+const APPROVED = APPROVED_STAGING_PROJECT_REFS[0];
 const serviceKey = `h.${Buffer.from(JSON.stringify({ role: 'service_role' })).toString('base64url')}.s`;
 const anonKey = `h.${Buffer.from(JSON.stringify({ role: 'anon' })).toString('base64url')}.s`;
 function config(overrides: Record<string, unknown> = {}) {
   return {
     project: {
       environment: 'staging',
-      stagingProjectRef: 'synthetic-staging',
+      stagingProjectRef: APPROVED,
       productionProjectRef: null,
-      projectUrl: 'https://synthetic-staging.supabase.co',
+      projectUrl: `https://${APPROVED}.supabase.co`,
     },
     serviceRoleKey: serviceKey,
     databaseUrl: null,
@@ -109,7 +113,7 @@ test('admin configuration: staging only, service-role key required, usernames in
   assert.equal(
     code(() =>
       validateAdminConfig(
-        config({ databaseUrl: 'postgresql://u:p@db.synthetic-staging.supabase.co:5432/postgres' }),
+        config({ databaseUrl: `postgresql://u:p@db.${APPROVED}.supabase.co:5432/postgres` }),
       ),
     ),
     null,
@@ -127,14 +131,14 @@ test('admin configuration: staging only, service-role key required, usernames in
     'ADMIN_CONFIG_KEYS',
   );
   assert.equal(
-    internalEmail('syn-reviewer-1', 'synthetic-staging'),
-    'syn-reviewer-1@synthetic-staging.accounts.invalid',
+    internalEmail('syn-reviewer-1', APPROVED),
+    `syn-reviewer-1@${APPROVED}.accounts.invalid`,
   );
 });
 
 test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no secrets', () => {
   const plan = buildBootstrapPlan(config(), root);
-  assert.equal(plan.generatedFor.projectRef, 'synthetic-staging');
+  assert.equal(plan.generatedFor.projectRef, APPROVED);
   assert.equal(plan.mutationsPerformed, false);
   assert.deepEqual(
     plan.schema.files.map((f: { path: string }) => f.path),
@@ -151,11 +155,20 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   assert.ok(!text.includes(serviceKey));
   assert.ok(!text.includes('@') || text.includes('accounts.invalid'));
   assert.equal(plan.accounts.length, 3);
-  assert.equal(
-    plan.accounts[0].internalEmail,
-    'syn-investigator@synthetic-staging.accounts.invalid',
-  );
+  assert.equal(plan.accounts[0].internalEmail, `syn-investigator@${APPROVED}.accounts.invalid`);
   assert.match(planSha256(plan), /^[0-9a-f]{64}$/);
+  // Every provisioned identity field is bound: a changed display name changes the reviewed hash
+  // without disclosing the name in the plan.
+  assert.match(plan.accounts[0].displayNameSha256, /^[0-9a-f]{64}$/);
+  assert.ok(!text.includes('Synthetic investigator'));
+  const renamed = config();
+  renamed.accounts[0].displayName = 'Another name';
+  assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
+  assert.equal(plan.schema.expectedFinalVersion, '6.0.1-mapping-confirmation-review-fixes');
+  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0018_mapping_confirmation_review_fixes.sql'));
+  assert.deepEqual(SCHEMA_FILE_MARKERS['migrations/0018_mapping_confirmation_review_fixes.sql'], [
+    '6.0.1-mapping-confirmation-review-fixes',
+  ]);
   // A shim-like file in the lineage is refused.
   assert.equal(
     code(() =>
@@ -180,13 +193,73 @@ test('apply guards: environment opt-in, typed project reference and the reviewed
     code(() =>
       assertApplyAuthorized({ env, confirmProject, planHash, config: c, repositoryRoot: root }),
     );
-  assert.equal(guard({}, 'synthetic-staging', hash), 'APPLY_NOT_ENABLED');
+  assert.equal(guard({}, APPROVED, hash), 'APPLY_NOT_ENABLED');
   assert.equal(guard({ VERIFY_SUPABASE_ADMIN_APPLY: '1' }, 'other', hash), 'CONFIRM_PROJECT');
+  assert.equal(guard({ VERIFY_SUPABASE_ADMIN_APPLY: '1' }, APPROVED, 'f'.repeat(64)), 'PLAN_HASH');
+  assert.equal(guard({ VERIFY_SUPABASE_ADMIN_APPLY: '1' }, APPROVED, hash), null);
+  // The apply guard re-validates the configuration against the approved list itself.
+  const foreign = config({
+    project: {
+      environment: 'staging',
+      stagingProjectRef: 'other-project-ref',
+      productionProjectRef: null,
+      projectUrl: 'https://other-project-ref.supabase.co',
+    },
+  });
   assert.equal(
-    guard({ VERIFY_SUPABASE_ADMIN_APPLY: '1' }, 'synthetic-staging', 'f'.repeat(64)),
-    'PLAN_HASH',
+    code(() =>
+      assertApplyAuthorized({
+        env: { VERIFY_SUPABASE_ADMIN_APPLY: '1' },
+        confirmProject: 'other-project-ref',
+        planHash: hash,
+        config: foreign,
+        repositoryRoot: root,
+      }),
+    ),
+    'PROJECT_NOT_APPROVED',
   );
-  assert.equal(guard({ VERIFY_SUPABASE_ADMIN_APPLY: '1' }, 'synthetic-staging', hash), null);
+});
+
+test('CLI parsing refuses --dry-run together with --apply, and output paths resolve symlinked parents', () => {
+  assert.equal(
+    code(() => parse(['accounts', '--dry-run', '--apply'])),
+    'CONFLICTING_FLAGS',
+  );
+  assert.equal(
+    code(() => parse(['accounts', '--dry-run'])),
+    null,
+  );
+  const dir = mkdtempSync(join(tmpdir(), 'verify-credentials-'));
+  try {
+    // A directory that is a symlink into the repository must be refused by its real path.
+    symlinkSync(root, join(dir, 'private'));
+    assert.equal(
+      code(() => privateOutputPath(join(dir, 'private', 'credentials.json'), root)),
+      'CREDENTIALS_OUT',
+    );
+    mkdirSync(join(dir, 'ok'));
+    assert.equal(
+      code(() => privateOutputPath(join(dir, 'ok', 'credentials.json'), root)),
+      null,
+    );
+    writeFileSync(join(dir, 'ok', 'credentials.json'), '{}');
+    assert.equal(
+      code(() => privateOutputPath(join(dir, 'ok', 'credentials.json'), root)),
+      'CREDENTIALS_OUT',
+      'never overwritten',
+    );
+    assert.equal(
+      code(() => privateOutputPath('relative/credentials.json', root)),
+      'CREDENTIALS_OUT',
+    );
+    assert.equal(
+      code(() => privateOutputPath(join(dir, 'missing', 'credentials.json'), root)),
+      'CREDENTIALS_OUT',
+      'parent must exist',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('admin client: confirmed accounts with generated passwords, linked app rows, lock and reset', async () => {
@@ -208,6 +281,14 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
     if (url.pathname === '/auth/v1/admin/users' && options?.method === 'GET') body = { users: [] };
     else if (url.pathname === '/auth/v1/admin/users' && options?.method === 'POST')
       body = { id: '00000000-0000-4000-8000-000000000101' };
+    else if (url.pathname === '/rest/v1/users' && options?.method === 'PATCH')
+      body = [
+        {
+          user_id: '00000000-0000-4000-8000-000000000201',
+          is_active: (JSON.parse(String(options.body)) as { is_active: boolean }).is_active,
+        },
+      ];
+    else if (url.pathname === '/rest/v1/users' && options?.method === 'GET') body = [];
     else if (url.pathname === '/rest/v1/users')
       body = [{ user_id: '00000000-0000-4000-8000-000000000201' }];
     else if (url.pathname === '/rest/v1/app_schema_version') body = [{ version: 'x' }];
@@ -218,13 +299,13 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
   };
   const client = adminClient(c, fetchMock as typeof fetch);
   assert.equal(
-    await client.findAuthUserByEmail('syn-reviewer-1@synthetic-staging.accounts.invalid'),
+    await client.findAuthUserByEmail(`syn-reviewer-1@${APPROVED}.accounts.invalid`),
     null,
   );
   const password = generatePassword();
   assert.ok(password.length >= 32);
   const created = await client.createAuthUser(
-    'syn-reviewer-1@synthetic-staging.accounts.invalid',
+    `syn-reviewer-1@${APPROVED}.accounts.invalid`,
     password,
     'Synthetic reviewer 1',
     'REVIEWER',
@@ -236,7 +317,7 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
   assert.equal(create.auth, `Bearer ${serviceKey}`);
   const linked = await client.upsertAppUser(
     created.id,
-    'syn-reviewer-1@synthetic-staging.accounts.invalid',
+    `syn-reviewer-1@${APPROVED}.accounts.invalid`,
     'Synthetic reviewer 1',
     'REVIEWER',
   );
@@ -248,12 +329,21 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
   assert.equal(row[0].auth_uid, created.id);
   assert.equal(row[0].is_pilot_test_account, false);
   await client.setPassword(created.id, 'another-generated-password-value');
-  await client.setLocked(created.id, true);
+  assert.equal(await client.findAppUserByAuthUid(created.id), null);
+  const locked = await client.setLocked(created.id, true);
+  assert.equal(locked.isActive, false);
   const puts = calls.filter((x) => x.method === 'PUT');
   assert.deepEqual(
     puts.map((x) => x.body),
     [{ password: 'another-generated-password-value' }, { ban_duration: '876000h' }],
   );
+  // A lock also deactivates the application row, so already-issued tokens are refused by RLS.
+  const patches = calls.filter((x) => x.method === 'PATCH');
+  assert.equal(patches.length, 1);
+  assert.ok(patches[0].path.startsWith(`/rest/v1/users?auth_uid=eq.${created.id}`));
+  assert.equal((patches[0].body as { is_active: boolean }).is_active, false);
+  const unlocked = await client.setLocked(created.id, false);
+  assert.equal(unlocked.isActive, true);
   // Refusals: a redirect, a non-2xx status and a foreign origin.
   const refusing = adminClient(
     c,
@@ -299,7 +389,7 @@ test('CLI: blocked without a private configuration; dry run prints the plan and 
         file,
         '--apply',
         '--confirm-project',
-        'synthetic-staging',
+        APPROVED,
         '--plan-sha256',
         report.planSha256,
         '--credentials-out',
@@ -310,6 +400,13 @@ test('CLI: blocked without a private configuration; dry run prints the plan and 
     assert.equal(refused.status, 1);
     assert.match(refused.stderr, /APPLY_NOT_ENABLED/);
     assert.ok(!refused.stderr.includes(serviceKey));
+    const conflicting = spawnSync(
+      process.execPath,
+      ['scripts/supabase-admin.mjs', 'accounts', '--config', file, '--dry-run', '--apply'],
+      { encoding: 'utf8' },
+    );
+    assert.equal(conflicting.status, 1);
+    assert.match(conflicting.stderr, /CONFLICTING_FLAGS/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -13,6 +13,7 @@ const fixturePatterns = {
   calibrationCaseId: /^CAL4-TESTFX-[A-Za-z0-9-]{1,30}$/,
   pilotCaseId: /^SYN-[A-Za-z0-9-]{1,40}$/,
   mappingCaseId: /^MC-SYN-[A-Z0-9][A-Z0-9-]{1,40}$/,
+  mappingReviewerAResponseId: uuid,
 };
 const probeNames = [
   'existing_staging_sessions',
@@ -307,10 +308,11 @@ export async function runStagingPreflight(config, fetchImpl = fetch) {
       reviewers,
     ),
   );
-  // Mapping confirmation (migration 0016): the investigator reads the synthetic mapping; the
-  // adjudicator reads neither the mapping nor any response before the campaign closes and
-  // adjudication is authorized. Reviewers may be assigned, so they are not probed here.
-  await probe(7, ['mappingCaseId'], async () => {
+  // Mapping confirmation (migrations 0016/0018): the investigator reads the synthetic mapping and
+  // reviewer A reads their own known response to it (positive control); the adjudicator reads
+  // neither the mapping nor that response before the campaign closes and adjudication is
+  // authorized. An empty adjudicator result counts only after the response was seen to exist.
+  await probe(7, ['mappingCaseId', 'mappingReviewerAResponseId'], async () => {
     const adjudicator = [config.accounts[4]];
     const present = await investigatorControl(
       tablePath('mc_cases', 'case_id,record_category', 'case_id', f.mappingCaseId),
@@ -318,6 +320,22 @@ export async function runStagingPreflight(config, fetchImpl = fetch) {
       adjudicator,
     );
     if (!present) return false;
+    const responsePath = tablePath(
+      'mc_responses',
+      'response_id,case_id,reviewer_pseudo_id',
+      'response_id',
+      f.mappingReviewerAResponseId,
+    );
+    const own = rows(await read(config, reviewers[0], responsePath, fetchImpl));
+    if (!own || own.length === 0) return false;
+    if (
+      own.length !== 1 ||
+      own[0].response_id !== f.mappingReviewerAResponseId ||
+      own[0].case_id !== f.mappingCaseId ||
+      own[0].reviewer_pseudo_id !== identities[2].reviewer_pseudo_id
+    )
+      refuse();
+    await deny([reviewers[1], ...adjudicator], responsePath);
     await deny(
       adjudicator,
       tablePath('mc_responses', 'response_id,case_id', 'case_id', f.mappingCaseId),
