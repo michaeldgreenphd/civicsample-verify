@@ -6,13 +6,21 @@ The repository is public; study inputs and operational outputs are private. Sour
 
 ## Local pilot identities
 
-Four synthetic accounts are available: investigator, reviewer-a, reviewer-b and adjudicator. A random password is generated into ignored .env.local by npm run setup. Sessions use random opaque tokens and HttpOnly, SameSite=Strict cookies. Sessions expire, are invalidated at logout and disappear on process restart. The server accepts only loopback Host values, validates Origin for mutations and rate-limits login attempts. This is a local development authentication mechanism, not a substitute for invited clinician identity or MFA. Do not use a reverse proxy or public tunnel.
+Four synthetic accounts are available: `investigator`, `reviewer-a`, `reviewer-b`, and `adjudicator`. `npm run setup -- --individual-credentials` generates separate random role passwords in ignored `.env.local` and a private access sheet at `.local/pilot-access.txt`. Setup preserves existing settings and records. Once any role password is configured, missing role credentials fail closed; the legacy shared-password fallback applies only to older pilots without any role passwords. Never commit or publish the access sheet.
+
+Use separate browser profiles on the same computer. Sessions use random opaque tokens and HttpOnly, SameSite=Strict cookies. Sessions expire, are invalidated at logout, and disappear on process restart. The server accepts only loopback Host values, validates Origin for mutations, and rate-limits login attempts. Local role accounts are not verified clinician identities or MFA. Do not use a reverse proxy or public tunnel.
+
+The invitation/JWT helpers in `src/lib/auth.ts` are synthetic test scaffolding. They simulate assurance claims and test session revocation; they do not enroll or verify TOTP. They are not an exposed clinician invitation service and must not become the production identity provider. Production authentication remains an explicit Supabase integration task.
 
 ## Authorization and blinding
 
 All API operations require an actor and use explicit allowlisted response shapes. Database policies and functions independently enforce role boundaries. Unassigned and nonexistent cases have the same public failure. Reviewer sessions cannot access administrative exports, audit events, provenance or classifier predictions. Adjudicators never receive predictions. Error responses contain fixed public messages; logs contain no input payloads, judgments, SQL text or evidence. Responses disable caching.
 
 During independent review the investigator sees aggregate completion only. Adjudication requires both independent final submissions and explicit investigator authorization. Final submissions cannot be overwritten. Trials disclose their context only after locked descriptor review. That pre-context Step 1 cannot subsequently be amended, including through an old pending authorization. A legacy submitted Step 1 amendment blocks reference use without altering the original records. Campaign locking prevents subsequent changes.
+
+## Frozen-data upgrade boundary
+
+`applyTrialPacketUpgrades` runs `migrations/preflight_frozen_trial_compatibility.sql` before pending migrations 0008/0009 in the same READ COMMITTED transaction. It also checks already-upgraded databases on every startup. An existing frozen trial must retain its compatible two-step design, trial-context packet, and required prediction levels. Refusal rolls back without rewriting frozen cases or judgments. Historical migrations 0008/0009 retain their original bytes. Protected locked formal references require explicit investigator migration review; they cannot be repaired by deleting the database.
 
 ## Deployment gates
 

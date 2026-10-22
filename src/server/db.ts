@@ -94,12 +94,74 @@ async function initialize(): Promise<PGlite> {
       throw error;
     }
   }
+  try {
+    await applyTrialPacketUpgrades(db);
+  } catch (error) {
+    // Upgrade refusal must leave the original persisted database available.
+    await db.close();
+    throw error;
+  }
   if (
     !(await db.query<{ n: number }>('select count(*)::integer as n from public.verify_cases'))
       .rows[0].n
   )
     await seedSynthetic(db);
   return db;
+}
+
+interface MigrationDatabase {
+  exec(sql: string): Promise<unknown>;
+  query<T>(sql: string): Promise<{ rows: T[] }>;
+}
+
+// Historical migration files keep their original bytes. Only their explicit
+// outer transaction delimiters are removed when running them in our common
+// transaction, so the compatibility locks cover every pending semantic change.
+function migrationBody(sql: string): string {
+  const opening = /^begin;\r?$/m;
+  const closing = /^commit;\s*$/m;
+  if (!opening.test(sql) || !closing.test(sql)) {
+    throw new Error('Expected a transaction-wrapped migration');
+  }
+  return sql.replace(opening, '').replace(closing, '');
+}
+
+export async function applyTrialPacketUpgrades(db: MigrationDatabase): Promise<void> {
+  const [preflight, trialMigration, canonicalMigration] = await Promise.all([
+    readFile(
+      path.join(process.cwd(), 'migrations/preflight_frozen_trial_compatibility.sql'),
+      'utf8',
+    ),
+    readFile(
+      path.join(process.cwd(), 'migrations/0008_trial_packet_and_concurrency_guards.sql'),
+      'utf8',
+    ),
+    readFile(
+      path.join(process.cwd(), 'migrations/0009_canonical_packet_and_lock_state_guards.sql'),
+      'utf8',
+    ),
+  ]);
+  await db.exec('begin');
+  try {
+    // Run even when both version markers exist: an earlier binary may already
+    // have reinterpreted a frozen one-step trial. Refuse, never rewrite it.
+    await db.exec(preflight);
+    for (const [version, migration] of [
+      ['4.0.5-trial-packet-concurrency-guards', trialMigration],
+      ['4.0.6-canonical-packet-lock-state', canonicalMigration],
+    ]) {
+      const versions = await db.query<{ version: string }>(
+        'select version from public.app_schema_version',
+      );
+      if (!versions.rows.some((row) => row.version === version)) {
+        await db.exec(migrationBody(migration));
+      }
+    }
+    await db.exec('commit');
+  } catch (error) {
+    await db.exec('rollback');
+    throw error;
+  }
 }
 
 export async function withActor<T>(

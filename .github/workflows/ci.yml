@@ -45,3 +45,31 @@ jobs:
       - run: node --import tsx --test tests/formal-export.test.ts
         env:
           VERIFY_ANALYSIS_PYTHON: python3
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic_ci_password
+          POSTGRES_DB: verify_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:postgres
+        env:
+          VERIFY_PG_REQUIRE: '1'
+          VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test

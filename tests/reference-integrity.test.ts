@@ -11,6 +11,8 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 const ATT = 'Synthetic engineering regression attestation only.';
 const MIGRATION = 'migrations/0006_reference_integrity.sql';
 const FROZEN_MIGRATION = 'migrations/0007_frozen_contract_guards.sql';
+const TRIAL_CONCURRENCY_MIGRATION = 'migrations/0008_trial_packet_and_concurrency_guards.sql';
+const CANONICAL_LOCK_STATE_MIGRATION = 'migrations/0009_canonical_packet_and_lock_state_guards.sql';
 const ACTORS = {
   investigator: '00000000-0000-4000-8000-0000000000a1',
   pilotA: '00000000-0000-4000-8000-0000000000a2',
@@ -22,7 +24,7 @@ const ACTORS = {
 type Role = keyof typeof ACTORS;
 const ids = ['HO4-TESTFX-LOCK1', 'HO4-TESTFX-LOCK2'];
 
-async function migratedDb(latest = true, dataDir?: string, through = 7) {
+async function migratedDb(latest = true, dataDir?: string, through = 9) {
   const db = new PGlite({ dataDir, extensions: { pgcrypto } });
   await db.waitReady;
   const files = [
@@ -35,6 +37,8 @@ async function migratedDb(latest = true, dataDir?: string, through = 7) {
   ];
   if (latest) files.push(MIGRATION);
   if (latest && through >= 7) files.push(FROZEN_MIGRATION);
+  if (latest && through >= 8) files.push(TRIAL_CONCURRENCY_MIGRATION);
+  if (latest && through >= 9) files.push(CANONICAL_LOCK_STATE_MIGRATION);
   for (const file of files) await db.exec(await readFile(file, 'utf8'));
   return db;
 }
@@ -106,9 +110,11 @@ async function fixture(
     freeze?: boolean;
     through?: number;
     scope?: 'DISAGREEMENTS_ONLY' | 'ALL_CASE_LEVELS';
+    dataDir?: string;
+    trialDesign?: 'one-step' | 'two-step';
   } = {},
 ) {
-  const db = await migratedDb(options.latest ?? true, undefined, options.through ?? 7);
+  const db = await migratedDb(options.latest ?? true, options.dataDir, options.through ?? 9);
   try {
     for (const [role, id] of Object.entries(ACTORS)) {
       const email = `synthetic-${role.toLowerCase()}@example.invalid`;
@@ -217,7 +223,24 @@ async function fixture(
       ATT,
     ]);
     for (const id of ids) {
-      await investigator('select public.rpc_import_case($1)', [j(caseInput(id, 'FORMAL'))]);
+      const input = caseInput(id, 'FORMAL');
+      const trial = { nct_id: 'SYN-NCT-9001', brief_title: 'Fictional upgrade trial' };
+      await investigator('select public.rpc_import_case($1)', [
+        j(
+          options.trialDesign
+            ? {
+                ...input,
+                unit_type: 'TRIAL_AREA',
+                packet: {
+                  ...input.packet,
+                  unit: { ...input.packet.unit, unit_type: 'TRIAL_AREA' },
+                  trial,
+                },
+                design: { ...input.design, nct_id: trial.nct_id },
+              }
+            : input,
+        ),
+      ]);
       await investigator('select public.rpc_set_case_design_v3($1)', [
         j({
           case_id: id,
@@ -230,9 +253,10 @@ async function fixture(
           selection_probability: 0.5,
           comparison_cell_v11: 'OPOS_CPOS',
           original_binary: 'INCLUDE',
-          curated_v11_status_raw: 'INCLUDE',
+          curated_v11_status_raw:
+            options.trialDesign === 'two-step' ? 'CONTEXT_DEPENDENT' : 'INCLUDE',
           curated_v11_binary: 'INCLUDE',
-          two_step_required: false,
+          two_step_required: options.trialDesign === 'two-step',
           sampling_design_version: 'SYN-REF-TEST',
         }),
       ]);
@@ -245,17 +269,34 @@ async function fixture(
         }),
       ]);
     }
+    if (options.trialDesign === 'two-step') {
+      for (const id of ids)
+        await investigator('select public.rpc_add_trial_context_packet($1,$2)', [
+          id,
+          j({
+            schema_version: '1.0',
+            trial: { nct_id: 'SYN-NCT-9001', brief_title: 'Fictional upgrade trial context' },
+            notices: ['SYNTHETIC ENGINEERING ONLY'],
+          }),
+        ]);
+    }
     await investigator('select public.rpc_import_frozen_predictions_v4($1)', [
       j(
-        ids.map((id) => ({
-          prediction_set_id: 'SYN-PREDICTION-REF',
-          case_id: id,
-          determination_level: 'DESCRIPTOR_LEVEL',
-          tier0_binary: 'INCLUDE',
-          tier1_version: 'v1.1',
-          tier1_status_raw: 'INCLUDE',
-          tier1_binary: 'INCLUDE',
-        })),
+        ids.flatMap((id) =>
+          (options.trialDesign === 'two-step'
+            ? ['DESCRIPTOR_LEVEL_IN_TRIAL_CASE', 'TRIAL_LEVEL']
+            : ['DESCRIPTOR_LEVEL']
+          ).map((level) => ({
+            prediction_set_id: 'SYN-PREDICTION-REF',
+            case_id: id,
+            determination_level: level,
+            tier0_binary: 'INCLUDE',
+            tier1_version: 'v1.1',
+            tier1_status_raw: options.trialDesign === 'two-step' ? 'CONTEXT_DEPENDENT' : 'INCLUDE',
+            tier1_binary: 'INCLUDE',
+            ...(level === 'TRIAL_LEVEL' ? { stage_c_trial_status: 'INCLUDE' } : {}),
+          })),
+        ),
       ),
     ]);
     const freeze = async (extra: Record<string, unknown> = {}) => {
@@ -1248,3 +1289,642 @@ test('0007 preflight rejects stale-snapshot transaction isolation without applyi
     await db.close();
   }
 });
+
+test('0008 enforces two-step TRIAL_AREA design, requires Step-2 trial_context_packets before freeze, and blocks post-freeze Step-2 packet mutations', async () => {
+  const f = await fixture({ freeze: false });
+  try {
+    const trialId = 'HO4-TESTFX-TRIAL1';
+    const baseInput = caseInput(trialId, 'FORMAL');
+    const trialCase = {
+      ...baseInput,
+      unit_type: 'TRIAL_AREA',
+      packet: {
+        ...baseInput.packet,
+        unit: { unit_type: 'TRIAL_AREA', unit_id: `SYN-${trialId}::infectious` },
+        trial: { nct_id: 'SYN-NCT-0101', brief_title: 'Fictional trial Step 1' },
+      },
+      design: {
+        ...baseInput.design,
+        nct_id: 'SYN-NCT-0101',
+      },
+    };
+    await f.investigator('select public.rpc_import_case($1)', [j(trialCase)]);
+    await f.investigator('select public.rpc_record_heldout_case_v4($1)', [
+      j({
+        case_id: trialId,
+        record_category: 'HELDOUT_FORMAL',
+        frame_unit_id: `SYN-FRAME-${trialId}`,
+        impact_tier: 'LOW',
+        policy_governed_neoplasm_gen06: false,
+        provenance_audit_result: 'NO_DEVELOPMENT_FLAG',
+      }),
+    ]);
+
+    // Before rpc_set_case_design_v3 is called, TRIAL_AREA must still require two-step levels and reject DESCRIPTOR_LEVEL.
+    await assert.rejects(
+      f.investigator('select public.rpc_import_frozen_predictions_v4($1)', [
+        j([
+          {
+            prediction_set_id: 'SYN-PREDICTION-REF',
+            case_id: trialId,
+            determination_level: 'DESCRIPTOR_LEVEL',
+            tier0_binary: 'INCLUDE',
+            tier1_version: 'v1.1',
+            tier1_status_raw: 'RETAINED',
+            tier1_binary: 'INCLUDE',
+          },
+        ]),
+      ]),
+      /determination level DESCRIPTOR_LEVEL does not apply to case/,
+    );
+
+    // rpc_set_case_design_v3 must reject two_step_required = false for TRIAL_AREA.
+    await assert.rejects(
+      f.investigator('select public.rpc_set_case_design_v3($1)', [
+        j({
+          case_id: trialId,
+          mode: 'FORMAL',
+          review_module: 'ONTOLOGY_AREA',
+          analysis_set: 'VALIDATION_HELDOUT',
+          selection_stratum: 'SYN-STRATUM',
+          variance_stratum: 'SYN-VARIANCE',
+          variance_stratum_size: 20,
+          selection_probability: 0.5,
+          comparison_cell_v11: 'OPOS_CPOS',
+          original_binary: 'INCLUDE',
+          curated_v11_status_raw: 'CONTEXT_DEPENDENT',
+          curated_v11_binary: 'INCLUDE',
+          two_step_required: false,
+          sampling_design_version: 'SYN-REF-TEST',
+        }),
+      ]),
+      /FORMAL TRIAL_AREA cases require two_step_required = true/,
+    );
+
+    await f.investigator('select public.rpc_set_case_design_v3($1)', [
+      j({
+        case_id: trialId,
+        mode: 'FORMAL',
+        review_module: 'ONTOLOGY_AREA',
+        analysis_set: 'VALIDATION_HELDOUT',
+        selection_stratum: 'SYN-STRATUM',
+        variance_stratum: 'SYN-VARIANCE',
+        variance_stratum_size: 20,
+        selection_probability: 0.5,
+        comparison_cell_v11: 'OPOS_CPOS',
+        original_binary: 'INCLUDE',
+        curated_v11_status_raw: 'CONTEXT_DEPENDENT',
+        curated_v11_binary: 'INCLUDE',
+        two_step_required: true,
+        sampling_design_version: 'SYN-REF-TEST',
+      }),
+    ]);
+
+    await f.investigator('select public.rpc_import_frozen_predictions_v4($1)', [
+      j([
+        {
+          prediction_set_id: 'SYN-PREDICTION-REF',
+          case_id: trialId,
+          determination_level: 'DESCRIPTOR_LEVEL_IN_TRIAL_CASE',
+          tier0_binary: 'INCLUDE',
+          tier1_version: 'v1.1',
+          tier1_status_raw: 'CONTEXT_DEPENDENT',
+          tier1_binary: 'INCLUDE',
+        },
+        {
+          prediction_set_id: 'SYN-PREDICTION-REF',
+          case_id: trialId,
+          determination_level: 'TRIAL_LEVEL',
+          tier0_binary: 'INCLUDE',
+          tier1_version: 'v1.1',
+          tier1_status_raw: 'CONTEXT_DEPENDENT',
+          tier1_binary: 'EXCLUDE',
+          stage_c_trial_status: 'EXCLUDE',
+        },
+      ]),
+    ]);
+
+    await f.investigator('select public.rpc_freeze_sample_manifest($1)', [
+      j({
+        review_module: 'ONTOLOGY_AREA',
+        sampling_design_version: 'SYN-REF-TEST',
+        manifest_file_sha256: '3'.repeat(64),
+        decision_file_v11_sha256: '4'.repeat(64),
+        sampling_seed: 123,
+        attestation: ATT,
+      }),
+    ]);
+
+    // Freezing before a Step-2 trial_context_packets row exists must fail.
+    await assert.rejects(
+      f.investigator('select public.rpc_freeze_v4($1)', [j(freezePayload)]),
+      /active held-out trial cases lack two-step design or a frozen trial-context packet/,
+    );
+
+    const trialPacket = {
+      schema_version: '1.0',
+      trial: {
+        nct_id: 'SYN-NCT-0101',
+        brief_title: 'Fictional Step 2 trial context',
+        conditions: ['Fictional condition'],
+        summary: 'Synthetic Step-2 context packet.',
+      },
+      notices: ['SYNTHETIC ENGINEERING ONLY'],
+    };
+    await f.investigator('select public.rpc_add_trial_context_packet($1,$2)', [
+      trialId,
+      j(trialPacket),
+    ]);
+
+    await f.investigator('select public.rpc_freeze_v4($1)', [j(freezePayload)]);
+
+    // After freeze, adding, updating, or deleting a Step-2 trial_context_packets row is forbidden.
+    await assert.rejects(
+      f.investigator('select public.rpc_add_trial_context_packet($1,$2)', [
+        trialId,
+        j(trialPacket),
+      ]),
+      /Frozen held-out trial context packets cannot be added or modified/,
+    );
+    await assert.rejects(
+      f.db.query(
+        "update public.trial_context_packets set packet_sha256 = repeat('f', 64) where case_id = $1",
+        [trialId],
+      ),
+      /trial_context_packets is append-only/,
+    );
+    await assert.rejects(
+      f.db.query('delete from public.trial_context_packets where case_id = $1', [trialId]),
+      /trial_context_packets is append-only/,
+    );
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('0008 enforces READ COMMITTED isolation on rpc_snapshot_judgments_v4 and validates Module B adjudication basis semantics', async () => {
+  const f = await fixture();
+  try {
+    for (const id of ids) {
+      for (const role of ['reviewerA', 'reviewerB'] as const) {
+        await f.submit(role, id, 'INCLUDE');
+      }
+    }
+    await f.investigator('select public.rpc_close_formal_review($1,$2)', [true, ATT]);
+
+    await assert.rejects(
+      f.db.transaction(async (tx) => {
+        await tx.exec('set transaction isolation level repeatable read');
+        await tx.exec('set local role authenticated');
+        await tx.query("select set_config('request.jwt.claims',$1,true)", [
+          j({ sub: ACTORS.investigator, aal: 'aal2' }),
+        ]);
+        return tx.query('select public.rpc_snapshot_judgments_v4()');
+      }),
+      /Judgment snapshotting requires READ COMMITTED isolation/,
+    );
+
+    // Module B basis semantics validation
+    const mb = await prepareModuleB(f);
+    await mb.submit(); // reviewerA (slot 1) submitted COMPATIBLE; reviewerB (slot 2) did not submit
+    await f.investigator('select public.rpc_mb_phase_v4($1,$2)', ['MB_CLOSED', ATT]);
+
+    await assert.rejects(
+      rpc(f.db, 'adjudicator', 'select public.rpc_record_mb_adjudication_v4($1)', [
+        j({
+          mb_unit_id: mb.unit,
+          decision: 'COMPATIBLE',
+          status: 'SINGLE_REVIEW_ADJUDICATED',
+          basis: 'REVIEWER_2',
+          rationale: 'Cannot attribute to missing reviewer 2.',
+        }),
+      ]),
+      /Module B adjudication semantics: REVIEWER_2 basis must adopt reviewer 2/,
+    );
+
+    await assert.rejects(
+      rpc(f.db, 'adjudicator', 'select public.rpc_record_mb_adjudication_v4($1)', [
+        j({
+          mb_unit_id: mb.unit,
+          decision: 'COMPATIBLE',
+          status: 'SINGLE_REVIEW_ADJUDICATED',
+          basis: 'NEITHER',
+          rationale: 'Cannot claim NEITHER when decision equals reviewer 1.',
+        }),
+      ]),
+      /Module B adjudication semantics: NEITHER basis must differ from all submitted answers/,
+    );
+
+    await rpc(f.db, 'adjudicator', 'select public.rpc_record_mb_adjudication_v4($1)', [
+      j({
+        mb_unit_id: mb.unit,
+        decision: 'COMPATIBLE',
+        status: 'SINGLE_REVIEW_ADJUDICATED',
+        basis: 'REVIEWER_1',
+        rationale: 'Adopts reviewer 1 single-reviewed answer.',
+      }),
+    ]);
+    await f.investigator('select public.rpc_lock_mb_reference_v4($1)', [ATT]);
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('0008 upgrade is idempotent and refuses already locked formal references', async () => {
+  const f = await fixture({ through: 7, scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    await adjudication(f, ids[0], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await f.lock();
+
+    await assert.rejects(
+      f.db.exec(await readFile(TRIAL_CONCURRENCY_MIGRATION, 'utf8')),
+      /Existing locked formal reference requires explicit investigator migration review/,
+    );
+    await f.db.exec('rollback');
+  } finally {
+    await f.db.close();
+  }
+
+  const f2 = await fixture({ through: 8 });
+  try {
+    await f2.db.exec(await readFile(TRIAL_CONCURRENCY_MIGRATION, 'utf8'));
+    const versions = (
+      await f2.db.query<{ version: string }>(
+        "select version from public.app_schema_version where version = '4.0.5-trial-packet-concurrency-guards'",
+      )
+    ).rows;
+    assert.equal(versions.length, 1);
+  } finally {
+    await f2.db.close();
+  }
+});
+
+test('persistent database created from original 0008 upgrades through getDb() loader to 0009, preserves existing records, and enforces new canonical packet and lock-state guards', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'verify-0008-to-0009-upgrade-'));
+  try {
+    // 1. Create a persisted database at original 0008 (072bfa0) before 0009 is applied
+    const db = await migratedDb(true, dir, 8);
+    for (const [role, id] of [
+      ['INVESTIGATOR', '00000000-0000-4000-8000-000000000001'],
+      ['REVIEWER', '00000000-0000-4000-8000-000000000002'],
+      ['REVIEWER', '00000000-0000-4000-8000-000000000003'],
+      ['ADJUDICATOR', '00000000-0000-4000-8000-000000000004'],
+    ] as const) {
+      const email = `upgrade-${id.slice(-1)}@example.invalid`;
+      await db.query('insert into auth.users(id,email) values($1,$2)', [id, email]);
+      await db.query(
+        'insert into public.users(user_id,auth_uid,email,display_name,role,is_pilot_test_account) values($1,$1,$2,$3,$4,$5)',
+        [id, email, `Synthetic ${role}`, role, false],
+      );
+    }
+    await db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Fictional preserved 0008 case', area: 'Fictional construct' })],
+    );
+    await db.query(
+      "insert into public.verify_assignments(case_id,reviewer_id,position) values('SYN-901','00000000-0000-4000-8000-000000000002',1),('SYN-901','00000000-0000-4000-8000-000000000003',1)",
+    );
+
+    // Under original 0008 (072bfa0), rpc_verify_author_case allowed a minimal packet with rubricPrompt
+    await db.transaction(async (tx) => {
+      await tx.exec('set local role authenticated');
+      await tx.query("select set_config('request.jwt.claims',$1,true)", [
+        j({ sub: '00000000-0000-4000-8000-000000000001', aal: 'aal2' }),
+      ]);
+      await tx.query('select public.rpc_verify_author_case($1)', [
+        j({
+          id: 'SYN-902',
+          kind: 'DESCRIPTOR',
+          packet: {
+            title: 'Legacy 0008 authored case',
+            area: 'Fictional area',
+            rubricPrompt: 'Legacy prompt field allowed only before 0009',
+          },
+        }),
+      ]);
+    });
+
+    // Submit a reviewer response in the 0008 database to verify response preservation across upgrade
+    await db.transaction(async (tx) => {
+      await tx.exec('set local role authenticated');
+      await tx.query("select set_config('request.jwt.claims',$1,true)", [
+        j({ sub: '00000000-0000-4000-8000-000000000002', aal: 'aal2' }),
+      ]);
+      await tx.query("select public.rpc_verify_submit('SYN-901','DESCRIPTOR_LEVEL',$1)", [
+        j({
+          decision: 'INCLUDE',
+          rationale: 'Preserved reviewer judgment recorded under 0008.',
+          uncertain: false,
+          packetProblem: false,
+          context: '',
+        }),
+      ]);
+    });
+
+    const beforeCases = JSON.parse(
+      JSON.stringify((await db.query('select * from public.verify_cases order by id')).rows),
+    );
+    const beforeResponses = JSON.parse(
+      JSON.stringify(
+        (await db.query('select * from public.verify_responses order by sequence')).rows,
+      ),
+    );
+    assert.equal(beforeCases.length, 2);
+    assert.equal(beforeResponses.length, 1);
+    await db.close();
+
+    // 2. Upgrade through the actual application loader (getDb in src/server/db.ts) across two restarts
+    const upgradeScript = `
+      import { getDb, withActor } from './src/server/db.ts';
+      const db = await getDb();
+      const v0008 = (await db.query("select count(*)::integer as n from public.app_schema_version where version='4.0.5-trial-packet-concurrency-guards'")).rows[0].n;
+      const v0009 = (await db.query("select count(*)::integer as n from public.app_schema_version where version='4.0.6-canonical-packet-lock-state'")).rows[0].n;
+      const lockState = (await db.query("select singleton, frozen, reference_locked from private.v4_lock_state")).rows;
+      const cases = (await db.query('select * from public.verify_cases order by id')).rows;
+      const responses = (await db.query('select * from public.verify_responses order by sequence')).rows;
+
+      let onlyDescriptorIdRejected = false;
+      try {
+        await withActor({ id: '00000000-0000-4000-8000-000000000001', role: 'INVESTIGATOR', displayName: 'Inv' }, (tx) =>
+          tx.query('select public.rpc_verify_author_case($1)', [JSON.stringify({
+            id: 'SYN-903',
+            kind: 'DESCRIPTOR',
+            packet: { descriptorId: 'TESTFX-D0903' },
+          })])
+        );
+      } catch (err) {
+        onlyDescriptorIdRejected = /canonical EvidencePacket structure/.test(String(err));
+      }
+
+      let rubricPromptRejected = false;
+      try {
+        await withActor({ id: '00000000-0000-4000-8000-000000000001', role: 'INVESTIGATOR', displayName: 'Inv' }, (tx) =>
+          tx.query('select public.rpc_verify_author_case($1)', [JSON.stringify({
+            id: 'SYN-904',
+            kind: 'DESCRIPTOR',
+            packet: { title: 'Bad', area: 'Bad', rubricPrompt: 'Disallowed in 0009' },
+          })])
+        );
+      } catch (err) {
+        rubricPromptRejected = /Packet key "rubricPrompt" is not allowed/.test(String(err));
+      }
+
+      console.log(JSON.stringify({
+        v0008,
+        v0009,
+        lockState,
+        cases,
+        responses,
+        onlyDescriptorIdRejected,
+        rubricPromptRejected,
+      }));
+      await db.close();
+    `;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await promisify(execFile)(
+        process.execPath,
+        ['--import', 'tsx', '--input-type=module', '-e', upgradeScript],
+        { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+      );
+      assert.deepEqual(JSON.parse(result.stdout.trim()), {
+        v0008: 1,
+        v0009: 1,
+        lockState: [{ singleton: true, frozen: false, reference_locked: false }],
+        cases: beforeCases,
+        responses: beforeResponses,
+        onlyDescriptorIdRejected: true,
+        rubricPromptRejected: true,
+      });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('0009 refuses an already locked formal reference without changing records or exports, and upgrades a locked synthetic pilot cleanly', async () => {
+  const f = await fixture({ through: 8, scope: 'ALL_CASE_LEVELS' });
+  try {
+    await completeReviews(f);
+    await adjudication(f, ids[0], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await adjudication(f, ids[1], 'CONCORDANT_CONFIRMED', 'INCLUDE', 'BOTH_REVIEWERS');
+    await f.lock();
+    const beforeSchema = (
+      await f.db.query('select * from public.app_schema_version order by version')
+    ).rows;
+
+    await assert.rejects(
+      f.db.exec(await readFile(CANONICAL_LOCK_STATE_MIGRATION, 'utf8')),
+      /Existing locked formal reference requires explicit investigator migration review/,
+    );
+    await f.db.exec('rollback');
+    assert.deepEqual(
+      (await f.db.query('select * from public.app_schema_version order by version')).rows,
+      beforeSchema,
+    );
+  } finally {
+    await f.db.close();
+  }
+
+  const pilot = await fixture({ through: 8 });
+  try {
+    await pilot.db.query(
+      "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+      [j({ title: 'Fictional local pilot 0008->0009 case' })],
+    );
+    await pilot.db.query(
+      "insert into public.verify_assignments(case_id,reviewer_id,position) values('SYN-901',$1,1),('SYN-901',$2,1)",
+      [ACTORS.reviewerA, ACTORS.reviewerB],
+    );
+    const response = {
+      decision: 'INCLUDE',
+      rationale: 'Synthetic pilot upgrade judgment.',
+      uncertain: false,
+      packetProblem: false,
+      context: '',
+    };
+    for (const actor of ['reviewerA', 'reviewerB'] as const) {
+      await rpc(
+        pilot.db,
+        actor,
+        "select public.rpc_verify_submit('SYN-901','DESCRIPTOR_LEVEL',$1)",
+        [j(response)],
+      );
+    }
+    for (const action of ['CLOSE_REVIEW', 'AUTHORIZE_ADJUDICATION']) {
+      await pilot.investigator('select public.rpc_verify_admin($1)', [
+        j({ action, attestation: ATT }),
+      ]);
+    }
+    await rpc(
+      pilot.db,
+      'adjudicator',
+      "select public.rpc_verify_adjudicate('SYN-901','DESCRIPTOR_LEVEL',$1)",
+      [
+        j({
+          ...response,
+          status: 'RESOLVED',
+          basis: 'Both fictional reviewers.',
+          reasonCode: 'OTHER',
+        }),
+      ],
+    );
+    await pilot.investigator('select public.rpc_verify_admin($1)', [
+      j({ action: 'LOCK_REFERENCE', attestation: ATT }),
+    ]);
+    const beforeExport = await rpc<Record<string, unknown>>(
+      pilot.db,
+      'investigator',
+      'select public.rpc_verify_export()',
+    );
+    assert.equal(beforeExport.schemaVersion, '4.0.5-trial-packet-concurrency-guards');
+
+    await pilot.db.exec(await readFile(CANONICAL_LOCK_STATE_MIGRATION, 'utf8'));
+    const afterExport = await rpc<Record<string, unknown>>(
+      pilot.db,
+      'investigator',
+      'select public.rpc_verify_export()',
+    );
+    assert.equal(afterExport.schemaVersion, '4.0.6-canonical-packet-lock-state');
+    assert.deepEqual({ ...afterExport, schemaVersion: beforeExport.schemaVersion }, beforeExport);
+  } finally {
+    await pilot.db.close();
+  }
+});
+
+async function frozenUpgradeState(db: PGlite) {
+  const records: Record<string, unknown> = {};
+  for (const table of [
+    'cases',
+    'case_versions',
+    'case_design_v3',
+    'case_records_v4',
+    'sample_manifests',
+    'sample_manifest_cases',
+    'freeze_manifests_v4',
+    'frozen_predictions_v4',
+    'trial_context_packets',
+    'assignments',
+    'reviews',
+    'trial_step1_records',
+    'verify_cases',
+  ]) {
+    records[table] = (
+      await db.query(
+        `select to_jsonb(t) as record from public.${table} t order by to_jsonb(t)::text`,
+      )
+    ).rows;
+  }
+  records.levels = (
+    await db.query(
+      'select case_id, private.case_levels_v4(case_id) as level from public.case_records_v4 order by case_id, level',
+    )
+  ).rows;
+  return JSON.parse(JSON.stringify(records));
+}
+
+for (const existingVersion of [7, 8, 9]) {
+  test(`loader refuses incompatible frozen one-step trials at 000${existingVersion} without changing study records or schema`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), `verify-frozen-trial-000${existingVersion}-`));
+    try {
+      const f = await fixture({ through: 7, dataDir: dir, trialDesign: 'one-step' });
+      await f.submit('reviewerA', ids[0]);
+      // Reproduce databases already changed by older application binaries too.
+      if (existingVersion >= 8)
+        await f.db.exec(await readFile(TRIAL_CONCURRENCY_MIGRATION, 'utf8'));
+      if (existingVersion >= 9)
+        await f.db.exec(await readFile(CANONICAL_LOCK_STATE_MIGRATION, 'utf8'));
+      const before = await frozenUpgradeState(f.db);
+      const beforeVersions = (
+        await f.db.query('select version from public.app_schema_version order by version')
+      ).rows;
+      const beforeFunction = (
+        await f.db.query(
+          "select pg_get_functiondef('private.case_levels_v4(text)'::regprocedure) as body",
+        )
+      ).rows;
+      await f.db.close();
+
+      const script = `import {getDb} from './src/server/db.ts';
+        try { const db = await getDb(); await db.close(); console.log(JSON.stringify({rejected:false})); }
+        catch (error) { console.log(JSON.stringify({rejected:true,message:error.message})); }`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await promisify(execFile)(
+          process.execPath,
+          ['--import', 'tsx', '--input-type=module', '-e', script],
+          { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+        );
+        assert.deepEqual(JSON.parse(result.stdout.trim()), {
+          rejected: true,
+          message:
+            'Frozen trial contract is incompatible with the current schema; explicit investigator migration review is required',
+        });
+        const persisted = new PGlite({ dataDir: dir, extensions: { pgcrypto } });
+        try {
+          await persisted.waitReady;
+          assert.deepEqual(await frozenUpgradeState(persisted), before);
+          assert.deepEqual(
+            (
+              await persisted.query(
+                'select version from public.app_schema_version order by version',
+              )
+            ).rows,
+            beforeVersions,
+          );
+          assert.deepEqual(
+            (
+              await persisted.query(
+                "select pg_get_functiondef('private.case_levels_v4(text)'::regprocedure) as body",
+              )
+            ).rows,
+            beforeFunction,
+          );
+        } finally {
+          await persisted.close();
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const trialDesign of [undefined, 'two-step'] as const) {
+  test(`loader upgrades compatible frozen ${trialDesign ?? 'descriptor'} cases without reinterpreting the manifest or evidence`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'verify-compatible-frozen-upgrade-'));
+    try {
+      const f = await fixture({ through: 7, dataDir: dir, trialDesign });
+      // Prevent the local pilot auto-seed from obscuring the upgrade comparison.
+      await f.db.query(
+        "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
+        [j({ title: 'Preserved synthetic pilot packet', area: 'Fictional construct' })],
+      );
+      const before = await frozenUpgradeState(f.db);
+      await f.db.close();
+      const script = `import {getDb} from './src/server/db.ts'; const db=await getDb();
+        console.log(JSON.stringify((await db.query("select version from public.app_schema_version where version in ('4.0.5-trial-packet-concurrency-guards','4.0.6-canonical-packet-lock-state') order by version")).rows)); await db.close();`;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await promisify(execFile)(
+          process.execPath,
+          ['--import', 'tsx', '--input-type=module', '-e', script],
+          { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
+        );
+        assert.deepEqual(JSON.parse(result.stdout.trim()), [
+          { version: '4.0.5-trial-packet-concurrency-guards' },
+          { version: '4.0.6-canonical-packet-lock-state' },
+        ]);
+        const persisted = new PGlite({ dataDir: dir, extensions: { pgcrypto } });
+        try {
+          await persisted.waitReady;
+          assert.deepEqual(await frozenUpgradeState(persisted), before);
+        } finally {
+          await persisted.close();
+        }
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}

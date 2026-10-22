@@ -12,6 +12,7 @@ import {
 } from '@/lib/auth';
 import { adminSchema, adjudicationSchema, draftSchema, judgmentSchema } from '@/lib/validation';
 import { buildPilotExport } from '@/lib/export';
+import { authorSyntheticPilotCase, evaluateApprovalGates } from '@/server/admin-workflows';
 import * as service from '@/server/service';
 
 export const runtime = 'nodejs';
@@ -77,6 +78,10 @@ async function handle(request: Request) {
     }
     if (request.method === 'POST' && path === '/api/admin/action')
       return json(await service.adminAction(actor, adminSchema.parse(await body(request))));
+    if (request.method === 'GET' && path === '/api/admin/gates')
+      return json(await evaluateApprovalGates(actor));
+    if (request.method === 'POST' && path === '/api/admin/cases')
+      return json(await authorSyntheticPilotCase(actor, await body(request)));
     const match = /^\/api\/cases\/(SYN-[0-9]{3})(?:\/(draft|submit|step1|adjudicate))?$/.exec(path);
     if (match) {
       const [, caseId, action] = match;

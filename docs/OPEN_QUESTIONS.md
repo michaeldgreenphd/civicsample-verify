@@ -2,21 +2,23 @@
 
 ## Investigator decisions
 
-The Tier 1 version, sample adequacy/inference target, frozen rubric, adjudicator identity, analysis plan and treatment of indeterminate judgments remain unapproved. The proposed sample's weak coverage of Tier 0-negative/Tier 1-positive cases remains an explicit blocking warning. Hosting region, retention and Module B scope need separate decisions. No application action substitutes for these approvals.
+Local functionality testing is the current next step. The investigator has indicated an approval record will follow; until it is received, checked, and recorded, the application must not infer that any scientific gate is approved or frozen.
+
+The Tier 1 version (`v1.1` versus `v1.2`), proposed 100-case formal sample adequacy and inference target, rubric, qualified adjudicator, analysis plan, and handling of indeterminate judgments remain pending verification of explicit approval. The weak coverage of Tier 0-negative/Tier 1-positive cases remains a blocking warning. Synthetic fixture counts and invented strata do not establish the formal sample's size, coverage, or scientific adequacy. Hosting region, retention, and Module B scope require their own decisions. No application action substitutes for these approvals.
 
 ## Direct request takes precedence over attached source
 
-The latest user request requires locked final submissions and explicit audited amendments; the supplied handoff permits ordinary revisions until close. The application follows the stricter request. It requires rationale for every final decision, although the attached contract treats some rationale as recommended. It requires two completed independent reviewers before adjudication; the supplied formal path also describes single-review adjudication. These distinctions are enforced by the synthetic extension and tested. The original historical schema remains unchanged, so formal integration must reconcile them with an additive migration before exposure to clinician accounts.
+The latest user request requires locked final submissions and explicit audited amendments; the supplied handoff permits ordinary revisions until close. The application follows the stricter request. It requires rationale for every final decision, although the attached contract treats some rationale as recommended. It requires two completed independent reviewers before adjudication; the supplied formal path also describes single-review adjudication. These distinctions are enforced by the synthetic extension. Formal integration must reconcile them through additive changes before exposure to clinician accounts.
 
-The handoff recommends a Python frontend; the user prefers Next.js. This build uses Next.js and TypeScript with the supplied PostgreSQL lineage and separate Python analysis. Clinical semantic rules and proposed analysis methods are not approved merely because their synthetic tests pass.
+The handoff recommends a Python frontend; the user prefers Next.js. This build uses Next.js and TypeScript with the supplied PostgreSQL lineage and separate Python analysis. Clinical rules and proposed analysis methods are not approved merely because synthetic tests pass.
 
 ## Remaining engineering work
 
-- Implement Supabase invited sign-in, verified-user JWT RPC calls, TOTP/MFA enforcement and session revocation against a real isolated staging project.
-- Implement project/campaign and synthetic-case authoring interfaces; this build provides one fixed, isolated ten-case pilot.
-- Connect approved rubric/version registration, sample provenance review, private import, freeze and formal lifecycle screens to the historical schema with the stricter final-submission contract.
-- Obtain actual verification RPC results and database view rows for the v4 exporter; the current cross-language round trip uses fully synthetic fixture rows.
-- Run actual PostgreSQL and Supabase RLS/API tests, including direct PostgREST table/view/RPC access. PGlite is not evidence of this boundary.
-- Complete screen-reader/manual keyboard testing, mobile form usability review, sustained load/latency measurements, backup/restore and operational logging/retention checks.
+- Complete the local pilot using separate role passwords and browser profiles on the same computer. See [LOCAL_PILOT.md](LOCAL_PILOT.md). Record interface findings and acceptance without changing formal approval states.
+- Replace synthetic invitation/JWT scaffolding with a verified external identity provider in an authorized isolated Supabase staging project. Actual TOTP/MFA, invited enrollment, token refresh, and deployed PostgREST/JWT boundaries remain incomplete.
+- Extend case authoring and evidence preview to multi-project/campaign administration. Formal rubric/version registration, private sample import, freeze, and clinical lifecycle screens remain incomplete; `formalActivationAllowed` stays false.
+- Preserve the synthetic database-to-CSV-to-Python export integration while adding the eventual deployed formal boundary. The adapter requires the actual nonzero export build SHA and checks ontology/rubric hashes against the registered frozen case versions. It still refuses real study data.
+- Inspect current-head native PostgreSQL CI results and run separate Supabase table/view/RPC access tests. The PostgreSQL harness uses `pg` and disposable `verify_disp_...` databases, leaving the database supplied through `VERIFY_PG_TEST_URL` unchanged. Use the startup preflight with pending 0008/0009 upgrades; never reset incompatible frozen data to bypass refusal.
+- Complete manual screen-reader/keyboard and mobile usability review, load/latency measurements, backup restoration, and operational logging/retention checks. GitHub Pages cannot run this server application; future hosting requires a separately approved Next.js and Supabase deployment.
 
-The optional Module B remains a separate proposed UI entry point and supplied schema/test surface; it has no active application review workflow. Adjudication forms currently retain unsent edits only in the current view and disclose that limitation.
+Module B remains separate and unapproved, with no active application review workflow. Adjudication forms retain unsent edits only in the current view and disclose that limitation. See [READINESS_REPORT.md](../READINESS_REPORT.md) for actual verification results rather than inferring readiness from this work list.
