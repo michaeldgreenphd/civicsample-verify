@@ -18,7 +18,7 @@ Tested implementation: `12be20a0b1cbfac2e5acbcd3e38ff5ccff3e0216`. The documenta
 | `npm run test:handoff:postgres`                                | BLOCKED locally                                            | No native PostgreSQL service. Hosted CI is wired to require it and upload the sanitized report.                                                                                        |
 | `npm run test:supabase:staging`                                | BLOCKED                                                    | User confirmed no staging project; setup deferred until after local testing. No requests or mutations performed.                                                                       |
 
-Native hosted verification: **PENDING for this branch**. Do not infer it from a previous branch's passing checks. Full Supabase acceptance remains UNTESTED regardless of any local result.
+Native hosted verification: **PASS at `2634c1162248e7f397db448ac47affe055960c49`**. The [PostgreSQL 16 job](https://github.com/michaeldgreenphd/civicsample-verify/actions/runs/39791388114/job/119868057953) executed both native application tests with zero failures/skips and the preserved suites at **164/164, 262/262, 262/262, 356/356**. The native audit probe fell from 2 exposed synthetic decisions to 0, and the supplied database table catalog remained unchanged. See [downloaded compact artifact](postgres-hosted.json); the full step report is attached to the CI run. Full Supabase acceptance remains UNTESTED.
 
 ## Additional verification
 

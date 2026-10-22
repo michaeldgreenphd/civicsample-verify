@@ -1,0 +1,66 @@
+{
+  "synthetic_only": true,
+  "scope": "Historical supplied suites on native PostgreSQL 16 with local auth shim; not Supabase JWT/PostgREST verification",
+  "generated_at": "2026-10-22T13:57:14.099Z",
+  "git_commit": "2634c1162248e7f397db448ac47affe055960c49",
+  "command": "node scripts/test-handoff-postgres.mjs",
+  "status": "PASS",
+  "stage": "complete",
+  "suites": [
+    {
+      "name": "v2",
+      "source_sha256": "18cc8e0106cdd0dfcd26f1bda2955ca5c9e9619fa41c617055bf1fb044e9b076",
+      "driver_only_adaptation": true,
+      "count": 164,
+      "pass": 164,
+      "fail": 0,
+      "failedStepIds": []
+    },
+    {
+      "name": "v3",
+      "source_sha256": "516040394e8862de2bd2aec3841f007327b1cfbe595774df5a822b3aa6c5dd44",
+      "driver_only_adaptation": true,
+      "count": 262,
+      "pass": 262,
+      "fail": 0,
+      "failedStepIds": []
+    },
+    {
+      "name": "v3-on-v4",
+      "source_sha256": "516040394e8862de2bd2aec3841f007327b1cfbe595774df5a822b3aa6c5dd44",
+      "driver_only_adaptation": true,
+      "count": 262,
+      "pass": 262,
+      "fail": 0,
+      "failedStepIds": []
+    },
+    {
+      "name": "v4",
+      "source_sha256": "a5c6f4f280744e833c9d682184687ead2804fa439353afc58a05e08871ef79ef",
+      "driver_only_adaptation": true,
+      "count": 356,
+      "pass": 356,
+      "fail": 0,
+      "failedStepIds": []
+    }
+  ],
+  "schema_sha256": {
+    "base": "ed52f666e125e86e951b589d2b432e3b411a6c018751b74b9181fa3c3b72fda1",
+    "0002": "022ec5415775524ad3b4f6a4190fef6d5a85ccc140be98ae3c654b148b90821e",
+    "0003": "66822b00bb8ac079364e02bd8adf19d8f9812d1541fee1325cdcf0c520d35f67"
+  },
+  "engine": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "audit_probe": {
+    "v3": {
+      "n": 2,
+      "with_decision": 2
+    },
+    "v4": {
+      "n": 2,
+      "with_decision": 0
+    }
+  },
+  "supplied_database_table_catalog_unchanged": true,
+  "ci_job_url": "https://github.com/michaeldgreenphd/civicsample-verify/actions/runs/39791388114/job/119868057953",
+  "full_step_artifact_id": 12431975701
+}
