@@ -32,6 +32,8 @@ npm run test:handoff
 npm run test:postgres
 ```
 
+`npm run start` keeps idle HTTP connections open for 70 seconds (`--keepAliveTimeout 70000`). With the Node default, the server closes an idle keep-alive connection about 6 seconds after a response without telling the client. A client that reuses the socket at that moment, such as Playwright's API request context in the browser suite, then gets `read ECONNRESET`; this was the recurring production-browser failure. Behind a proxy, keep this timeout longer than the proxy's own idle timeout.
+
 The PostgreSQL suite needs a suitable test server and `VERIFY_PG_TEST_URL`; unavailable live checks report BLOCKED. Its CI job uses PostgreSQL 16. The browser suite uses a separate in-memory database. See [READINESS_REPORT.md](READINESS_REPORT.md) for the commands actually executed and their observed results. PGlite or native PostgreSQL success does not establish deployed Supabase JWT, MFA, or PostgREST security.
 
 ## Engineering boundaries
