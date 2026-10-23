@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { extname, join, relative, resolve } from 'node:path';
+import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const excluded = new Set([
@@ -68,7 +68,13 @@ const REGISTRY_IDENTIFIER_ALL = /\bNCT\d{8}\b/gi;
 
 /** True when the content holds a registry identifier not reviewed for this exact path. */
 function hasUnapprovedRegistryIdentifier(name, content) {
-  const allowed = ALLOWED_REGISTRY_IDENTIFIERS[name.split('\\').join('/')];
+  // Git index names always use '/'. Only a platform whose separator is '\\' (Windows) needs its
+  // working-tree names converted; on POSIX a backslash is an ordinary filename character, so a file
+  // named 'tools\\check_...' must never alias the allowlisted 'tools/check_...'.
+  const key = sep === '\\' ? name.split(sep).join('/') : name;
+  const allowed = Object.hasOwn(ALLOWED_REGISTRY_IDENTIFIERS, key)
+    ? ALLOWED_REGISTRY_IDENTIFIERS[key]
+    : undefined;
   for (const match of content.matchAll(REGISTRY_IDENTIFIER_ALL))
     if (!allowed || !allowed.has(match[0].toUpperCase())) return true;
   return false;
