@@ -130,3 +130,36 @@ test('the other leakage rules stay active inside allowlisted files', () => {
     assert.ok(!rules.includes('registry identifier'));
   });
 });
+
+test('a POSIX file name containing a backslash never aliases an allowlisted path', () => {
+  if (process.platform === 'win32') return; // backslash is a separator there
+  for (const [path, value] of [
+    ['tools\\check_public_repo_leakage_v7.py', NEGATIVE_CONTROL],
+    ['tests\\handoff\\v7.mjs', APPROVED_SUITE_ONLY],
+    ['tests\\handoff\\fixtures\\v7\\SYNTHETIC_PILOT_UNITS_v7.json', APPROVED_PILOT],
+  ]) {
+    for (const staged of [false, true]) {
+      repository((root, git) => {
+        put(root, path, `SYNTHETIC ${value}`);
+        if (staged) git('add', '--', path);
+        const found = registryFindings(root);
+        assert.ok(
+          found.some((f) => f.source === 'working-tree'),
+          `${staged ? 'staged ' : ''}backslash name must fail in the working tree`,
+        );
+        if (staged)
+          assert.ok(
+            found.some((f) => f.source === 'index'),
+            'and in the Git index',
+          );
+      });
+    }
+  }
+});
+
+test('an allowlist key that names an Object prototype property is not an allowlisted path', () => {
+  repository((root) => {
+    put(root, 'constructor', `SYNTHETIC ${APPROVED_PILOT}`);
+    assert.ok(registryFindings(root).some((f) => f.file === 'constructor'));
+  });
+});
