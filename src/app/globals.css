@@ -1205,9 +1205,6 @@ tr:last-child td {
   .admin-grid {
     grid-template-columns: 1fr;
   }
-  .stat {
-    padding: 20px;
-  }
 }
 @media (max-width: 760px) {
   h1 {
@@ -1334,9 +1331,13 @@ tr:last-child td {
   .form-footer .button {
     margin-left: auto;
   }
-  .context-grid,
   .response-grid {
     grid-template-columns: 1fr;
+  }
+  /* Two compact columns of stats on narrow screens, no rules between them. */
+  .context-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s4) var(--s5);
   }
   .page-footer {
     font-size: 12px;
@@ -1347,14 +1348,8 @@ tr:last-child td {
     grid-template-columns: 1fr 1fr;
   }
   .stat {
-    padding: 18px;
-    border-bottom: 1px solid var(--line);
-  }
-  .stat:nth-child(2) {
-    border-right: 0;
-  }
-  .stat:nth-child(3) {
-    border-bottom: 0;
+    padding: 0;
+    border: 0;
   }
   .stat-value {
     font-size: 28px;
