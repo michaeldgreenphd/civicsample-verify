@@ -280,4 +280,9 @@ async function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();
+// Started without top-level await so the pure functions above can be imported by the unit tests.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
