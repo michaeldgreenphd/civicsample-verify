@@ -58,6 +58,15 @@ export type ChainOptions = {
   existing?: FixtureDb;
   /** Stop the pilot after the adjudications, before the pilot lock and sign-off. */
   stopAfterPilotAdjudication?: boolean;
+  /** Stop earlier or later than the default end of each builder (see signedOffPilot, formalOpen). */
+  stopAfter?:
+    'design' | 'pilotAnswers' | 'pilotAdjudication' | 'pilotLock' | 'formalImport' | 'freeze';
+  /**
+   * Study-decision gates of migration 0026 to specify and approve SYNTHETICALLY in this disposable
+   * test database ('all' by default). With [] every gate stays as 0026 records it, pending.
+   * Ignored on a chain without 0026, where only G-PAIN-01 is approved, as the supplied suite does.
+   */
+  gates?: 'all' | string[];
 };
 export const chainFiles = (without: string[] = []) =>
   (HOSTED_SCHEMA_FILES as string[]).filter((f) => !without.includes(f));
@@ -325,6 +334,47 @@ async function must(db: FixtureDb, who: Who, sql: string, what: string) {
     throw new Error(`fixture step failed (${what}): ${(e as Error).message}`);
   }
 }
+export const freezeSql = () =>
+  `select public.rpc_mu7_freeze(${lit({ ...freezeHashes(), attestation: ATT })}) as f`;
+
+/** True when the chain carries migration 0026's gate requirements. */
+export const hasGateRequirements = async (db: FixtureDb) =>
+  (await one(db, 'owner', "select to_regclass('public.mu7_gate_requirements') is not null")) ===
+  true;
+/** The synthetic decision record a test specifies for a gate (never a real study decision). */
+export const syntheticDecision = (gate: string) => `SYNTHETIC-TEST-DECISION-${gate}`;
+/**
+ * In a disposable test database only: records a SPECIFIED synthetic requirement (as the database
+ * owner, the only role that can write requirements, standing in for a reviewed migration) for each
+ * chosen gate with its blocks unchanged, then approves it through the investigator's RPC naming
+ * that synthetic record. Nothing here is a study decision.
+ */
+export async function specifyAndApproveGates(db: FixtureDb, gates: 'all' | string[]) {
+  const chosen =
+    gates === 'all'
+      ? ((
+          await rows<{ gate_id: string }>(
+            db,
+            'owner',
+            'select distinct gate_id from public.mu7_gate_requirements order by gate_id',
+          )
+        ).map((r) => r.gate_id) as string[])
+      : gates;
+  for (const gate of chosen) {
+    await db.query(
+      `insert into public.mu7_gate_requirements (gate_id, requirement_version, blocks, requirement_status, question, decision_reference, source)
+       select gate_id, requirement_version + 1, blocks, 'SPECIFIED', question, $2, 'SYNTHETIC test fixture (disposable database)'
+       from public.mu7_gate_requirements where gate_id = $1 order by requirement_version desc limit 1`,
+      [gate, syntheticDecision(gate)],
+    );
+    await must(
+      db,
+      'inv',
+      `select public.rpc_mu7_approve_gate('${gate}', '${ATT}', '${syntheticDecision(gate)}')`,
+      `approve ${gate}`,
+    );
+  }
+}
 export const phase = (t: string, o: Record<string, unknown> = {}) =>
   `select public.rpc_mu7_phase('${t}', ${lit({ attestation: ATT, ...o })}) as e`;
 export const assignmentOf = (db: FixtureDb, pseudo: string, unit: string) =>
@@ -417,6 +467,7 @@ export async function signedOffPilot(
     `select public.rpc_mu7_record_design(${lit({ design_version: DESIGN_VERSION, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })})`,
     'record design',
   );
+  if (options.stopAfter === 'design') return { db, PT1, PT2 };
   type PilotUnit = {
     import: { unit_id: string; unit_role: string };
     walkthrough: {
@@ -466,6 +517,7 @@ export async function signedOffPilot(
       await must(db, who, submitSql(await assignmentOf(db, pseudo, u), o), `${who} answers ${u}`);
     }
   }
+  if (options.stopAfter === 'pilotAnswers') return { db, PT1, PT2 };
   const PADJ: Record<string, Record<string, unknown>> = {
     'SYN7-AREA-RESPIRATORY-001': {
       decision: 'DISAGREE',
@@ -502,8 +554,10 @@ export async function signedOffPilot(
   };
   for (const [unit, o] of Object.entries(PADJ))
     await must(db, 'adj', adjudicateSql({ unit_id: unit, ...o }), `adjudicate ${unit}`);
-  if (options.stopAfterPilotAdjudication) return { db, PT1, PT2 };
+  if (options.stopAfterPilotAdjudication || options.stopAfter === 'pilotAdjudication')
+    return { db, PT1, PT2 };
   await must(db, 'inv', `select public.rpc_mu7_lock_reference('PILOT', '${ATT}')`, 'pilot lock');
+  if (options.stopAfter === 'pilotLock') return { db, PT1, PT2 };
   const PEX = await must(
     db,
     'inv',
@@ -526,7 +580,11 @@ export async function signedOffPilot(
 
 /** The signed-off pilot, then the eight FORMAL units frozen and queued, and the formal phase open. */
 export async function formalOpen(options: ChainOptions = {}): Promise<FormalOpen> {
-  const { db, PT1, PT2 } = await signedOffPilot({ ...options, stopAfterPilotAdjudication: false });
+  const { db, PT1, PT2 } = await signedOffPilot({
+    ...options,
+    stopAfterPilotAdjudication: false,
+    stopAfter: undefined,
+  });
   for (const k of ['r1', 'r2'] as const)
     await must(
       db,
@@ -543,18 +601,16 @@ export async function formalOpen(options: ChainOptions = {}): Promise<FormalOpen
       `select public.rpc_mu7_import_unit(${lit(importObj(u))})`,
       `import ${u.uid}`,
     );
-  await must(
-    db,
-    'inv',
-    `select public.rpc_mu7_approve_gate('G-PAIN-01', '${ATT}', 'synthetic decision record')`,
-    'gate',
-  );
-  await must(
-    db,
-    'inv',
-    `select public.rpc_mu7_freeze(${lit({ ...freezeHashes(), attestation: ATT })})`,
-    'freeze',
-  );
+  if (await hasGateRequirements(db)) await specifyAndApproveGates(db, options.gates ?? 'all');
+  else
+    await must(
+      db,
+      'inv',
+      `select public.rpc_mu7_approve_gate('G-PAIN-01', '${ATT}', 'synthetic decision record')`,
+      'gate',
+    );
+  if (options.stopAfter === 'formalImport') return { db, R1, R2, PT1, PT2 };
+  await must(db, 'inv', freezeSql(), 'freeze');
   await must(
     db,
     'inv',
@@ -566,6 +622,7 @@ export async function formalOpen(options: ChainOptions = {}): Promise<FormalOpen
     })})`,
     'formal queue',
   );
+  if (options.stopAfter === 'freeze') return { db, R1, R2, PT1, PT2 };
   await must(db, 'inv', phase('FORMAL_OPENED'), 'open');
   return { db, R1, R2, PT1, PT2 };
 }

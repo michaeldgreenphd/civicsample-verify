@@ -3,7 +3,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -227,7 +235,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
-  assert.equal(plan.schema.expectedFinalVersion, '7.0.1-v7-review-fixes');
+  assert.equal(plan.schema.expectedFinalVersion, '7.0.2-v7-lifecycle-and-gates');
   assert.equal(plan.database, null);
   const withDb = config({
     databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,
@@ -252,6 +260,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0023_service_role_truncate_revoke.sql'));
   assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0024_v7_mapping_units.sql'));
   assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0025_v7_review_fixes.sql'));
+  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0026_v7_lifecycle_and_gates.sql'));
   assert.deepEqual(SCHEMA_FILE_MARKERS['migrations/0018_mapping_confirmation_review_fixes.sql'], [
     '6.0.1-mapping-confirmation-review-fixes',
   ]);
@@ -265,6 +274,18 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
       ),
     ),
     'AUTH_SHIM_REFUSED',
+  );
+  // The test-only gate specification (supplied-suite regression in disposable databases) is never
+  // in the lineage, and a lineage file carrying its marker is refused.
+  assert.ok(!HOSTED_SCHEMA_FILES.some((f: string) => f.includes('supabase_test_shim')));
+  const shim = readFileSync('supabase_test_shim/mu7x_gates_specified_test_only.sql', 'utf8');
+  assert.equal(
+    code(() =>
+      buildBootstrapPlan(config(), root, (p) =>
+        p === 'migrations/0026_v7_lifecycle_and_gates.sql' ? shim : 'select 1',
+      ),
+    ),
+    'TEST_SHIM_REFUSED',
   );
 });
 

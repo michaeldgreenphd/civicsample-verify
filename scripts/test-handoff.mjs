@@ -56,6 +56,10 @@ const migrationFiles = {
   m24: 'migrations/0024_v7_mapping_units.sql',
   // This repository's fixes to 0024 (review findings).
   m25: 'migrations/0025_v7_review_fixes.sql',
+  // Second round of fixes to 0024 (lifecycle and study-decision gates).
+  m26: 'migrations/0026_v7_lifecycle_and_gates.sql',
+  // Test-only: lets the supplied suite (which predates 0026) reach every supplied behaviour.
+  gateShim: 'supabase_test_shim/mu7x_gates_specified_test_only.sql',
 };
 
 function copy(source, destination) {
@@ -228,6 +232,36 @@ try {
       m12,
       'chain_app_0013_to_0023.sql',
       'nnnn_0024_0025.sql',
+      `../../tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json`,
+      `../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json`,
+    ],
+    362,
+    ['MU7-SCHEMA-01', 'MU7-ADD-01'],
+  );
+  // The same suite with 0025 and 0026 appended. 0026 keeps the FORMAL freeze and the formal opening
+  // disabled while the study-decision gates are pending, which the supplied suite (written before
+  // 0026) cannot know; the test-only shim records a SYNTHETIC specification that blocks nothing and
+  // names the suite's own synthetic evidence string, so every supplied behaviour is still checked.
+  // The gates themselves are tested in tests/mu7-lifecycle.test.ts. Expected differences are those
+  // of the 0025 run; no supplied behaviour step may change.
+  concat(join(v7dir, 'nnnn_0024_0025_0026.sql'), [
+    migrationFiles.m24,
+    migrationFiles.m25,
+    migrationFiles.m26,
+    migrationFiles.gateShim,
+  ]);
+  run(
+    'v7-on-app-chain-with-0025-0026',
+    v7dir,
+    'rls_tests_v7.mjs',
+    [
+      ...base,
+      m2,
+      m3,
+      'chain_app_0004_to_0011.sql',
+      m12,
+      'chain_app_0013_to_0023.sql',
+      'nnnn_0024_0025_0026.sql',
       `../../tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json`,
       `../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json`,
     ],

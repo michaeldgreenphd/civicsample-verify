@@ -104,6 +104,12 @@ try {
       'migrations/0023_service_role_truncate_revoke.sql',
     ].map((file) => join(root, file));
     const m24 = join(root, 'migrations/0024_v7_mapping_units.sql');
+    const m25 = join(root, 'migrations/0025_v7_review_fixes.sql');
+    const m26 = join(root, 'migrations/0026_v7_lifecycle_and_gates.sql');
+    // Test-only: lets the supplied suite (which predates 0026) reach every supplied behaviour.
+    const gateShim = join(root, 'supabase_test_shim/mu7x_gates_specified_test_only.sql');
+    const m24to25 = await concat('nnnn_0024_0025.sql', [m24, m25]);
+    const m24to26 = await concat('nnnn_0024_0025_0026.sql', [m24, m25, m26, gateShim]);
     const chainApp0004to0011 = await concat('chain_app_0004_to_0011.sql', [...app, m11]);
     const chainApp0013to0023 = await concat('chain_app_0013_to_0023.sql', tail);
     const v7Fixtures = [
@@ -118,6 +124,8 @@ try {
       ['0011', m11],
       ['0012', m12],
       ['0024', m24],
+      ['0025', m25],
+      ['0026', m26],
     ]) {
       report.schema_sha256[label] = createHash('sha256')
         .update(await readFile(file))
@@ -153,6 +161,44 @@ try {
           362,
           4,
           ['MU7-SCHEMA-01'],
+        ],
+        // With this repository's fixes appended. MU7-ADD-01: 0025 replaces private.is_adjudicator
+        // with a lock-aware body. The 0026 run adds the test-only gate specification (never hosted).
+        [
+          'v7-on-app-chain-with-0025',
+          'v7',
+          [
+            shim,
+            schema,
+            m2,
+            m3,
+            chainApp0004to0011,
+            m12,
+            chainApp0013to0023,
+            m24to25,
+            ...v7Fixtures,
+          ],
+          362,
+          4,
+          ['MU7-SCHEMA-01', 'MU7-ADD-01'],
+        ],
+        [
+          'v7-on-app-chain-with-0025-0026',
+          'v7',
+          [
+            shim,
+            schema,
+            m2,
+            m3,
+            chainApp0004to0011,
+            m12,
+            chainApp0013to0023,
+            m24to26,
+            ...v7Fixtures,
+          ],
+          362,
+          4,
+          ['MU7-SCHEMA-01', 'MU7-ADD-01'],
         ],
       ]) {
         report.stage = name;

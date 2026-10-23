@@ -65,8 +65,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0023_service_role_truncate_revoke.sql',
   'migrations/0024_v7_mapping_units.sql',
   'migrations/0025_v7_review_fixes.sql',
+  'migrations/0026_v7_lifecycle_and_gates.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '7.0.1-v7-review-fixes';
+export const EXPECTED_SCHEMA_VERSION = '7.0.2-v7-lifecycle-and-gates';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -102,6 +103,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0023_service_role_truncate_revoke.sql': ['6.0.5-service-role-truncate-revoke'],
   'migrations/0024_v7_mapping_units.sql': ['7.0.0'],
   'migrations/0025_v7_review_fixes.sql': ['7.0.1-v7-review-fixes'],
+  'migrations/0026_v7_lifecycle_and_gates.sql': ['7.0.2-v7-lifecycle-and-gates'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([
@@ -329,6 +331,11 @@ export function buildBootstrapPlan(
       refuse(
         'AUTH_SHIM_REFUSED',
         `${path} defines the auth schema; the local shim never reaches Supabase.`,
+      );
+    if (/MU7X-TEST-ONLY-GATE-SPECIFICATION/.test(text))
+      refuse(
+        'TEST_SHIM_REFUSED',
+        `${path} carries the test-only gate specification; it never reaches Supabase.`,
       );
     return { path, sha256: sha256(text), bytes: Buffer.byteLength(text) };
   });

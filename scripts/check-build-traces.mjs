@@ -31,6 +31,7 @@ const sqlInputs = new Set([
   'migrations/0023_service_role_truncate_revoke.sql',
   'migrations/0024_v7_mapping_units.sql',
   'migrations/0025_v7_review_fixes.sql',
+  'migrations/0026_v7_lifecycle_and_gates.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {

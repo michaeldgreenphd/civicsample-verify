@@ -21,7 +21,8 @@ import {
 } from './mu7-fixture';
 
 const FIX = 'migrations/0025_v7_review_fixes.sql';
-const WITHOUT_FIX = [FIX];
+// 0026 builds on 0025 (it replaces 0025's adjudication trigger), so it leaves with it.
+const WITHOUT_FIX = [FIX, 'migrations/0026_v7_lifecycle_and_gates.sql'];
 const sha256 = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
 const MU7_TABLES = [
   'mu7_design',
@@ -233,8 +234,9 @@ test('finding 2 (blocker): every v7 write and transition is serialized, before 0
     'reproduced: no serialization without 0025',
   );
   const triggers = await serializingTriggers(true);
+  // On the full chain 0026 moves mu7_adjudications from the shared to the exclusive lock (a revision
+  // and the first adjudication of a unit must not both commit; tests/mu7-lifecycle.test.ts).
   const expectWrite = [
-    'mu7_adjudications',
     'mu7_frozen_assignments',
     'mu7_gate_approvals',
     'mu7_judgments',
@@ -244,6 +246,7 @@ test('finding 2 (blocker): every v7 write and transition is serialized, before 0
     'mu7_units',
   ];
   const expectTransition = [
+    'mu7_adjudications',
     'mu7_exports',
     'mu7_freeze',
     'mu7_phase_events',
