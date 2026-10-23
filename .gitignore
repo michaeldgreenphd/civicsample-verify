@@ -92,3 +92,26 @@ performance_estimates_v5*
 clinical_review_results_block_v5*
 WORKED_EXAMPLES_v5*
 worked_examples_v5*
+
+# Required by tools/check_public_repo_leakage_v6.py (v6 private names; AI consistency run)
+FROZEN_LABELS_v6*
+CALIBRATION_TRIALS_v6*
+freeze_manifest_v6*
+WORKED_EXAMPLES_v6*
+worked_examples_v6*
+PACKETS_v6*
+SAMPLING_NOTE_v6*
+independent_judgments_v6*
+adjudicated_reference_v6*
+claude_code_private_staging_v6*
+ai_runs/
+claude_code_ai_consistency_kit*
+# Required by tools/check_public_repo_leakage_v7.py (v7 private names, real bundles)
+MAPPING_UNITS_v7*
+FROZEN_ASSIGNMENTS_v7*
+QUEUE_ORDER_v7*
+freeze_manifest_v7*
+MU7_IMPORT_*
+*_PRIVATE.*
+claude_code_private_staging_v7*
+bundle_v7*

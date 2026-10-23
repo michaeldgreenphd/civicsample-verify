@@ -38,6 +38,22 @@ const migrationFiles = {
   // Byte-identical copies of the supplied v5 migrations 0004 and 0005.
   m11: 'migrations/0011_v5_trial_label_verification.sql',
   m12: 'migrations/0012_v5_training_examples.sql',
+  // This repository's own additive migrations after the v5 package.
+  tail: [
+    'migrations/0013_v5_independent_finality_guards.sql',
+    'migrations/0014_legacy_pilot_and_packet_guards.sql',
+    'migrations/0015_v5_review_fixes.sql',
+    'migrations/0016_mapping_confirmation.sql',
+    'migrations/0017_v5_rubric_binding.sql',
+    'migrations/0018_mapping_confirmation_review_fixes.sql',
+    'migrations/0019_v5_rubric_binding_reconciliation.sql',
+    'migrations/0020_mapping_confirmation_completeness_and_serialization.sql',
+    'migrations/0021_account_locks.sql',
+    'migrations/0022_service_role_admin_grants.sql',
+    'migrations/0023_service_role_truncate_revoke.sql',
+  ],
+  // Byte-identical copy of the supplied v7 migration NNNN_v7_mapping_units.sql.
+  m24: 'migrations/0024_v7_mapping_units.sql',
 };
 
 function copy(source, destination) {
@@ -88,7 +104,10 @@ try {
     migrationFiles.m3,
     migrationFiles.m11,
     migrationFiles.m12,
+    migrationFiles.m24,
     'supabase_test_shim/auth_shim.sql',
+    'tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json',
+    'tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json',
   ]) {
     copy(join(root, file), join(scratch, file));
   }
@@ -158,6 +177,37 @@ try {
     [...base, m2, 'combined_app_0003_to_0010.sql', m11, m12],
     534,
     ['V5-SCHEMA-01'],
+  );
+  // v7 (supplied NNNN = repo 0024) on THIS repository's own chain: schema, 0002, 0003, repo
+  // 0004 to 0010, 0011, 0012, repo 0013 to 0023, 0024. The supplied suite takes seven base files,
+  // so the chain is concatenated into that shape. The suite's reference stack (which needs the
+  // supplied 0006 this repository never adopted) is run outside the repository from the package.
+  // Expected difference on this chain: MU7-SCHEMA-01 lists the schema versions and sees this
+  // repository's own markers (4.0.1-synthetic ... 6.0.5-service-role-truncate-revoke) between
+  // 4.0.0 and 7.0.0. Every behaviour step, including the additive checks and the FINDING-V6-01
+  // helper comparison (MU7-ADD-08), passes on this chain.
+  const v7dir = join(scratch, 'tests_prebuild/pglite_rls_v7');
+  mkdirSync(v7dir, { recursive: true });
+  copy(join(root, 'tests/handoff/v7.mjs'), join(v7dir, 'rls_tests_v7.mjs'));
+  concat(join(v7dir, 'chain_app_0004_to_0011.sql'), [...migrationFiles.app, migrationFiles.m11]);
+  concat(join(v7dir, 'chain_app_0013_to_0023.sql'), migrationFiles.tail);
+  run(
+    'v7-on-app-chain',
+    v7dir,
+    'rls_tests_v7.mjs',
+    [
+      ...base,
+      m2,
+      m3,
+      'chain_app_0004_to_0011.sql',
+      m12,
+      'chain_app_0013_to_0023.sql',
+      `../../${migrationFiles.m24}`,
+      `../../tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json`,
+      `../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json`,
+    ],
+    362,
+    ['MU7-SCHEMA-01'],
   );
   console.log(
     'SYNTHETIC ENGINEERING ONLY. PGlite is not a live PostgreSQL or Supabase deployment test.',
