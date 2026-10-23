@@ -243,8 +243,16 @@ async function adjudicatorWorkspace(ctx: Mu7Context): Promise<Mu7AdjudicatorWork
   });
 }
 
-const GATE_BLOCK_TEXT =
-  'The FORMAL freeze and the formal opening are disabled: every study-decision gate is pending specification (migration 0026), and no approval can be recorded against a pending gate.';
+/** Why the FORMAL freeze and opening are disabled, from the gate status itself. */
+function formalDisabledReason(gates: Mu7GateStatus[]): string {
+  const open = (op: string) =>
+    gates.filter((g) => g.blocks.includes(op) && !g.satisfied).map((g) => g.gateId);
+  const freeze = open('FREEZE');
+  const opening = open('FORMAL_OPEN');
+  if (!freeze.length && !opening.length)
+    return 'Every study-decision gate is approved; the formal operations are still not offered in this build.';
+  return `The FORMAL freeze waits for ${freeze.join(', ') || 'no gate'}; the formal opening waits for ${opening.join(', ')}. A gate counts once its requirement is specified by a reviewed migration and the investigator approves it citing that record. The formal operations are not offered in this build.`;
+}
 async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWorkspace> {
   requireRole(ctx, 'INVESTIGATOR');
   return ctx.withData(async (d) => {
@@ -300,6 +308,8 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
         blocks: (g.blocks as string[]) ?? [],
         requirementStatus: g.requirement_status as Mu7GateStatus['requirementStatus'],
         question: String(g.question),
+        decisionReference: (g.decision_reference as string | null) ?? null,
+        approvedAt: g.approved_at ? iso(g.approved_at) : null,
         satisfied: bool(g.satisfied),
       }),
     );
@@ -354,7 +364,7 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
       })),
       gates,
       formalOperationsEnabled: false,
-      formalDisabledReason: GATE_BLOCK_TEXT,
+      formalDisabledReason: formalDisabledReason(gates),
       localTools: !!ctx.localTools,
       appGitSha: ctx.appGitSha,
     };
@@ -612,6 +622,31 @@ export async function mu7AdminAction(
                 { reviewer_slot: 2, reviewer_pseudo_id: pseudo[1], unit_ids: slot2 },
               ],
             },
+          },
+          'value',
+        );
+      });
+      break;
+    case 'approve-gate':
+      await ctx.withData(async (d) => {
+        // The approval names the decision record the reviewed requirement specifies; the
+        // investigator confirms and attests, and never types the citation. The database refuses
+        // a pending gate, another record and any caller who is not the investigator (0024, 0026).
+        const gate = (await d.rpc<Mu7Row[]>('rpc_mu7_gate_status', {}, 'rows')).find(
+          (g) => g.gate_id === input.gateId,
+        );
+        if (!gate) throw new ServiceError(404, 'Resource not available.');
+        if (gate.requirement_status !== 'SPECIFIED' || !gate.decision_reference)
+          throw new ServiceError(
+            409,
+            `${input.gateId} cannot be approved: its requirement is pending specification.`,
+          );
+        await d.rpc(
+          'rpc_mu7_approve_gate',
+          {
+            p_gate_id: input.gateId,
+            p_attestation: input.attestation,
+            p_evidence_reference: gate.decision_reference,
           },
           'value',
         );

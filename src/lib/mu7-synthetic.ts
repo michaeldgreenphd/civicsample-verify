@@ -60,8 +60,8 @@ export function mu7PilotQueues(): { slot1: string[]; slot2: string[] } {
 }
 
 export const MU7_SYNTHETIC_DESIGN = {
-  design_version: 'SYN-7-LOCAL-WALKTHROUGH',
-  assignment_set_id: 'SYN7-ASSIGN-LOCAL-WALKTHROUGH',
+  design_version: 'SYN-7-SYNTHETIC-PILOT',
+  assignment_set_id: 'SYN7-ASSIGN-SYNTHETIC-PILOT',
   overlap_setting: 'ALLOW',
   n_primary_planned: 96,
   n_subgroup_planned: 4,

@@ -230,6 +230,9 @@ export interface Mu7GateStatus {
   blocks: string[];
   requirementStatus: 'PENDING_SPECIFICATION' | 'SPECIFIED';
   question: string;
+  /** The decision record an approval must name (SPECIFIED requirements only). */
+  decisionReference: string | null;
+  approvedAt: string | null;
   satisfied: boolean;
 }
 export interface Mu7RoutingCheck {
@@ -283,6 +286,8 @@ export type Mu7AdminAction =
   | { action: 'assign-pilot' }
   | { action: 'lock-pilot'; attestation: string }
   | { action: 'register-pilot-export'; notes?: string }
+  /** The investigator's own approval of a SPECIFIED gate; the server cites its decision record. */
+  | { action: 'approve-gate'; gateId: string; attestation: string }
   | { action: 'lock-account'; account: 'reviewer-a' | 'reviewer-b' | 'adjudicator'; reason: string }
   | { action: 'unlock-account'; account: 'reviewer-a' | 'reviewer-b' | 'adjudicator' };
 

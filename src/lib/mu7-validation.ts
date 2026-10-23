@@ -33,6 +33,13 @@ export const mu7AdminSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('import-pilot') }).strict(),
   z.object({ action: z.literal('import-training') }).strict(),
   z.object({ action: z.literal('assign-pilot') }).strict(),
+  z
+    .object({
+      action: z.literal('approve-gate'),
+      gateId: z.string().regex(/^G-[A-Z0-9-]{2,30}$/),
+      attestation,
+    })
+    .strict(),
   z.object({ action: z.literal('lock-pilot'), attestation }).strict(),
   z
     .object({ action: z.literal('register-pilot-export'), notes: z.string().max(2000).optional() })

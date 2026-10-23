@@ -55,9 +55,15 @@ test('v7 synthetic pilot through the application service, end to end', async () 
   let inv = await ws<Mu7InvestigatorWorkspace>(investigator);
   assert.equal(inv.design, null);
   assert.equal(inv.formalOperationsEnabled, false);
+  assert.equal(inv.gates.length, 10);
   assert.ok(
-    inv.gates.length === 10 &&
-      inv.gates.every((g) => g.requirementStatus === 'PENDING_SPECIFICATION' && !g.satisfied),
+    inv.gates.every((g) => !g.satisfied),
+    'nothing is approved',
+  );
+  assert.deepEqual(
+    inv.gates.filter((g) => g.requirementStatus === 'SPECIFIED').map((g) => g.gateId),
+    ['G-MH-V53', 'G-PAIN-01'],
+    'only the two gates migration 0028 specifies are ready for an approval',
   );
   assert.equal((await refusal(mu7AdminAction(reviewerA, { action: 'import-pilot' }))).status, 403);
   assert.match(
@@ -65,7 +71,7 @@ test('v7 synthetic pilot through the application service, end to end', async () 
     /^MU7-G10:/,
   );
   inv = await mu7AdminAction(investigator, { action: 'record-design', attestation: ATT });
-  assert.equal(inv.design?.designVersion, 'SYN-7-LOCAL-WALKTHROUGH');
+  assert.equal(inv.design?.designVersion, 'SYN-7-SYNTHETIC-PILOT');
   // The empty pilot cannot be locked (migration 0026, MU7X-G02).
   assert.match(
     (await refusal(mu7AdminAction(investigator, { action: 'lock-pilot', attestation: ATT })))
@@ -321,6 +327,68 @@ test('v7 synthetic pilot through the application service, end to end', async () 
   });
   assert.equal(inv.exports.length, 1);
   assert.equal(inv.exports[0].manifestSha256, bundle.manifestSha256);
+  // ---- gate approval controls (the investigator's own act) -----------------------------------
+  const PAIN_ATT = 'Synthetic local approval of G-PAIN-01 for the regression only.';
+  assert.equal(
+    (
+      await refusal(
+        mu7AdminAction(reviewerA, {
+          action: 'approve-gate',
+          gateId: 'G-PAIN-01',
+          attestation: PAIN_ATT,
+        }),
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await refusal(
+        mu7AdminAction(adjudicator, {
+          action: 'approve-gate',
+          gateId: 'G-PAIN-01',
+          attestation: PAIN_ATT,
+        }),
+      )
+    ).status,
+    403,
+  );
+  assert.match(
+    (
+      await refusal(
+        mu7AdminAction(investigator, {
+          action: 'approve-gate',
+          gateId: 'G-OVERLAP-01',
+          attestation: PAIN_ATT,
+        }),
+      )
+    ).message,
+    /pending specification/,
+  );
+  inv = await mu7AdminAction(investigator, {
+    action: 'approve-gate',
+    gateId: 'G-PAIN-01',
+    attestation: PAIN_ATT,
+  });
+  const pain = inv.gates.find((g) => g.gateId === 'G-PAIN-01')!;
+  assert.equal(pain.satisfied, true);
+  assert.equal(pain.decisionReference, 'investigator decisions 2026-10-23, addendum 8, item 40');
+  assert.equal(inv.formalOperationsEnabled, false);
+  assert.doesNotMatch(inv.formalDisabledReason, /G-PAIN-01/);
+  assert.match(inv.formalDisabledReason, /G-MH-V53, G-OVERLAP-01, G-PROV-01, G-TEXT-01/);
+  assert.equal(
+    (
+      await refusal(
+        mu7AdminAction(investigator, {
+          action: 'approve-gate',
+          gateId: 'G-PAIN-01',
+          attestation: PAIN_ATT,
+        }),
+      )
+    ).status,
+    409,
+    'an approval is recorded once',
+  );
   // Nothing FORMAL happened.
   assert.equal(inv.counts.formalUnits, 0);
   assert.ok(!inv.phaseEvents.some((e) => e.eventType.startsWith('FORMAL')));
