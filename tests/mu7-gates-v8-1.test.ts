@@ -255,3 +255,46 @@ test('with 0029 the investigator re-approves a re-specified gate citing its new 
     await f.db.close();
   }
 });
+
+// ---- Independent review of PR #11 (3d414f9): the per-unit freeze gate follows the current version
+async function supersededPainFreeze(withFix: boolean) {
+  const f = await formalOpen({
+    gates: [],
+    stopAfter: 'formalImport',
+    without: withFix ? [] : ['migrations/0030_v7_current_unit_freeze_gates.sql'],
+  });
+  try {
+    // The other freeze gates satisfied synthetically (this disposable database only).
+    await specifyAndApproveGates(f.db, ['G-PROV-01', 'G-OVERLAP-01', 'G-TEXT-01']);
+    assert.ok((await attempt(f.db, 'inv', approve('G-MH-V53', MH_RECORD))).ok);
+    assert.ok((await attempt(f.db, 'inv', approve('G-PAIN-01', PAIN_RECORD))).ok);
+    await reSpecifyPain(f.db, 'SYNTHETIC-TEST-RECORD-PAIN-V3');
+    assert.equal(await painSatisfied(f.db), false, 'the Pain approval is superseded');
+    const freeze = await attempt(f.db, 'inv', freezeSql());
+    let afterReapproval: Awaited<ReturnType<typeof attempt>> | null = null;
+    if (!freeze.ok) {
+      assert.ok(
+        (await attempt(f.db, 'inv', approve('G-PAIN-01', 'SYNTHETIC-TEST-RECORD-PAIN-V3'))).ok,
+      );
+      afterReapproval = await attempt(f.db, 'inv', freezeSql());
+    }
+    return { freeze, afterReapproval };
+  } finally {
+    await f.db.close();
+  }
+}
+
+test('without 0030 a superseded Pain approval still lets the Pain units be frozen (reproduced)', async () => {
+  const r = await supersededPainFreeze(false);
+  assert.ok(r.freeze.ok, 'reproduced: the freeze succeeds although G-PAIN-01 v3 is not approved');
+});
+
+test('with 0030 the Pain units wait for an approval of the current requirement version', async () => {
+  const r = await supersededPainFreeze(true);
+  assert.ok(!r.freeze.ok);
+  assert.match(
+    r.freeze.error,
+    /MU7X-G10: units wait for an approval of the current requirement of their gate: G-PAIN-01/,
+  );
+  assert.ok(r.afterReapproval?.ok, 'the freeze passes once the investigator approves version 3');
+});
