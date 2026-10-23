@@ -20,6 +20,7 @@ export interface SessionActor extends Actor {
   accessToken?: string;
   aal: 'aal1' | 'aal2';
   mfaEnrolled: boolean;
+  practiceReadOnly?: boolean;
 }
 export interface ResolvedSession {
   actor: SessionActor | null;
@@ -52,15 +53,16 @@ async function identityFor(
     { user_id: string; role: Actor['role']; is_pilot_test_account: boolean }[]
   >('rpc_whoami', {});
   if (!Array.isArray(who) || who.length !== 1) return null; // no active, unlocked application user
-  const rows = await client.select<{ display_name: string }>(
+  const rows = await client.select<{ display_name: string; practice_read_only: boolean }>(
     'users',
-    `select=display_name&user_id=eq.${who[0].user_id}`,
+    `select=display_name,practice_read_only&user_id=eq.${who[0].user_id}`,
   );
   return {
     id: who[0].user_id,
     role: who[0].role,
     displayName: rows[0]?.display_name ?? who[0].role,
     accessToken,
+    practiceReadOnly: rows[0]?.practice_read_only === true,
     aal: user.aal,
     mfaEnrolled: user.verifiedFactors.length > 0,
   };

@@ -1,12 +1,12 @@
 # Shared synthetic practice website: readiness and hosting plan
 
-Status: **not deployed, not ready to deploy.** This document records an inspection of the code at the PR #11 head (2026-10-23) and what remains before a shared practice website can run against the Supabase staging project. It authorizes nothing: no hosting account, purchase, deployment, invitation, real record or formal review. Local tests and the staging pilot do not establish deployment readiness; only the checks in section 5, run on the deployed URL, can.
+Status: **hosting preparation implemented; not deployed or verified on a public URL.** This document records an inspection of the code at the PR #11 head (2026-10-23) and what remains before a shared practice website can run against the Supabase staging project. It authorizes nothing: no hosting account, purchase, deployment, invitation, real record or formal review. Local tests and the staging pilot do not establish deployment readiness; only the checks in section 5, run on the deployed URL, can.
 
 ## 1. What a hosted instance would run
 
 The hosted instance is the Supabase deployment mode (`VERIFY_DATA_BACKEND=supabase`), the same production build that the staging pilot uses locally on port 3400:
 
-- **Sign-in**: usernames map to internal addresses; the server signs in through Supabase Auth (GoTrue REST) and keeps the session in HttpOnly cookies (`verify_sb_access`, and `verify_sb_refresh` scoped to `/api/session`, SameSite=Strict, `Secure` when the site origin is `https://`). The access token is verified with Auth on each request and refreshed server-side. Investigators need a verified TOTP factor (aal2) for investigator actions.
+- **Sign-in**: usernames map to internal addresses; the server signs in through Supabase Auth (GoTrue REST) and keeps the session in HttpOnly cookies (`verify_sb_access`, and `verify_sb_refresh` scoped to `/api/session`, SameSite=Lax for access and Strict for refresh, `Secure` when the site origin is `https://`). The access token is verified with Auth on each request and refreshed server-side. Investigators need a verified TOTP factor (aal2) for investigator actions.
 - **Data**: every read and write goes through PostgREST under the caller's own token; row-level security and `rpc_*` functions decide access. The web process holds only the publishable key; a secret key is refused at startup (`src/lib/supabase-config.ts`).
 - **Routes served**: multi-factor enrolment and verification, the mapping-confirmation routes (`/api/mc/*`) and the review design v7 routes (`/api/mu7/*`). The local-only pilot routes (v2/v4/v5 and the local tools) are not served in this mode (`withSupabaseActor`, `src/app/api/[...path]/route.ts`).
 
@@ -16,16 +16,16 @@ The hosted instance is the Supabase deployment mode (`VERIFY_DATA_BACKEND=supaba
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | PGlite database (`VERIFY_DB_DIR`, default `.local/pglite`)    | `src/server/db.ts`                                                                               | No: only the local routes and `src/server/mu7.ts` call `getDb()` | None, provided the mode is set. The package still contains PGlite (`serverExternalPackages`); it is never opened.                                                                                        |
 | Local sessions, invites, revocations, sign-in attempt counter | `globalThis` maps in `src/lib/auth.ts`                                                           | No                                                               | None. Sign-in throttling in Supabase mode is Auth's own rate limit (HTTP 429 passed through).                                                                                                            |
-| Auth verification cache, 30 s per access token                | `SupabaseAuth.cache` in `src/lib/supabase-auth.ts`                                               | Yes                                                              | Per instance only. A lock or ban takes effect within 30 s on each instance; acceptable for practice, to be stated in the reviewer instructions.                                                          |
+| Auth verification cache, 30 s per access token                | `SupabaseAuth.cache` in `src/lib/supabase-auth.ts`                                               | Yes                                                              | Auth verification is cached per instance for 30 s. Application locks are checked by rpc_whoami and RLS on each request; Auth-only revocation may take up to the cache lifetime.                          |
 | Supabase configuration and Auth client                        | `globalThis` in `src/server/session.ts`                                                          | Yes                                                              | Read once from the environment per process; a configuration change needs a restart.                                                                                                                      |
 | Build identity                                                | baked at build time (`scripts/build-identity.mjs`, clean Git tree only), or `VERIFY_APP_GIT_SHA` | Yes (exports attest to it)                                       | A host that builds without `.git` or from a dirty tree yields `unverified-local-build`, and exports must not be registered. Set `VERIFY_APP_GIT_SHA` to the deployed commit or build from a clean clone. |
 | Files                                                         | `src/server/tlv5.ts` reads an optional worked-examples file (local mode only)                    | No                                                               | No writable disk is needed; an ephemeral filesystem is fine.                                                                                                                                             |
 
-Conclusion: in Supabase mode the application keeps no state that must survive a restart, and nothing depends on the local disk. Several instances could serve it, with the 30 s revocation window above.
+Conclusion: in Supabase mode the application keeps no state that must survive a restart, and nothing depends on the local disk. Several instances could serve it, with the Auth verification cache limitation above.
 
 ## 3. Changes required before a hosted deployment
 
-1. **Hosted start command.** `npm start` binds `127.0.0.1`, and `scripts/supabase-web.mjs start` always sets `VERIFY_SITE_ORIGIN` to `http://127.0.0.1:<port>` (the port defaults to 3300), so neither works on a host. Add a hosted start path (for example `next start --hostname 0.0.0.0 --port "$PORT"`) that takes the variables of section 4 from the host environment, refuses to start unless `VERIFY_DATA_BACKEND=supabase` and `VERIFY_SITE_ORIGIN` is an `https://` origin, and refuses a secret key (already enforced).
+1. **Hosted start command (implemented in this branch).** `npm start` binds `127.0.0.1`, and `scripts/supabase-web.mjs start` always sets `VERIFY_SITE_ORIGIN` to `http://127.0.0.1:<port>` (the port defaults to 3300), so neither works on a host. Add a hosted start path (for example `next start --hostname 0.0.0.0 --port "$PORT"`) that takes the variables of section 4 from the host environment, refuses to start unless `VERIFY_DATA_BACKEND=supabase` and `VERIFY_SITE_ORIGIN` is an `https://` origin, and refuses a secret key (already enforced).
 2. **Origin and cookies behind the host's proxy.** Mutations are accepted only when `Origin` equals `VERIFY_SITE_ORIGIN`; with an `https://` origin cookies are `Secure`. Test both on the deployed URL (section 5), including the refresh cookie path.
 3. **Content Security Policy.** `next.config.ts` allows `'unsafe-eval'` and `'unsafe-inline'` for scripts. Check whether the production build needs them; tighten if not (nonce-based CSP otherwise).
 4. **Logging.** Confirm the host's request logs record no request or response bodies and no cookies; the application itself logs no payloads.
@@ -65,6 +65,61 @@ Never on the host: the database URL or password, the service-role or secret key,
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Render, Free web service** ([docs](https://render.com/docs/free))            | Long-running Node process; spins down after 15 min without inbound traffic, about one minute to wake; 750 free instance hours per workspace per month, then suspended until the next month; ephemeral filesystem; managed TLS and custom domains; Render says not to use Free instances for production | **Recommended for the practice site.** It runs the same `next start` server that the local production tests exercise, needs no adapter, and the application needs no disk. The wake-up delay and the production caveat are acceptable for synthetic practice only. |
 | Vercel, Hobby ([fair use](https://vercel.com/docs/limits/fair-use-guidelines)) | Restricted to non-commercial **personal** use; resource caps per month; serverless functions                                                                                                                                                                                                           | Native Next.js support, but a shared multi-person research site may not count as personal use. Eligibility should be confirmed with Vercel before use.                                                                                                             |
-| Paid hosting (any)                                                             | Not authorized                                                                                                                                                                                                                                                                                         | Needed for formal clinical review in any case, together with a Supabase plan that does not pause and has provider backups.                                                                                                                                         |
+| Hosting for formal review                                                      | Not authorized                                                                                                                                                                                                                                                                                         | Select and approve separately before formal review; assess availability, backup/restore, retention and applicable service terms. No purchase is authorized.                                                                                                        |
 
 The formal clinician review is a separate decision: it needs its own approval gates, a hosting and region decision, retention, backups that are tested end to end (Auth included), and none of the Free-plan caveats above.
+
+## 7. Render configuration for the synthetic site
+
+The separate `build:hosted` and `start:hosted` commands preserve the loopback-only
+local commands. Hosted startup refuses local authentication, HTTP origins,
+privileged environment variables, enabled/open registration, and an unverified or
+mismatched build commit. It uses `PORT`, binds all interfaces behind Render's TLS
+proxy and keeps the existing database authorization. It performs no migrations,
+imports, account creation or gate approvals.
+
+After review, create a **Web Service** from the approved feature branch (do not
+merge merely to deploy a test site). Choose **Node**, **Free**, and disable
+**Auto-Deploy**. Set the build command to `npm ci --include=dev && npm run build:hosted`
+and the start command to `npm run start:hosted`. Use `/` for the health-check path.
+Set `NODE_VERSION=22` to select the current supported Node 22 release.
+
+Set `VERIFY_DATA_BACKEND=supabase`, `VERIFY_SUPABASE_URL`, and
+`VERIFY_SUPABASE_PUBLISHABLE_KEY` from the private _web_ configuration. The account
+domain reference defaults to that project's reference. Render supplies
+`RENDER_EXTERNAL_URL`, `RENDER_GIT_COMMIT` and `PORT`; the launcher derives the
+HTTPS origin and validates the build identity against the deployed commit.
+Do not set a manual commit override. The build writes its verified commit into
+`.next/verify-build.json` after checking that the checkout remained clean.
+
+Never upload the admin configuration, database URL, account passwords, private
+backups, or service-role key. Check the selected plan is Free before creating the
+service. Stop if payment or an upgrade is required. A public URL still requires
+authentication to read application data; verify its cookies, role isolation and
+origin rejection before sharing it.
+
+The script policy uses a new nonce for each dynamically rendered response. It
+allows neither arbitrary inline scripts nor eval in production. Inline CSS
+remains permitted because existing components use style attributes. Documents
+are not cached. These controls need served-browser regression checks and a final
+check on the actual public HTTPS URL.
+
+### Practice data is a separate deployment prerequisite
+
+An optional `VERIFY_PUBLIC_LOGIN_CHOICES` environment value supplies the requested
+name selector. It is a JSON array of objects with exactly `username` and `label`.
+Only intentionally public sign-in labels belong here: the unauthenticated session
+endpoint returns them. Keep the actual roster in private deployment configuration,
+never in repository code. Labels can contain spaces; usernames retain the existing
+internal identity format. Passwords, roles and Auth IDs are refused in this value.
+Selecting a name grants no access: Supabase still verifies that account's password,
+and MFA and database permissions are unchanged. Without this optional setting,
+the existing username input remains available.
+
+The completed staging pilot is locked and must remain intact. Pointing a hosted
+app at that project allows inspection of completed work, not a fresh exercise.
+Before inviting colleagues, provision a separately approved practice database and
+individual role accounts, or implement a separately reviewed multi-campaign
+extension. Do not reset, unlock or delete the completed pilot. The current admin
+tool approves only the existing staging project; adding a new target requires an
+explicitly reviewed allowlist change, not a configuration bypass.

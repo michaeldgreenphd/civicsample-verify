@@ -17,7 +17,9 @@ import { Tlv5Panel } from './tlv5-workspace';
 import { McPanel } from './mapconf-workspace';
 import { Mu7Panel } from './mu7-workspace';
 import { MfaPanel } from './mfa-panel';
-type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean };
+import { PracticeObserverPanel } from './practice-observer';
+import type { LoginChoice } from '@/lib/login-choices';
+type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean; practiceReadOnly?: boolean };
 
 const decisions: { value: Decision; label: string; description: string }[] = [
   {
@@ -82,7 +84,7 @@ function Brand() {
     </a>
   );
 }
-function Header({ user, onLogout }: { user: Actor | null; onLogout: () => void }) {
+function Header({ user, onLogout }: { user: SessionUser | null; onLogout: () => void }) {
   return (
     <>
       <a className="skip-link" href="#main">
@@ -95,7 +97,9 @@ function Header({ user, onLogout }: { user: Actor | null; onLogout: () => void }
             <div className="account-area">
               <div className="account-name">
                 {user.displayName}
-                <span className="account-role">{readable(user.role)}</span>
+                <span className="account-role">
+                  {user.practiceReadOnly ? 'View-only practice' : readable(user.role)}
+                </span>
               </div>
               <button className="text-button" onClick={onLogout}>
                 Sign out
@@ -156,7 +160,15 @@ function Rubric() {
     </details>
   );
 }
-function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; environment: string }) {
+function Login({
+  onLogin,
+  environment,
+  choices,
+}: {
+  onLogin: (user: Actor) => void;
+  environment: string;
+  choices: LoginChoice[];
+}) {
   const hosted = environment !== 'synthetic';
   const [username, setUsername] = useState('');
   const [account, setAccount] = useState('reviewer-a');
@@ -209,7 +221,9 @@ function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; envir
         <h2>Enter the review workspace</h2>
         <p>
           {hosted
-            ? 'Sign in with your assigned username and password.'
+            ? choices.length
+              ? 'Select your name and enter your individual password.'
+              : 'Sign in with your assigned username and password.'
             : 'Select your assigned pilot account to continue.'}
         </p>
         {error && (
@@ -217,7 +231,29 @@ function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; envir
             {error}
           </div>
         )}
-        {hosted ? (
+        {hosted && choices.length ? (
+          <div className="field">
+            <label className="form-label" htmlFor="username">
+              Your name
+            </label>
+            <select
+              id="username"
+              autoComplete="username"
+              required
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            >
+              <option value="" disabled>
+                Select your name
+              </option>
+              {choices.map((choice) => (
+                <option key={choice.username} value={choice.username}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : hosted ? (
           <div className="field">
             <label className="form-label" htmlFor="username">
               Username
@@ -273,16 +309,21 @@ function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; envir
 export default function Home() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [environment, setEnvironment] = useState('synthetic');
+  const [loginChoices, setLoginChoices] = useState<LoginChoice[]>([]);
   const [initializing, setInitializing] = useState(true);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState('review');
   useEffect(() => {
-    api<{ user: SessionUser | null; environment: string }>('/api/session')
+    api<{ user: SessionUser | null; environment: string; loginChoices?: LoginChoice[] }>(
+      '/api/session',
+    )
       .then((d) => {
         setUser(d.user);
         setEnvironment(d.environment ?? 'synthetic');
+        setLoginChoices(d.loginChoices ?? []);
+        setTab(d.environment && d.environment !== 'synthetic' ? 'mu7' : 'review');
       })
       .catch((e) => setError(e.message))
       .finally(() => setInitializing(false));
@@ -314,7 +355,7 @@ export default function Home() {
       setSelected(null);
       setWorkspace(null);
       setError('');
-      setTab('review');
+      setTab(hosted ? 'mu7' : 'review');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -330,6 +371,7 @@ export default function Home() {
       ) : !user ? (
         <>
           <Login
+            choices={loginChoices}
             environment={environment}
             onLogin={(u) => {
               setError('');
@@ -347,13 +389,16 @@ export default function Home() {
           <div className="page-intro">
             <div>
               <div className="eyebrow">Supabase staging · synthetic records only</div>
-              <h1>Mapping confirmation</h1>
+              <h1>Clinical review practice</h1>
               <p className="intro-copy">
-                Signed in as {user.displayName}, {user.role.toLowerCase()}.
+                Signed in as {user.displayName},{' '}
+                {user.practiceReadOnly ? 'view-only practice' : user.role.toLowerCase()}.
               </p>
             </div>
           </div>
-          {user.role === 'INVESTIGATOR' && user.aal !== 'aal2' ? (
+          {user.practiceReadOnly ? (
+            <PracticeObserverPanel />
+          ) : user.role === 'INVESTIGATOR' && user.aal !== 'aal2' ? (
             <MfaPanel
               enrolled={user.mfaEnrolled === true}
               onVerified={() =>

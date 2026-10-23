@@ -185,7 +185,7 @@ export async function getMu7Workspace(ctx: Mu7Context): Promise<Mu7Workspace> {
   });
 }
 
-async function readTraining(d: Mu7Data): Promise<Mu7TrainingView[]> {
+export async function readTraining(d: Mu7Data): Promise<Mu7TrainingView[]> {
   const rows = await d.select<{ training_unit_id: string; packet: Record<string, unknown> }>(
     'mu7_training_units',
     { columns: ['training_unit_id', 'packet'], order: ['training_unit_id'] },

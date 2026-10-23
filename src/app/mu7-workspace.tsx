@@ -215,7 +215,7 @@ function Packet({ packet, ids = false }: { packet: Mu7Packet; ids?: boolean }) {
   );
 }
 
-function Training({
+export function Training({
   training,
   acknowledgedAt,
   onAcknowledge,

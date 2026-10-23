@@ -1,6 +1,9 @@
 import type { Metadata } from 'next';
 import './globals.css';
 
+// Each response must receive its own CSP nonce.
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: 'CivicSample Verify',
   description:

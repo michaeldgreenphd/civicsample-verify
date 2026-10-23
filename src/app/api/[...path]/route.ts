@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { observerRequestAllowed } from '@/lib/practice-observer';
+import { getPracticeObserverWorkspace } from '@/server/practice-observer';
+import { publicLoginChoices } from '@/lib/login-choices';
 import {
   ACCOUNTS,
   assertLocalRequest,
@@ -208,6 +211,7 @@ async function handle(request: Request) {
           {
             user: resolved.actor ? publicActor(resolved.actor) : null,
             environment: 'supabase-staging',
+            loginChoices: publicLoginChoices(),
           },
           200,
           {},
@@ -405,6 +409,11 @@ async function withSupabaseActor(
   const { config, auth } = supabaseRuntime();
   const secure = config.siteOrigin.startsWith('https://');
   if (!actor.accessToken) throw new HttpError(401, 'Sign in to continue.');
+  if (actor.practiceReadOnly) {
+    if (!observerRequestAllowed(request.method, path))
+      throw new HttpError(403, 'This account has view-only practice access.');
+    return json(await getPracticeObserverWorkspace(actor), 200, {}, setCookies);
+  }
   if (path === '/api/mfa/enroll' && request.method === 'POST') {
     const enrolment = await auth.enrollTotp(
       actor.accessToken,

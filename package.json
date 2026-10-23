@@ -34,7 +34,9 @@
     "test:handoff:v7:mutation": "node scripts/test-handoff-v7-mutation.mjs",
     "generate:tlv5-pilot": "node scripts/generate-tlv5-pilot-cases.mjs",
     "tlv5:staging-dryrun": "node --import tsx scripts/tlv5-staging-dryrun.ts",
-    "demo:mapconf": "node scripts/mapconf-demo.mjs"
+    "demo:mapconf": "node scripts/mapconf-demo.mjs",
+    "build:hosted": "node scripts/hosted-build.mjs",
+    "start:hosted": "node scripts/hosted-start.mjs"
   },
   "engines": {
     "node": ">=22.0.0"

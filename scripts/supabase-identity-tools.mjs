@@ -27,7 +27,10 @@ const exactKeys = (value, keys) =>
 /** The staging project this repository is approved to administer (docs/SUPABASE_IDENTITY.md). A
  *  privileged configuration naming any other reference is refused before any request, whatever
  *  it calls itself; this list changes only through a reviewed commit. */
-export const APPROVED_STAGING_PROJECT_REFS = Object.freeze(['xmuiduugdrqvhssmeacz']);
+export const APPROVED_STAGING_PROJECT_REFS = Object.freeze([
+  'xmuiduugdrqvhssmeacz', // Completed pilot; preserve its records.
+  'wjntsoeifbelasidssmv', // Separate synthetic practice project selected by the investigator.
+]);
 export const ROLES = ['INVESTIGATOR', 'REVIEWER', 'ADJUDICATOR'];
 export const USERNAME = /^[a-z][a-z0-9._-]{2,31}$/;
 /** Reserved, never-deliverable domain (RFC 2606): usernames map to internal Auth identities and
@@ -70,8 +73,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0028_v7_gate_specifications_v8_1.sql',
   'migrations/0029_v7_versioned_gate_approvals.sql',
   'migrations/0030_v7_current_unit_freeze_gates.sql',
+  'migrations/0031_practice_observer.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '7.0.5-v7-current-unit-freeze-gates';
+export const EXPECTED_SCHEMA_VERSION = '7.0.6-practice-observer';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -112,6 +116,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0028_v7_gate_specifications_v8_1.sql': ['7.0.3-v7-gate-specifications-v8-1'],
   'migrations/0029_v7_versioned_gate_approvals.sql': ['7.0.4-v7-versioned-gate-approvals'],
   'migrations/0030_v7_current_unit_freeze_gates.sql': ['7.0.5-v7-current-unit-freeze-gates'],
+  'migrations/0031_practice_observer.sql': ['7.0.6-practice-observer'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([
