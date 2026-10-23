@@ -1,5 +1,5 @@
 // Synthetic database-boundary fixtures for the mapping-confirmation module; never connects to an
-// application database. Builds on the v5 guard fixture (schema through 0013) and adds 0014 to 0024.
+// application database. Builds on the v5 guard fixture (schema through 0013) and adds 0014 to 0025.
 import { readFile } from 'node:fs/promises';
 import { GUARD_IDS, guardActor, seedGuardDatabase, type GuardDb } from './tlv5-guard-fixture';
 
@@ -44,6 +44,8 @@ export async function seedMcGuardDatabase(db: GuardDb) {
   await db.exec(await readFile('migrations/0022_service_role_admin_grants.sql', 'utf8'));
   await db.exec(await readFile('migrations/0023_service_role_truncate_revoke.sql', 'utf8'));
   await db.exec(await readFile('migrations/0024_v7_mapping_units.sql', 'utf8'));
+  await db.exec(await readFile('migrations/0025_v7_review_fixes.sql', 'utf8'));
+  await db.exec(await readFile('migrations/0026_v7_lifecycle_and_gates.sql', 'utf8'));
   await guardActor(db, 'investigator', async () => {
     await db.query('select public.rpc_mc_create_campaign($1::jsonb)', [
       JSON.stringify({
