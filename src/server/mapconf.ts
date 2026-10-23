@@ -134,14 +134,20 @@ const PUBLIC_ERRORS: [RegExp, number, string][] = [
   ],
 ];
 
+/** Map a database message to the fixed public error, or null when no pattern applies. Shared with
+ *  the PostgREST path so both deployment modes show the same messages. */
+export function mapconfPublicError(message: string): ServiceError | null {
+  for (const [pattern, status, text] of PUBLIC_ERRORS)
+    if (pattern.test(message)) return new ServiceError(status, text);
+  return null;
+}
 async function run<T>(actor: Actor, operation: (tx: Tx) => Promise<T>): Promise<T> {
   try {
     return await withActor(actor, operation);
   } catch (error) {
     if (error instanceof ServiceError) throw error;
-    const message = error instanceof Error ? error.message : '';
-    for (const [pattern, status, text] of PUBLIC_ERRORS)
-      if (pattern.test(message)) throw new ServiceError(status, text);
+    const mapped = mapconfPublicError(error instanceof Error ? error.message : '');
+    if (mapped) throw mapped;
     throw new ServiceError(500, 'The local review database could not complete this request.');
   }
 }
@@ -177,7 +183,7 @@ async function readCampaign(tx: Tx): Promise<McCampaignState | null> {
     createdAt: row.created_at,
   };
 }
-interface CaseRow {
+export interface CaseRow {
   case_id: string;
   record_category: McCaseView['recordCategory'];
   trial_ref: string;
@@ -193,7 +199,7 @@ interface CaseRow {
 const CASE_SELECT =
   'select case_id, record_category, trial_ref, condition_code, condition_label, condition_set_id, assignment, assignment_sha256, evidence, evidence_sha256, evidence_version from public.mc_cases';
 /** Allow-listed projection: only the keys the migration admits, re-selected by name. */
-function caseView(row: CaseRow): McCaseView {
+export function caseView(row: CaseRow): McCaseView {
   const e = row.evidence;
   const evidence: McEvidence = {
     schema_version: e.schema_version,

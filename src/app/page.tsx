@@ -15,6 +15,8 @@ import type {
 import { Icon } from '@/components/icons';
 import { Tlv5Panel } from './tlv5-workspace';
 import { McPanel } from './mapconf-workspace';
+import { MfaPanel } from './mfa-panel';
+type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean };
 
 const decisions: { value: Decision; label: string; description: string }[] = [
   {
@@ -153,7 +155,9 @@ function Rubric() {
     </details>
   );
 }
-function Login({ onLogin }: { onLogin: (user: Actor) => void }) {
+function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; environment: string }) {
+  const hosted = environment !== 'synthetic';
+  const [username, setUsername] = useState('');
   const [account, setAccount] = useState('reviewer-a');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -165,7 +169,9 @@ function Login({ onLogin }: { onLogin: (user: Actor) => void }) {
     try {
       const data = await api<{ user: Actor }>('/api/session', {
         method: 'POST',
-        body: JSON.stringify({ account, password }),
+        body: JSON.stringify(
+          hosted ? { username: username.trim().toLowerCase(), password } : { account, password },
+        ),
       });
       onLogin(data.user);
     } catch (e) {
@@ -200,23 +206,42 @@ function Login({ onLogin }: { onLogin: (user: Actor) => void }) {
       </section>
       <form className="auth-form" onSubmit={submit}>
         <h2>Enter the review workspace</h2>
-        <p>Select your assigned pilot account to continue.</p>
+        <p>
+          {hosted
+            ? 'Sign in with your assigned username and password.'
+            : 'Select your assigned pilot account to continue.'}
+        </p>
         {error && (
           <div role="alert" className="notice error">
             {error}
           </div>
         )}
-        <div className="field">
-          <label className="form-label" htmlFor="account">
-            Pilot account
-          </label>
-          <select id="account" value={account} onChange={(e) => setAccount(e.target.value)}>
-            <option value="reviewer-a">Reviewer A</option>
-            <option value="reviewer-b">Reviewer B</option>
-            <option value="investigator">Investigator</option>
-            <option value="adjudicator">Adjudicator</option>
-          </select>
-        </div>
+        {hosted ? (
+          <div className="field">
+            <label className="form-label" htmlFor="username">
+              Username
+            </label>
+            <input
+              id="username"
+              autoComplete="username"
+              required
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+          </div>
+        ) : (
+          <div className="field">
+            <label className="form-label" htmlFor="account">
+              Pilot account
+            </label>
+            <select id="account" value={account} onChange={(e) => setAccount(e.target.value)}>
+              <option value="reviewer-a">Reviewer A</option>
+              <option value="reviewer-b">Reviewer B</option>
+              <option value="investigator">Investigator</option>
+              <option value="adjudicator">Adjudicator</option>
+            </select>
+          </div>
+        )}
         <div className="field">
           <label className="form-label" htmlFor="password">
             Password
@@ -235,8 +260,9 @@ function Login({ onLogin }: { onLogin: (user: Actor) => void }) {
           <Icon name="arrow" size={14} />
         </button>
         <div className="auth-note">
-          Use the password for your assigned role from local setup. Access is limited to synthetic
-          fixtures; formal-study activation is disabled.
+          {hosted
+            ? 'Staging environment on Supabase: synthetic accounts and records only; formal-study activation is disabled.'
+            : 'Use the password for your assigned role from local setup. Access is limited to synthetic fixtures; formal-study activation is disabled.'}
         </div>
       </form>
     </main>
@@ -244,15 +270,19 @@ function Login({ onLogin }: { onLogin: (user: Actor) => void }) {
 }
 
 export default function Home() {
-  const [user, setUser] = useState<Actor | null>(null);
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [environment, setEnvironment] = useState('synthetic');
   const [initializing, setInitializing] = useState(true);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState('review');
   useEffect(() => {
-    api<{ user: Actor | null }>('/api/session')
-      .then((d) => setUser(d.user))
+    api<{ user: SessionUser | null; environment: string }>('/api/session')
+      .then((d) => {
+        setUser(d.user);
+        setEnvironment(d.environment ?? 'synthetic');
+      })
       .catch((e) => setError(e.message))
       .finally(() => setInitializing(false));
   }, []);
@@ -266,15 +296,16 @@ export default function Home() {
     );
     return next;
   }, []);
+  const hosted = environment !== 'synthetic';
   useEffect(() => {
-    if (!user) return;
+    if (!user || hosted) return;
     api<Workspace>('/api/workspace')
       .then((next) => {
         setWorkspace(next);
         setSelected(next.queue[0]?.caseId ?? null);
       })
       .catch((e) => setError(e.message));
-  }, [user]);
+  }, [user, hosted]);
   async function logout() {
     try {
       await api('/api/session', { method: 'DELETE' });
@@ -298,6 +329,7 @@ export default function Home() {
       ) : !user ? (
         <>
           <Login
+            environment={environment}
             onLogin={(u) => {
               setError('');
               setUser(u);
@@ -309,6 +341,36 @@ export default function Home() {
             </p>
           )}
         </>
+      ) : hosted ? (
+        <main id="main" className="app-shell">
+          <div className="page-intro">
+            <div>
+              <div className="eyebrow">Supabase staging · synthetic records only</div>
+              <h1>Mapping confirmation</h1>
+              <p className="intro-copy">
+                Signed in as {user.displayName} ({user.role}). The local synthetic pilot workflows
+                are not served in this deployment mode.
+              </p>
+            </div>
+          </div>
+          {user.role === 'INVESTIGATOR' && user.aal !== 'aal2' ? (
+            <MfaPanel
+              enrolled={user.mfaEnrolled === true}
+              onVerified={() =>
+                api<{ user: SessionUser | null }>('/api/session')
+                  .then((d) => setUser(d.user))
+                  .catch((e) => setError(e.message))
+              }
+            />
+          ) : (
+            <McPanel user={user} />
+          )}
+          {error && (
+            <div className="notice error" role="alert">
+              {error}
+            </div>
+          )}
+        </main>
       ) : (
         <main id="main" className="app-shell">
           <div className="page-intro">
