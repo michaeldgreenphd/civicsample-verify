@@ -41,25 +41,36 @@ export const internalEmail = (username: string, ref: string) =>
  *  payload percent-encoded to render it as an image source. */
 /** The raw SVG markup of an SVG data URI, or null when the value is not one or is not plain
  *  vector markup (no scripts, no event handlers, no external references). */
-export function svgMarkupFromDataUri(value: string): string | null {
+/** Auth returns the TOTP QR either as raw SVG markup or as an svg+xml data URI; both are accepted. */
+function svgPayload(value: string): string | null {
   const m = /^data:image\/svg\+xml(?:;utf-?8|;charset=utf-8)?,(.*)$/s.exec(value);
-  if (!m) return null;
-  let markup = m[1];
-  try {
-    markup = decodeURIComponent(markup);
-  } catch {
-    /* already raw */
+  if (m) {
+    try {
+      return decodeURIComponent(m[1]);
+    } catch {
+      return m[1];
+    }
   }
-  const trimmed = markup.trim();
+  return /^\s*(?:<\?xml|<!--|<svg)/i.test(value) ? value : null;
+}
+export function svgMarkupFromDataUri(value: string): string | null {
+  const markup = svgPayload(value);
+  if (markup === null) return null;
+  // Auth's TOTP QR (SVGo) starts with an XML declaration and a comment; strip those before validating.
+  const trimmed = markup
+    .replace(/^\s*<\?xml[^>]*\?>/i, '')
+    .replace(/^\s*(?:<!--[\s\S]*?-->\s*)+/, '')
+    .trim();
   if (!/^<svg[\s>]/i.test(trimmed) || !/<\/svg>\s*$/i.test(trimmed)) return null;
+  if (/<!DOCTYPE|<!ENTITY|<\?/i.test(trimmed)) return null;
   if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:|href\s*=\s*["']?(?!#)/i.test(trimmed))
     return null;
   return trimmed;
 }
 export function normaliseSvgDataUri(value: string): string {
-  const m = /^data:image\/svg\+xml(?:;utf-?8)?,(.*)$/s.exec(value);
-  if (!m) return value;
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(m[1])}`;
+  const markup = svgPayload(value);
+  if (markup === null) return value;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`;
 }
 
 function decodeClaims(token: string): Record<string, unknown> {
