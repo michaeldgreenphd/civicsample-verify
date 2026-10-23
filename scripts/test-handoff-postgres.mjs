@@ -88,6 +88,28 @@ try {
     const combinedV5 = await concat('combined_0002_0003_0011_0012.sql', [m2, m3, m11, m12]);
     const combinedV5From3 = await concat('combined_0003_0011_0012.sql', [m3, m11, m12]);
     const combinedApp = await concat('combined_app_0003_to_0010.sql', [m3, ...app]);
+    // v7 (supplied NNNN = repo 0024) on this repository's own chain, in the seven-base-file shape
+    // the supplied suite takes: schema, 0002, 0003, repo 0004-0010 + 0011, 0012, repo 0013-0023.
+    const tail = [
+      'migrations/0013_v5_independent_finality_guards.sql',
+      'migrations/0014_legacy_pilot_and_packet_guards.sql',
+      'migrations/0015_v5_review_fixes.sql',
+      'migrations/0016_mapping_confirmation.sql',
+      'migrations/0017_v5_rubric_binding.sql',
+      'migrations/0018_mapping_confirmation_review_fixes.sql',
+      'migrations/0019_v5_rubric_binding_reconciliation.sql',
+      'migrations/0020_mapping_confirmation_completeness_and_serialization.sql',
+      'migrations/0021_account_locks.sql',
+      'migrations/0022_service_role_admin_grants.sql',
+      'migrations/0023_service_role_truncate_revoke.sql',
+    ].map((file) => join(root, file));
+    const m24 = join(root, 'migrations/0024_v7_mapping_units.sql');
+    const chainApp0004to0011 = await concat('chain_app_0004_to_0011.sql', [...app, m11]);
+    const chainApp0013to0023 = await concat('chain_app_0013_to_0023.sql', tail);
+    const v7Fixtures = [
+      join(root, 'tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json'),
+      join(root, 'tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json'),
+    ];
     report.schema_sha256 = {};
     for (const [label, file] of [
       ['base', schema],
@@ -95,6 +117,7 @@ try {
       ['0003', m3],
       ['0011', m11],
       ['0012', m12],
+      ['0024', m24],
     ]) {
       report.schema_sha256[label] = createHash('sha256')
         .update(await readFile(file))
@@ -120,6 +143,16 @@ try {
           534,
           3,
           ['V5-SCHEMA-01'],
+        ],
+        // The supplied v7 suite opens four databases (the catalogue base, db1, db2, db3).
+        // MU7-SCHEMA-01 lists the schema versions and sees this repository's own markers.
+        [
+          'v7-on-app-chain',
+          'v7',
+          [shim, schema, m2, m3, chainApp0004to0011, m12, chainApp0013to0023, m24, ...v7Fixtures],
+          362,
+          4,
+          ['MU7-SCHEMA-01'],
         ],
       ]) {
         report.stage = name;

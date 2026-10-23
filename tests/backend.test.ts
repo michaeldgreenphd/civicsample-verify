@@ -89,6 +89,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
       '6.0.3-account-locks',
       '6.0.4-service-role-admin-grants',
       '6.0.5-service-role-truncate-revoke',
+      '7.0.0',
     ],
   );
   const initialAdmin = await getWorkspace(investigator);

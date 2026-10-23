@@ -1,0 +1,1108 @@
+{
+  "format": "mu7_synthetic_pilot_units",
+  "format_version": "7.0",
+  "design_version": "review-design-v7.0.0",
+  "status": "SYNTHETIC: fictional trials for the app walkthrough and the database tests; never analysed",
+  "planted_refusals": [
+    {
+      "what": "a subgroup answer before every primary unit is answered",
+      "expected_error_tag": "MU7-G33"
+    },
+    {
+      "what": "a subgroup unit fetched before every primary unit is answered",
+      "expected_error_tag": "MU7-G30"
+    },
+    {
+      "what": "DISAGREE without a note",
+      "expected_error_tag": "MU7-G36"
+    },
+    {
+      "what": "DISAGREE with a reason code that does not fit the assignment",
+      "expected_error_tag": "MU7-G35"
+    }
+  ],
+  "use": "send units[i].import to rpc_mu7_import_unit unchanged; units[i].walkthrough holds the planted answers the walkthrough script enters and is never sent to the database",
+  "units": [
+    {
+      "import": {
+        "unit_id": "SYN7-AREA-ONCOLOGY-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "AREA",
+        "category": "ONCOLOGY",
+        "unit_role": "PRIMARY",
+        "mapping_code": "AREA_ONCOLOGY",
+        "assignment_code": "IN_AREA",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-AREA-ONCOLOGY-001",
+            "mode": "PILOT",
+            "family": "AREA",
+            "category": "ONCOLOGY",
+            "unit_role": "PRIMARY",
+            "mapping_code": "AREA_ONCOLOGY",
+            "mapping_label": "Therapeutic area: Oncology (parent MeSH category C04 Neoplasms)",
+            "assignment_code": "IN_AREA",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this area"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9101",
+            "brief_title": "Synthetic trial 1 of a fictional therapy",
+            "official_title": "A synthetic study 1 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 1"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 1"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9101",
+          "frame_id": "SYN_FRAME",
+          "stratum": "AREA-ONCOLOGY",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "BOTH_AGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-AREA-RESPIRATORY-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "AREA",
+        "category": "RESPIRATORY",
+        "unit_role": "PRIMARY",
+        "mapping_code": "AREA_RESPIRATORY",
+        "assignment_code": "IN_AREA",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-AREA-RESPIRATORY-001",
+            "mode": "PILOT",
+            "family": "AREA",
+            "category": "RESPIRATORY",
+            "unit_role": "PRIMARY",
+            "mapping_code": "AREA_RESPIRATORY",
+            "mapping_label": "Therapeutic area: Respiratory (parent MeSH category C08 Respiratory Tract Diseases)",
+            "assignment_code": "IN_AREA",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this area"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9102",
+            "brief_title": "Synthetic trial 2 of a fictional therapy",
+            "official_title": "A synthetic study 2 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 2"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 2"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9102",
+          "frame_id": "SYN_FRAME",
+          "stratum": "AREA-RESPIRATORY",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": "Synthetic note: agrees, unsure about the neoplasm policy.",
+            "uncertain": true
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "DISAGREE",
+            "reason_code": "ORGAN_OF_ORIGIN_ONLY",
+            "note": "Synthetic note: a cancer of the lung only.",
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "AGREE_VS_DISAGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-AREA-CARDIOVASCULAR-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "AREA",
+        "category": "CARDIOVASCULAR",
+        "unit_role": "PRIMARY",
+        "mapping_code": "AREA_CARDIOVASCULAR",
+        "assignment_code": "IN_AREA",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-AREA-CARDIOVASCULAR-001",
+            "mode": "PILOT",
+            "family": "AREA",
+            "category": "CARDIOVASCULAR",
+            "unit_role": "PRIMARY",
+            "mapping_code": "AREA_CARDIOVASCULAR",
+            "mapping_label": "Therapeutic area: Cardiovascular (parent MeSH category C14 Cardiovascular Diseases)",
+            "assignment_code": "IN_AREA",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this area"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9103",
+            "brief_title": "Synthetic trial 3 of a fictional therapy",
+            "official_title": "A synthetic study 3 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 3"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 3"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9103",
+          "frame_id": "SYN_FRAME",
+          "stratum": "AREA-CARDIOVASCULAR",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "DISAGREE",
+            "reason_code": "MESH_PLACEMENT_MISLEADING",
+            "note": "Synthetic note: MeSH placement only.",
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "DISAGREE",
+            "reason_code": "NOT_THE_CONDITION_STUDIED",
+            "note": "Synthetic note: not the condition studied.",
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "BOTH_DISAGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-AREA-MENTAL_HEALTH-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "AREA",
+        "category": "MENTAL_HEALTH",
+        "unit_role": "PRIMARY",
+        "mapping_code": "AREA_MENTAL_HEALTH",
+        "assignment_code": "IN_AREA",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-AREA-MENTAL_HEALTH-001",
+            "mode": "PILOT",
+            "family": "AREA",
+            "category": "MENTAL_HEALTH",
+            "unit_role": "PRIMARY",
+            "mapping_code": "AREA_MENTAL_HEALTH",
+            "mapping_label": "Therapeutic area: Mental health (MeSH F03 Mental Disorders, and the heading Depression (D003863) by the study rule)",
+            "assignment_code": "IN_AREA",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this area",
+            "display_note": "The trial's MeSH heading Depression is counted as Mental health by the study rule; MeSH files it under Behavior."
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9104",
+            "brief_title": "Synthetic trial 4 of a fictional therapy",
+            "official_title": "A synthetic study 4 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 4"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 4"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9104",
+          "frame_id": "SYN_FRAME",
+          "stratum": "AREA-MENTAL_HEALTH",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "CANNOT_TELL",
+            "reason_code": null,
+            "note": null,
+            "uncertain": true
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "ONE_CANNOT_TELL"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-AREA-NEUROLOGICAL-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "AREA",
+        "category": "NEUROLOGICAL",
+        "unit_role": "PRIMARY",
+        "mapping_code": "AREA_NEUROLOGICAL",
+        "assignment_code": "IN_AREA",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-AREA-NEUROLOGICAL-001",
+            "mode": "PILOT",
+            "family": "AREA",
+            "category": "NEUROLOGICAL",
+            "unit_role": "PRIMARY",
+            "mapping_code": "AREA_NEUROLOGICAL",
+            "mapping_label": "Therapeutic area: Neurological (parent MeSH category C10 Nervous System Diseases)",
+            "assignment_code": "IN_AREA",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this area"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9105",
+            "brief_title": "Synthetic trial 5 of a fictional therapy",
+            "official_title": "A synthetic study 5 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 5"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 5"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9105",
+          "frame_id": "SYN_FRAME",
+          "stratum": "AREA-NEUROLOGICAL",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "CANNOT_TELL",
+            "reason_code": null,
+            "note": null,
+            "uncertain": true
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "CANNOT_TELL",
+            "reason_code": null,
+            "note": "Synthetic note: the registry text is too short.",
+            "uncertain": true
+          }
+        ],
+        "expected_routing": "BOTH_CANNOT_TELL"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-ROW-CAN_ALL-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "ROW",
+        "category": "CAN_ALL",
+        "unit_role": "PRIMARY",
+        "mapping_code": "FIG2_ROW_CAN_ALL",
+        "assignment_code": "IN_ROW",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-ROW-CAN_ALL-001",
+            "mode": "PILOT",
+            "family": "ROW",
+            "category": "CAN_ALL",
+            "unit_role": "PRIMARY",
+            "mapping_code": "FIG2_ROW_CAN_ALL",
+            "mapping_label": "Figure 2 condition row: Neoplasms",
+            "assignment_code": "IN_ROW",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this row"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9106",
+            "brief_title": "Synthetic trial 6 of a fictional therapy",
+            "official_title": "A synthetic study 6 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 6"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 6"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY. See also NCT99000777 and the record at clinicaltrials.gov (synthetic placeholder).",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9106",
+          "frame_id": "SYN_FRAME",
+          "stratum": "ROW-CAN_ALL",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "BOTH_AGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-ROW-DIAB-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "ROW",
+        "category": "DIAB",
+        "unit_role": "PRIMARY",
+        "mapping_code": "FIG2_ROW_DIAB",
+        "assignment_code": "IN_ROW",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-ROW-DIAB-001",
+            "mode": "PILOT",
+            "family": "ROW",
+            "category": "DIAB",
+            "unit_role": "PRIMARY",
+            "mapping_code": "FIG2_ROW_DIAB",
+            "mapping_label": "Figure 2 condition row: Diabetes Mellitus",
+            "assignment_code": "IN_ROW",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this row"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9107",
+            "brief_title": "Synthetic trial 7 of a fictional therapy",
+            "official_title": "A synthetic study 7 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 7"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 7"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9107",
+          "frame_id": "SYN_FRAME",
+          "stratum": "ROW-DIAB",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "DISAGREE",
+            "reason_code": "NOT_THE_CONDITION_STUDIED",
+            "note": "Synthetic note: prediabetes, not diabetes.",
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "AGREE_VS_DISAGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-ROW-PAIN-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "ROW",
+        "category": "PAIN",
+        "unit_role": "PRIMARY",
+        "mapping_code": "FIG2_ROW_PAIN",
+        "assignment_code": "IN_ROW",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": null,
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-ROW-PAIN-001",
+            "mode": "PILOT",
+            "family": "ROW",
+            "category": "PAIN",
+            "unit_role": "PRIMARY",
+            "mapping_code": "FIG2_ROW_PAIN",
+            "mapping_label": "Figure 2 condition row: Pain",
+            "assignment_code": "IN_ROW",
+            "assignment_status": "ASSIGNED",
+            "display_text": "in this row"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9108",
+            "brief_title": "Synthetic trial 8 of a fictional therapy",
+            "official_title": "A synthetic study 8 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 8"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 8"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9108",
+          "frame_id": "SYN_FRAME",
+          "stratum": "ROW-PAIN",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "BOTH_AGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-SG-RULE_D_KEPT-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "SG",
+        "category": "RULE_D_KEPT",
+        "unit_role": "SUBGROUP",
+        "mapping_code": "RULE_D",
+        "assignment_code": "D1_KEEP_TYPE2",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": "FIG2_ROW_DIAB",
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-SG-RULE_D_KEPT-001",
+            "mode": "PILOT",
+            "family": "SG",
+            "category": "RULE_D_KEPT",
+            "unit_role": "SUBGROUP",
+            "mapping_code": "RULE_D",
+            "mapping_label": "Rule D, diabetes type",
+            "assignment_code": "D1_KEEP_TYPE2",
+            "assignment_status": "ASSIGNED",
+            "display_text": "type 2 diabetes",
+            "display_decision": "KEEP: kept in the Diabetes Mellitus row",
+            "parent_row_code": "FIG2_ROW_DIAB",
+            "parent_row_label": "Diabetes Mellitus"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9109",
+            "brief_title": "Synthetic trial 9 of a fictional therapy",
+            "official_title": "A synthetic study 9 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 9"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 9"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9109",
+          "frame_id": "SYN_FRAME",
+          "stratum": "SG-RULE_D_KEPT",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "BOTH_AGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-SG-RULE_D_REMOVED-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "SG",
+        "category": "RULE_D_REMOVED",
+        "unit_role": "SUBGROUP",
+        "mapping_code": "RULE_D",
+        "assignment_code": "D2_REMOVE_OTHER_TYPE",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": "FIG2_ROW_DIAB",
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-SG-RULE_D_REMOVED-001",
+            "mode": "PILOT",
+            "family": "SG",
+            "category": "RULE_D_REMOVED",
+            "unit_role": "SUBGROUP",
+            "mapping_code": "RULE_D",
+            "mapping_label": "Rule D, diabetes type",
+            "assignment_code": "D2_REMOVE_OTHER_TYPE",
+            "assignment_status": "ASSIGNED",
+            "display_text": "type 1, gestational or another specified type of diabetes, with no type 2 heading",
+            "display_decision": "REMOVE: removed from the Diabetes Mellitus row",
+            "parent_row_code": "FIG2_ROW_DIAB",
+            "parent_row_label": "Diabetes Mellitus"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9110",
+            "brief_title": "Synthetic trial 10 of a fictional therapy",
+            "official_title": "A synthetic study 10 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 10"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 10"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9110",
+          "frame_id": "SYN_FRAME",
+          "stratum": "SG-RULE_D_REMOVED",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "DISAGREE",
+            "reason_code": "TYPE_2_STUDIED",
+            "note": "Synthetic note: the summary states type 2 diabetes.",
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "AGREE_VS_DISAGREE"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-SG-RULE_K_KEPT-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "SG",
+        "category": "RULE_K_KEPT",
+        "unit_role": "SUBGROUP",
+        "mapping_code": "RULE_K",
+        "assignment_code": "K_KEEP_MALIGNANT_COMPATIBLE",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": "FIG2_ROW_CAN_ALL",
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-SG-RULE_K_KEPT-001",
+            "mode": "PILOT",
+            "family": "SG",
+            "category": "RULE_K_KEPT",
+            "unit_role": "SUBGROUP",
+            "mapping_code": "RULE_K",
+            "mapping_label": "Rule K, malignancy",
+            "assignment_code": "K_KEEP_MALIGNANT_COMPATIBLE",
+            "assignment_status": "ASSIGNED",
+            "display_text": "malignant neoplasm, counted in the Neoplasms row",
+            "display_decision": "KEEP: kept in the Neoplasms row",
+            "parent_row_code": "FIG2_ROW_CAN_ALL",
+            "parent_row_label": "Neoplasms"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9111",
+            "brief_title": "Synthetic trial 11 of a fictional therapy",
+            "official_title": "A synthetic study 11 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 11"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 11"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9111",
+          "frame_id": "SYN_FRAME",
+          "stratum": "SG-RULE_K_KEPT",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "CANNOT_TELL",
+            "reason_code": null,
+            "note": null,
+            "uncertain": true
+          }
+        ],
+        "expected_routing": "ONE_CANNOT_TELL"
+      }
+    },
+    {
+      "import": {
+        "unit_id": "SYN7-SG-RULE_K_REMOVED-001",
+        "mode": "PILOT",
+        "record_category": "SYNTHETIC_PILOT",
+        "family": "SG",
+        "category": "RULE_K_REMOVED",
+        "unit_role": "SUBGROUP",
+        "mapping_code": "RULE_K",
+        "assignment_code": "K_REMOVE_VERIFIED_NONMALIGNANT",
+        "assignment_status": "ASSIGNED",
+        "parent_row_code": "FIG2_ROW_CAN_ALL",
+        "packet": {
+          "schema_version": "7.0",
+          "unit": {
+            "unit_id": "SYN7-SG-RULE_K_REMOVED-001",
+            "mode": "PILOT",
+            "family": "SG",
+            "category": "RULE_K_REMOVED",
+            "unit_role": "SUBGROUP",
+            "mapping_code": "RULE_K",
+            "mapping_label": "Rule K, malignancy",
+            "assignment_code": "K_REMOVE_VERIFIED_NONMALIGNANT",
+            "assignment_status": "ASSIGNED",
+            "display_text": "non-malignant condition only (every neoplasm heading is a cyst, hamartoma or precancerous condition)",
+            "display_decision": "REMOVE: removed from the Neoplasms row",
+            "parent_row_code": "FIG2_ROW_CAN_ALL",
+            "parent_row_label": "Neoplasms"
+          },
+          "trial": {
+            "nct_id": "SYN-NCT-9112",
+            "brief_title": "Synthetic trial 12 of a fictional therapy",
+            "official_title": "A synthetic study 12 for application testing only",
+            "conditions_registered": [
+              "Synthetic condition 12"
+            ],
+            "condition_mesh_headings": [
+              "Synthetic heading 12"
+            ],
+            "brief_summary": "SYNTHETIC TEXT FOR APP TESTING ONLY.",
+            "interventions": [
+              {
+                "intervention_type": "DRUG",
+                "name": "Synthetic drug",
+                "description": "fictional"
+              }
+            ],
+            "eligibility_age_range": {
+              "minimum_age": "18 Years",
+              "maximum_age": "N/A"
+            }
+          },
+          "notices": [
+            "SYNTHETIC UNIT: excluded from every statistic"
+          ]
+        },
+        "design": {
+          "nct_id": "SYN-NCT-9112",
+          "frame_id": "SYN_FRAME",
+          "stratum": "SG-RULE_K_REMOVED",
+          "frame_stratum_size": 40,
+          "n_sampled_in_stratum": 4,
+          "selection_probability": 0.1,
+          "sampling_seed": 1,
+          "prn_key": "0000000000000000000000000000000000000000000000000000000000000000",
+          "allocation_option": "A",
+          "overlap_setting": "ALLOW",
+          "design_version": "SYN-7",
+          "freeze_status": "READY",
+          "freeze_gate": null
+        }
+      },
+      "walkthrough": {
+        "planted_answers": [
+          {
+            "reviewer_slot": 1,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          },
+          {
+            "reviewer_slot": 2,
+            "answer": "AGREE",
+            "reason_code": null,
+            "note": null,
+            "uncertain": false
+          }
+        ],
+        "expected_routing": "BOTH_AGREE"
+      }
+    }
+  ]
+}

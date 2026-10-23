@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -227,7 +227,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
-  assert.equal(plan.schema.expectedFinalVersion, '6.0.5-service-role-truncate-revoke');
+  assert.equal(plan.schema.expectedFinalVersion, '7.0.0');
   assert.equal(plan.database, null);
   const withDb = config({
     databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,
@@ -250,6 +250,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
     'a changed destination changes the reviewed hash',
   );
   assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0023_service_role_truncate_revoke.sql'));
+  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0024_v7_mapping_units.sql'));
   assert.deepEqual(SCHEMA_FILE_MARKERS['migrations/0018_mapping_confirmation_review_fixes.sql'], [
     '6.0.1-mapping-confirmation-review-fixes',
   ]);
@@ -529,4 +530,20 @@ test('CLI: blocked without a private configuration; dry run prints the plan and 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('the operator documentation names the same bootstrap target as the plan', () => {
+  const doc = readFileSync('docs/SUPABASE_IDENTITY.md', 'utf8');
+  const last = (HOSTED_SCHEMA_FILES as string[])
+    .filter((f) => /^migrations\/\d{4}_/.test(f))
+    .at(-1)!;
+  const number = last.slice('migrations/'.length, 'migrations/'.length + 4);
+  assert.ok(
+    doc.includes(`migrations 0002 to ${number}`),
+    `docs must list migrations through ${number}`,
+  );
+  assert.ok(
+    doc.includes(`\`${EXPECTED_SCHEMA_VERSION}\``),
+    `docs must name ${EXPECTED_SCHEMA_VERSION}`,
+  );
 });

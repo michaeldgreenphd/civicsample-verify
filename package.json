@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname 127.0.0.1",
     "build": "NEXT_TELEMETRY_DISABLED=1 next build && node scripts/check-build-traces.mjs",
-    "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --keepAliveTimeout 70000",
     "setup": "node scripts/setup.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -14,7 +14,7 @@
     "test": "node --import tsx --test --test-concurrency=1 tests/*.test.ts",
     "test:e2e": "playwright test",
     "check:fixtures": "node scripts/check-fixtures.mjs",
-    "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures && npm run check:leakage:v4 && npm run check:leakage:v5",
+    "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures && npm run check:leakage:v4 && npm run check:leakage:v5 && npm run check:leakage:v7",
     "test:analysis": "python3 -m pytest -q analysis",
     "prepare": "git config core.hooksPath .githooks",
     "test:handoff": "node scripts/test-handoff.mjs",
@@ -30,6 +30,8 @@
     "test:supabase:live": "node --import tsx --test tests/staging-live.test.ts",
     "mapconf:import-plan": "node --import tsx scripts/mapconf-import-plan.mjs",
     "check:leakage:v5": "python3 tools/check_public_repo_leakage_v5.py --tree",
+    "check:leakage:v7": "python3 tools/check_public_repo_leakage_v7.py --tree",
+    "test:handoff:v7:mutation": "node scripts/test-handoff-v7-mutation.mjs",
     "generate:tlv5-pilot": "node scripts/generate-tlv5-pilot-cases.mjs",
     "tlv5:staging-dryrun": "node --import tsx scripts/tlv5-staging-dryrun.ts",
     "demo:mapconf": "node scripts/mapconf-demo.mjs"

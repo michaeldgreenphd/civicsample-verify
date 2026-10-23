@@ -1,0 +1,153 @@
+{
+  "format": "mu7_vocabulary_contract",
+  "design_version": "review-design-v7.0.0",
+  "mapping_labels": {
+    "AREA|ONCOLOGY": "Therapeutic area: Oncology (parent MeSH category C04 Neoplasms)",
+    "AREA|CARDIOVASCULAR": "Therapeutic area: Cardiovascular (parent MeSH category C14 Cardiovascular Diseases)",
+    "AREA|MENTAL_HEALTH": "Therapeutic area: Mental health (MeSH F03 Mental Disorders, and the heading Depression (D003863) by the study rule)",
+    "AREA|INFECTIOUS": "Therapeutic area: Infectious (parent MeSH category C01 Infections)",
+    "AREA|METABOLIC": "Therapeutic area: Metabolic (parent MeSH category C18 Nutritional and Metabolic Diseases)",
+    "AREA|NEUROLOGICAL": "Therapeutic area: Neurological (parent MeSH category C10 Nervous System Diseases)",
+    "AREA|RESPIRATORY": "Therapeutic area: Respiratory (parent MeSH category C08 Respiratory Tract Diseases)",
+    "ROW|CAN_ALL": "Figure 2 condition row: Neoplasms",
+    "ROW|DIAB": "Figure 2 condition row: Diabetes Mellitus",
+    "ROW|DEP": "Figure 2 condition row: Depression",
+    "ROW|OBE": "Figure 2 condition row: Obesity",
+    "ROW|AST": "Figure 2 condition row: Asthma",
+    "ROW|COPD": "Figure 2 condition row: Pulmonary Disease, Chronic Obstructive",
+    "ROW|COV": "Figure 2 condition row: COVID-19",
+    "ROW|SCZ": "Figure 2 condition row: Schizophrenia",
+    "ROW|HTN": "Figure 2 condition row: Hypertension",
+    "ROW|PAIN": "Figure 2 condition row: Pain",
+    "SG|RULE_D_KEPT": "Rule D, diabetes type",
+    "SG|RULE_D_REMOVED": "Rule D, diabetes type",
+    "SG|RULE_K_KEPT": "Rule K, malignancy",
+    "SG|RULE_K_REMOVED": "Rule K, malignancy"
+  },
+  "display_texts": {
+    "AREA|IN_AREA": "in this area",
+    "ROW|IN_ROW": "in this row",
+    "SG|D1_KEEP_TYPE2": "type 2 diabetes",
+    "SG|D4A_KEEP_UNRESOLVED_PARENT_ONLY": "diabetes, type not stated in the registry headings",
+    "SG|D4B_KEEP_UNRESOLVED_COMPLICATION_ONLY": "diabetes, type not stated in the registry headings",
+    "SG|K_KEEP_MALIGNANT_COMPATIBLE": "malignant neoplasm, counted in the Neoplasms row",
+    "SG|K_KEEP_HEURISTIC_NONMALIGNANT_CLASS": "malignant neoplasm, counted in the Neoplasms row",
+    "SG|D2_REMOVE_OTHER_TYPE": "type 1, gestational or another specified type of diabetes, with no type 2 heading",
+    "SG|D3_REMOVE_PREDIABETES_ONLY": "prediabetes only, with no diabetes mellitus heading",
+    "SG|K_REMOVE_VERIFIED_NONMALIGNANT": "non-malignant condition only (every neoplasm heading is a cyst, hamartoma or precancerous condition)"
+  },
+  "display_decisions": {
+    "RULE_D_KEPT": "KEEP: kept in the Diabetes Mellitus row",
+    "RULE_D_REMOVED": "REMOVE: removed from the Diabetes Mellitus row",
+    "RULE_K_KEPT": "KEEP: kept in the Neoplasms row",
+    "RULE_K_REMOVED": "REMOVE: removed from the Neoplasms row"
+  },
+  "mental_health_note": "The trial's MeSH heading Depression is counted as Mental health by the study rule; MeSH files it under Behavior.",
+  "reasons": {
+    "AREA|IN_AREA": [
+      "ORGAN_OF_ORIGIN_ONLY",
+      "NOT_THE_CONDITION_STUDIED",
+      "MESH_PLACEMENT_MISLEADING",
+      "RUBRIC_POLICY_EXCLUDES",
+      "OTHER_SPECIFIED"
+    ],
+    "ROW|IN_ROW": [
+      "NOT_THE_CONDITION_STUDIED",
+      "MESH_PLACEMENT_MISLEADING",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|D1_KEEP_TYPE2": [
+      "TYPE_1_ONLY",
+      "OTHER_DIABETES_TYPE",
+      "PREDIABETES_ONLY",
+      "DIABETES_NOT_STUDIED",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|D4A_KEEP_UNRESOLVED_PARENT_ONLY": [
+      "TYPE_2_STATED",
+      "TYPE_1_ONLY",
+      "OTHER_DIABETES_TYPE",
+      "PREDIABETES_ONLY",
+      "DIABETES_NOT_STUDIED",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|D4B_KEEP_UNRESOLVED_COMPLICATION_ONLY": [
+      "TYPE_2_STATED",
+      "TYPE_1_ONLY",
+      "OTHER_DIABETES_TYPE",
+      "PREDIABETES_ONLY",
+      "DIABETES_NOT_STUDIED",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|D2_REMOVE_OTHER_TYPE": [
+      "TYPE_2_STUDIED",
+      "TYPE_NOT_DETERMINABLE",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|D3_REMOVE_PREDIABETES_ONLY": [
+      "DIABETES_STUDIED",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|K_KEEP_MALIGNANT_COMPATIBLE": [
+      "BENIGN_NEOPLASM",
+      "PRECANCEROUS",
+      "NOT_A_NEOPLASM",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|K_KEEP_HEURISTIC_NONMALIGNANT_CLASS": [
+      "BENIGN_NEOPLASM",
+      "PRECANCEROUS",
+      "NOT_A_NEOPLASM",
+      "OTHER_SPECIFIED"
+    ],
+    "SG|K_REMOVE_VERIFIED_NONMALIGNANT": [
+      "MALIGNANT_NEOPLASM_STUDIED",
+      "OTHER_SPECIFIED"
+    ]
+  },
+  "all_reason_codes": [
+    "BENIGN_NEOPLASM",
+    "DIABETES_NOT_STUDIED",
+    "DIABETES_STUDIED",
+    "MALIGNANT_NEOPLASM_STUDIED",
+    "MESH_PLACEMENT_MISLEADING",
+    "NOT_A_NEOPLASM",
+    "NOT_THE_CONDITION_STUDIED",
+    "ORGAN_OF_ORIGIN_ONLY",
+    "OTHER_DIABETES_TYPE",
+    "OTHER_SPECIFIED",
+    "PRECANCEROUS",
+    "PREDIABETES_ONLY",
+    "RUBRIC_POLICY_EXCLUDES",
+    "TYPE_1_ONLY",
+    "TYPE_2_STATED",
+    "TYPE_2_STUDIED",
+    "TYPE_NOT_DETERMINABLE"
+  ],
+  "row_labels": {
+    "CAN_ALL": "Neoplasms",
+    "DIAB": "Diabetes Mellitus",
+    "DEP": "Depression",
+    "OBE": "Obesity",
+    "AST": "Asthma",
+    "COPD": "Pulmonary Disease, Chronic Obstructive",
+    "COV": "COVID-19",
+    "SCZ": "Schizophrenia",
+    "HTN": "Hypertension",
+    "PAIN": "Pain"
+  },
+  "answers": [
+    "AGREE",
+    "DISAGREE",
+    "CANNOT_TELL"
+  ],
+  "disagreement_reasons_v3": [
+    "CONSTRUCT_BOUNDARY",
+    "POLICY_RULE_INTERPRETATION",
+    "MESH_PLACEMENT_MISLEADING",
+    "TRIAL_CONTEXT",
+    "PACKET_INSUFFICIENT",
+    "MULTILABEL_OR_CROSS_AREA",
+    "OTHER"
+  ]
+}

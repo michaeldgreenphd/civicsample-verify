@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, readdirSync } from 'node:fs';
-import { extname, join, relative, resolve } from 'node:path';
+import { extname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const excluded = new Set([
@@ -44,6 +44,42 @@ const rules = [
   ['encoded credential', /\beyJ[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\.[A-Za-z0-9_-]{15,}\b/],
 ];
 
+/**
+ * Reviewed registry-format identifiers that may appear in exactly these vendored files and nowhere
+ * else. Each file is a byte-identical copy of the handoff v7 package (verified against its manifest
+ * on 2026-10-23). The NCT99 values are the handoff's synthetic-fixture form, which migration 0024's
+ * guard MU7-G16 requires in a FORMAL or worked-example packet; the checker values are the planted
+ * negative-control inputs of its own self-test. Every occurrence in a file is checked against that
+ * file's list, so an allowed value never masks another identifier, and an identifier in a file NAME
+ * is never allowed. Extending this list is a reviewed change, never a convenience.
+ */
+const ALLOWED_REGISTRY_IDENTIFIERS = Object.freeze({
+  'tests/handoff/v7.mjs': new Set(
+    [101, 102, 103, 104, 105, 106, 107, 108, 201, 203, 301, 302, 303, 777, 999].map(
+      (n) => `NCT99000${String(n).padStart(3, '0')}`,
+    ),
+  ),
+  'tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json': new Set([`NCT${'99000777'}`]),
+  'tools/check_public_repo_leakage_v7.py': new Set(
+    ['01234567', '99000101', '99000999'].map((digits) => `NCT${digits}`),
+  ),
+});
+const REGISTRY_IDENTIFIER_ALL = /\bNCT\d{8}\b/gi;
+
+/** True when the content holds a registry identifier not reviewed for this exact path. */
+function hasUnapprovedRegistryIdentifier(name, content) {
+  // Git index names always use '/'. Only a platform whose separator is '\\' (Windows) needs its
+  // working-tree names converted; on POSIX a backslash is an ordinary filename character, so a file
+  // named 'tools\\check_...' must never alias the allowlisted 'tools/check_...'.
+  const key = sep === '\\' ? name.split(sep).join('/') : name;
+  const allowed = Object.hasOwn(ALLOWED_REGISTRY_IDENTIFIERS, key)
+    ? ALLOWED_REGISTRY_IDENTIFIERS[key]
+    : undefined;
+  for (const match of content.matchAll(REGISTRY_IDENTIFIER_ALL))
+    if (!allowed || !allowed.has(match[0].toUpperCase())) return true;
+  return false;
+}
+
 /** Never includes matched content in diagnostics. Also scans prospective, untracked source files. */
 export function scanRepository(root) {
   root = resolve(root);
@@ -65,8 +101,15 @@ export function scanRepository(root) {
       addFinding(name, 'unreviewed private-data capable binary', source);
       return;
     }
-    for (const [rule, pattern] of rules)
+    for (const [rule, pattern] of rules) {
+      if (rule === 'registry identifier') {
+        // Names are never allowlisted; contents are checked occurrence by occurrence.
+        if (pattern.test(name) || hasUnapprovedRegistryIdentifier(name, content))
+          addFinding(name, rule, source);
+        continue;
+      }
       if (pattern.test(name) || pattern.test(content)) addFinding(name, rule, source);
+    }
     if (/\.(?:csv|jsonl)$/i.test(name) && !/synthetic|TESTFX|SYN-/i.test(content))
       addFinding(name, 'unmarked tabular data', source);
   };
