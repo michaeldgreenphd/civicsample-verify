@@ -160,3 +160,18 @@ test('the live v7 test refuses a sign-in file inside a Git repository, before an
     rmSync(repo, { recursive: true, force: true });
   }
 });
+
+test('the backup passes the connection to pg_dump through the environment only, with TLS verified', async () => {
+  const { libpqEnvironment } = await import('../scripts/supabase-backup.mjs');
+  const env = libpqEnvironment(
+    'postgresql://postgres.abcdefghijklmnopqrst:synthetic%2Fsecret@aws-0-eu-west-1.pooler.supabase.com:5432/postgres',
+    '/abs/private/ca.crt',
+  );
+  assert.equal(env.PGHOST, 'aws-0-eu-west-1.pooler.supabase.com');
+  assert.equal(env.PGPORT, '5432');
+  assert.equal(env.PGUSER, 'postgres.abcdefghijklmnopqrst');
+  assert.equal(env.PGPASSWORD, 'synthetic/secret');
+  assert.equal(env.PGDATABASE, 'postgres');
+  assert.equal(env.PGSSLMODE, 'verify-full');
+  assert.equal(env.PGSSLROOTCERT, '/abs/private/ca.crt');
+});
