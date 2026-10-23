@@ -36,13 +36,17 @@ jobs:
           cache: pip
           cache-dependency-path: analysis/requirements.txt
       - run: python -m pip install -r analysis/requirements.txt
+      # The v7 database-written bundle check needs a bundle from a database; the next step writes
+      # one with the application's own exporter and runs that check on it (tests/mu7-analysis.test.ts).
       - run: python -m pytest -q analysis
+        env:
+          MU7_ALLOW_NO_DB_BUNDLE: '1'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/formal-export.test.ts tests/tlv5.test.ts
+      - run: node --import tsx --test tests/formal-export.test.ts tests/tlv5.test.ts tests/mu7-analysis.test.ts
         env:
           VERIFY_ANALYSIS_PYTHON: python3
   postgres:

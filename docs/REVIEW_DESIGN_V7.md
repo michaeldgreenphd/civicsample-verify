@@ -15,7 +15,14 @@ One review unit is one (trial, mapping) pair with the study's assignment shown. 
 | `tools/check_public_repo_leakage_v6.py`, `_v7.py`                           | the supplied checkers; `npm run check` and the commit hook run the v7 checker; `.gitignore` carries every entry the v6 and v7 checkers require (added, none removed).                                                                                                                                                                                                         |
 | Review of the migration                                                     | ten findings, recorded in `docs/test_runs/V7_MIGRATION_REVIEW.md` and posted on the pull request for the package authors; two are rated blocking before any staging apply.                                                                                                                                                                                                    |
 
-Not integrated in this increment: the v7 reviewer, adjudicator and investigator screens; the bundle 7.0 export writer; the Python analysis (`performance_analysis_v7.py`, `mu7_*`) and its fixtures; the private FORMAL dry run on a disposable staging copy; the v7 synthetic pilot through the app. Each is a later increment on the same branch family and needs no scientific decision, except where the gates below say otherwise.
+Integrated on branch `codex/v7-app-workflow` (stacked on the fix migrations, synthetic only):
+
+- **Screens.** Reviewer: queue, unit screen, answer with reason code, note and uncertainty, revisions, read-only worked examples with an optional acknowledgment. Adjudicator: routed units only, both answers, the tie-break. Investigator: synthetic design, pilot import, both queues, progress counts, a synthetic routing check, the pilot lock, export and registration, and the gate status with the formal review disabled. Code: `src/app/mu7-workspace.tsx` and `src/server/mu7-core.ts`. The core runs on the local database (`src/server/mu7.ts`) and over PostgREST under the caller's token (`src/server/mu7-rest.ts`).
+- **Bundle 7.0 writer.** `src/lib/mu7-export.ts`, with the contract's columns and the suite's CSV text. A PILOT bundle is marked synthetic and excluded from every statistic.
+- **Analysis.** `analysis/v7/`, vendored from the package, with one marked change in its test (a synthetic identifier built at run time). `tests/mu7-analysis.test.ts` runs database to application export to analysis on the supplied suite's FORMAL scenario, in a disposable database with synthetic gate specifications, and checks that the analysis refuses a PILOT bundle.
+- **Walkthrough.** See `docs/LOCAL_V7_WALKTHROUGH.md`.
+
+Still not integrated: the private FORMAL dry run on a disposable staging copy (needs authorization), and any FORMAL operation in the application (needs the study decisions below).
 
 ## Pending decisions and how each is kept visible and enforceable
 

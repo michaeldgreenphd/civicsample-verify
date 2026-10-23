@@ -11,6 +11,17 @@ export default defineConfig({
   timeout: 180000,
   expect: { timeout: 15000 },
   reporter: [['list'], ['html', { open: 'never' }]],
+  // One served in-memory database for every scenario. Recording a review design v7 refuses new
+  // v5/v6 formal, calibration and training cases and new v2 formal cases in that database (guards
+  // MU7-G04 to MU7-G06, by design), so the v7 scenario runs after the others, explicitly.
+  projects: [
+    { name: 'designs-before-v7', testIgnore: /\/v7\// },
+    {
+      name: 'review-design-v7',
+      testMatch: /\/v7\/.*\.spec\.ts$/,
+      dependencies: ['designs-before-v7'],
+    },
+  ],
   use: {
     baseURL: 'http://127.0.0.1:3100',
     actionTimeout: 15000,
