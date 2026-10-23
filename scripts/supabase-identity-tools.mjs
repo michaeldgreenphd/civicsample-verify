@@ -4,6 +4,7 @@
 // private configuration file outside every repository and is never printed or logged.
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { readPrivateJson, validateStagingConfig } from './staging-account-tools.mjs';
 
 export class SupabaseIdentityError extends Error {
@@ -207,11 +208,29 @@ export function validateRoster(accounts) {
 /** The private admin configuration: project declaration, service-role key, optional database URL
  *  and the username roster. Refused unless it names the staging project exactly. */
 export function validateAdminConfig(config, approvedRefs = APPROVED_STAGING_PROJECT_REFS) {
-  if (!exactKeys(config, ['project', 'serviceRoleKey', 'databaseUrl', 'accounts']))
+  if (
+    !exactKeys(config, ['project', 'serviceRoleKey', 'databaseUrl', 'accounts']) &&
+    !exactKeys(config, [
+      'project',
+      'serviceRoleKey',
+      'databaseUrl',
+      'databaseCaCertPath',
+      'accounts',
+    ])
+  )
     refuse(
       'ADMIN_CONFIG_KEYS',
-      'The admin configuration has exactly project, serviceRoleKey, databaseUrl and accounts.',
+      'The admin configuration has exactly project, serviceRoleKey, databaseUrl, accounts and optionally databaseCaCertPath.',
     );
+  if (config.databaseCaCertPath !== undefined && config.databaseCaCertPath !== null) {
+    // The PostgreSQL server certificate is verified against this CA file (the project's CA from
+    // the dashboard) in addition to the system store; certificate checks are never disabled.
+    if (typeof config.databaseCaCertPath !== 'string' || !isAbsolute(config.databaseCaCertPath))
+      refuse(
+        'DATABASE_CA_CERT',
+        'databaseCaCertPath is an absolute path to the project CA certificate (PEM), outside every repository.',
+      );
+  }
   try {
     validateStagingConfig(config.project);
   } catch (error) {

@@ -20,6 +20,7 @@ import {
   openSync,
   readFileSync,
   realpathSync,
+  statSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +41,29 @@ import {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMMANDS = ['plan', 'accounts', 'reset-password', 'lock', 'unlock', 'apply-schema'];
+
+/** A PEM certificate from a private, owner-only file outside every repository. */
+function readPrivateText(path) {
+  const real = realpathSync(path);
+  const info = statSync(real);
+  if (!info.isFile() || info.size > 65536 || (info.mode & 0o077) !== 0)
+    throw new SupabaseIdentityError(
+      'DATABASE_CA_CERT',
+      'The CA certificate must be a regular file under 64 KiB, readable only by its owner (chmod 600).',
+    );
+  for (let dir = dirname(real); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git')))
+      throw new SupabaseIdentityError(
+        'DATABASE_CA_CERT',
+        'The CA certificate must live outside every Git repository.',
+      );
+    if (dirname(dir) === dir) break;
+  }
+  const text = readFileSync(real, 'utf8');
+  if (!/-----BEGIN CERTIFICATE-----/.test(text))
+    throw new SupabaseIdentityError('DATABASE_CA_CERT', 'The CA file is not a PEM certificate.');
+  return text;
+}
 
 export function parse(argv) {
   const [command, ...rest] = argv;
@@ -286,10 +310,11 @@ async function applySchema(config, result, plan) {
       'The database destination differs from the reviewed plan; regenerate and review the plan. Nothing was changed.',
     );
   const { Client } = await import('pg');
-  const db = new Client({
-    connectionString: config.databaseUrl,
-    ssl: { rejectUnauthorized: true },
-  });
+  // TLS is always verified; the project's CA file (optional) is trusted in addition to the system
+  // store. Certificate checks are never disabled.
+  const ssl = { rejectUnauthorized: true };
+  if (config.databaseCaCertPath) ssl.ca = readPrivateText(config.databaseCaCertPath);
+  const db = new Client({ connectionString: config.databaseUrl, ssl });
   await db.connect();
   try {
     result.destination = destination;

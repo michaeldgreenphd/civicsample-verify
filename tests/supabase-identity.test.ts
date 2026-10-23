@@ -156,6 +156,14 @@ test('admin configuration: staging only, service-role key required, usernames in
     code(() => validateAdminConfig({ ...config(), extra: 1 })),
     'ADMIN_CONFIG_KEYS',
   );
+  assert.equal(
+    code(() => validateAdminConfig({ ...config(), databaseCaCertPath: '/abs/private/ca.crt' })),
+    null,
+  );
+  assert.equal(
+    code(() => validateAdminConfig({ ...config(), databaseCaCertPath: 'relative/ca.crt' })),
+    'DATABASE_CA_CERT',
+  );
   // Synthetic pilot reviewer accounts carry the immutable pilot flag; only reviewers may.
   const pilot = {
     username: 'syn-pilot-reviewer-1',

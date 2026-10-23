@@ -55,6 +55,7 @@ Save as a private file outside every repository, `chmod 600`, and point `--confi
   },
   "serviceRoleKey": "<PRIVATE: the service_role secret key (sb_secret_… or the legacy JWT); never the anon or publishable key>",
   "databaseUrl": "<PRIVATE or null: postgresql://postgres.<ref>:<database password>@<pooler host>:5432/postgres; needed only for apply-schema>",
+  "databaseCaCertPath": "/absolute/private/path/prod-ca-2021.crt",
   "accounts": [
     {
       "username": "syn-investigator",
@@ -85,6 +86,8 @@ Save as a private file outside every repository, `chmod 600`, and point `--confi
 ```
 
 The database URL must name the approved project exactly: `db.<ref>.supabase.co:5432` as user `postgres`, or a Supabase pooler host (`aws-<n>-<region>.pooler.supabase.com`, port 5432 session or 6543 transaction mode) as user `postgres.<ref>`, database `postgres`, no query string. Look-alike hosts are refused, and the non-secret destination (host, port, user, database, mode) is bound into the plan hash.
+
+`databaseCaCertPath` (optional) is the project's CA certificate downloaded from the dashboard (Project Settings → Database → SSL); the runner verifies the server certificate against it in addition to the system store and never disables certificate checks.
 
 Where each private value belongs: the service-role key and the database URL belong only in this file (and in no environment variable of the web application); the anon/publishable key and user access tokens belong only in the separate probe-runner file described in [STAGING_PREFLIGHT.md](STAGING_PREFLIGHT.md); the generated account passwords are written only to the `--credentials-out` file for out-of-band handover.
 
