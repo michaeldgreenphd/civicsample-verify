@@ -33,6 +33,7 @@ __pycache__/
 !tests/handoff/
 !tests/handoff/**
 !scripts/test-handoff.mjs
+!scripts/test-handoff-v7-mutation.mjs
 !docs/HANDOFF_TESTS.md
 !analysis/fixtures/synthetic_v4_frozen_predictions.csv
 
