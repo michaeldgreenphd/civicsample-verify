@@ -156,6 +156,7 @@ async function provisionAccounts(client, config, credentials, result) {
           email,
           account.displayName,
           account.role,
+          account.isPilotTestAccount === true,
         );
         result.actions.push({
           username: account.username,
@@ -176,7 +177,13 @@ async function provisionAccounts(client, config, credentials, result) {
     });
     const { id } = await client.createAuthUser(email, password, account.displayName, account.role);
     credentials.record({ username: account.username, authUserId: id, status: 'AUTH_USER_CREATED' });
-    const { userId } = await client.upsertAppUser(id, email, account.displayName, account.role);
+    const { userId } = await client.upsertAppUser(
+      id,
+      email,
+      account.displayName,
+      account.role,
+      account.isPilotTestAccount === true,
+    );
     credentials.record({ username: account.username, appUserId: userId, status: 'LINKED' });
     result.actions.push({
       username: account.username,
@@ -350,6 +357,7 @@ export async function main(argv, env) {
     mutationsPerformed: true,
     actions: [],
   };
+  if (command !== 'apply-schema') await client.assertAdminPrivileges();
   if (command === 'accounts') {
     const credentials = new CredentialsFile(privateOutputPath(values['credentials-out']));
     try {

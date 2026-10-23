@@ -60,8 +60,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0019_v5_rubric_binding_reconciliation.sql',
   'migrations/0020_mapping_confirmation_completeness_and_serialization.sql',
   'migrations/0021_account_locks.sql',
+  'migrations/0022_service_role_admin_grants.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '6.0.3-account-locks';
+export const EXPECTED_SCHEMA_VERSION = '6.0.4-service-role-admin-grants';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -93,6 +94,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
     '6.0.2-mapping-confirmation-completeness-serialization',
   ],
   'migrations/0021_account_locks.sql': ['6.0.3-account-locks'],
+  'migrations/0022_service_role_admin_grants.sql': ['6.0.4-service-role-admin-grants'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([
@@ -152,10 +154,24 @@ export function validateRoster(accounts) {
   const names = new Set();
   const counts = { INVESTIGATOR: 0, REVIEWER: 0, ADJUDICATOR: 0 };
   for (const account of accounts) {
-    if (!exactKeys(account, ['username', 'displayName', 'role']))
+    if (
+      !exactKeys(account, ['username', 'displayName', 'role']) &&
+      !exactKeys(account, ['username', 'displayName', 'role', 'isPilotTestAccount'])
+    )
       refuse(
         'ROSTER_FIELDS',
-        'Each account has exactly username, displayName and role; no e-mail addresses.',
+        'Each account has username, displayName, role and optionally isPilotTestAccount; no e-mail addresses.',
+      );
+    if (
+      account.isPilotTestAccount !== undefined &&
+      account.isPilotTestAccount !== true &&
+      account.isPilotTestAccount !== false
+    )
+      refuse('ROSTER_PILOT_FLAG', 'isPilotTestAccount is true or false.');
+    if (account.isPilotTestAccount === true && account.role !== 'REVIEWER')
+      refuse(
+        'ROSTER_PILOT_FLAG',
+        'Only a REVIEWER account can be a pilot test account (it takes synthetic pilot mappings; schema rule).',
       );
     if (typeof account.username !== 'string' || !USERNAME.test(account.username))
       refuse(
@@ -318,7 +334,9 @@ export function buildBootstrapPlan(
       // Every field the apply provisions is bound into the reviewed hash; the display name as a
       // digest so the plan discloses no name.
       displayNameSha256: sha256(a.displayName.normalize('NFKC')),
-      isPilotTestAccount: false,
+      // A pilot test account (REVIEWER only) is enrolled with PILOT scope and takes synthetic
+      // pilot mappings; the flag is immutable in public.users, so it is bound into the plan.
+      isPilotTestAccount: a.isPilotTestAccount === true,
       authUser:
         'created with email_confirm: true and a generated password written only to the private credentials file',
       applicationUser:
@@ -448,6 +466,38 @@ export function adminClient(config, fetchImpl = fetch) {
         isActive: app.is_active,
       };
     },
+    /** Hardened projects expose no table to service_role until migration 0022 grants the admin
+     *  path explicitly (BYPASSRLS does not bypass grants). Checked before any account mutation so
+     *  a missing grant is reported by name instead of leaving an Auth-only account. */
+    async assertAdminPrivileges() {
+      for (const [table, column] of [
+        ['users', 'user_id'],
+        ['account_locks', 'lock_id'],
+      ]) {
+        const url = new URL(`/rest/v1/${table}?select=${column}&limit=1`, origin);
+        const response = await fetchImpl(url.href, {
+          method: 'GET',
+          redirect: 'error',
+          cache: 'no-store',
+          headers: {
+            apikey: config.serviceRoleKey,
+            Authorization: `Bearer ${config.serviceRoleKey}`,
+            Accept: 'application/json',
+          },
+          signal: globalThis.AbortSignal.timeout(15000),
+        });
+        if (response.status === 401 || response.status === 403 || response.status === 404)
+          refuse(
+            'ADMIN_PRIVILEGES_MISSING',
+            `service_role cannot read public.${table} (HTTP ${response.status}); apply migration 0022_service_role_admin_grants.sql before provisioning. Nothing was changed.`,
+          );
+        if (!response.ok)
+          refuse(
+            'REMOTE_REFUSED',
+            `The project refused the privilege check on public.${table} (HTTP ${response.status}).`,
+          );
+      }
+    },
     /** The application row linked to an Auth user, if any. */
     async findAppUserByAuthUid(id) {
       const rows = await call(
@@ -457,7 +507,7 @@ export function adminClient(config, fetchImpl = fetch) {
       return Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
     },
     /** Application roster row, linked by auth_uid so no claim-by-e-mail step is needed. */
-    async upsertAppUser(authUid, email, displayName, role) {
+    async upsertAppUser(authUid, email, displayName, role, isPilotTestAccount = false) {
       const rows = await call(
         'POST',
         '/rest/v1/users?on_conflict=email',
@@ -467,7 +517,7 @@ export function adminClient(config, fetchImpl = fetch) {
             email: email.toLowerCase(),
             display_name: displayName,
             role,
-            is_pilot_test_account: false,
+            is_pilot_test_account: isPilotTestAccount === true,
           },
         ],
         { Prefer: 'resolution=merge-duplicates,return=representation' },

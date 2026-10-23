@@ -156,6 +156,35 @@ test('admin configuration: staging only, service-role key required, usernames in
     code(() => validateAdminConfig({ ...config(), extra: 1 })),
     'ADMIN_CONFIG_KEYS',
   );
+  // Synthetic pilot reviewer accounts carry the immutable pilot flag; only reviewers may.
+  const pilot = {
+    username: 'syn-pilot-reviewer-1',
+    displayName: 'Synthetic pilot reviewer 1',
+    role: 'REVIEWER',
+    isPilotTestAccount: true,
+  };
+  assert.equal(
+    code(() => validateAdminConfig(config({ accounts: [...config().accounts, pilot] }))),
+    null,
+  );
+  assert.equal(
+    code(() =>
+      validateAdminConfig(
+        config({
+          accounts: [...config().accounts, { ...pilot, username: 'syn-x', role: 'ADJUDICATOR' }],
+        }),
+      ),
+    ),
+    'ROSTER_PILOT_FLAG',
+  );
+  const pilotPlan = buildBootstrapPlan(config({ accounts: [...config().accounts, pilot] }), root);
+  assert.equal(pilotPlan.accounts.at(-1).isPilotTestAccount, true);
+  const { isPilotTestAccount: _omit, ...plain } = pilot;
+  assert.notEqual(
+    planSha256(pilotPlan),
+    planSha256(buildBootstrapPlan(config({ accounts: [...config().accounts, plain] }), root)),
+    'the flag is bound into the plan',
+  );
   assert.equal(
     internalEmail('syn-reviewer-1', APPROVED),
     `syn-reviewer-1@${APPROVED}.accounts.invalid`,
@@ -190,7 +219,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
-  assert.equal(plan.schema.expectedFinalVersion, '6.0.3-account-locks');
+  assert.equal(plan.schema.expectedFinalVersion, '6.0.4-service-role-admin-grants');
   assert.equal(plan.database, null);
   const withDb = config({
     databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,
@@ -212,7 +241,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
     planSha256(planDb),
     'a changed destination changes the reviewed hash',
   );
-  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0021_account_locks.sql'));
+  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0022_service_role_admin_grants.sql'));
   assert.deepEqual(SCHEMA_FILE_MARKERS['migrations/0018_mapping_confirmation_review_fixes.sql'], [
     '6.0.1-mapping-confirmation-review-fixes',
   ]);

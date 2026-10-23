@@ -20,6 +20,12 @@ Individually assigned usernames and passwords; no personal e-mail address from a
 
 Items to verify on the first staging apply (recorded as UNTESTED until then): that Auth accepts the reserved `.invalid` domain for admin-created confirmed users; the exact Auth Admin REST payloads used by the tool (`POST /auth/v1/admin/users`, `PUT /auth/v1/admin/users/{id}`, `GET /auth/v1/admin/users`) against the current API; session behaviour after `ban_duration`.
 
+## Hardened-project privileges (migration 0022)
+
+The first live staging bootstrap (Codex, 2026-10-22) showed that on a project with automatic table exposure disabled `service_role` holds no table privileges in `public`, and `BYPASSRLS` does not bypass grants: Auth users were created but linking `public.users` through PostgREST returned 403, and the lock table had the same gap. Migration `0022_service_role_admin_grants.sql` grants the administration path the least it needs, to `service_role` only: select/insert/update on `public.users` and `public.account_locks`, select on `reviewers`, `app_schema_version` and `audit_log`, and the identity helpers the triggers call. Nothing is granted to `anon` or `authenticated`, and no delete is granted. The admin tool now checks these privileges before any account mutation and reports `ADMIN_PRIVILEGES_MISSING` by name instead of leaving an Auth-only account. Regression: `tests/service-role-grants.test.ts` (reproduces the gap and the fix on the full lineage with the shim's `service_role`; anon and authenticated stay refused). Applying 0022 to staging is a remote schema change that needs explicit authorization; until then account creation, lock and unlock remain blocked on staging.
+
+Synthetic pilot reviewer accounts: the mapping-confirmation synthetic pilot assigns `SYNTHETIC_PILOT` mappings only to reviewers enrolled with `PILOT` scope, and the schema allows `PILOT` enrolment only for accounts with the immutable flag `is_pilot_test_account = true`. The five existing staging accounts were created with that flag false (formal-scope test identities), so a staging walkthrough of the synthetic pilot needs two additional reviewer accounts with `"isPilotTestAccount": true` in the roster (for example `syn-pilot-reviewer-1`, `syn-pilot-reviewer-2`); the flag is bound into the plan hash. Creating them is a remote mutation that needs explicit authorization.
+
 ## Approved target and apply safeguards
 
 The privileged tool accepts only the staging reference recorded in `APPROVED_STAGING_PROJECT_REFS` (`scripts/supabase-identity-tools.mjs`, currently `xmuiduugdrqvhssmeacz`); a configuration naming any other project is refused before any request, whatever it calls itself. Changing that list requires a reviewed commit. Every mutation also needs `VERIFY_SUPABASE_ADMIN_APPLY=1`, `--apply` (never together with `--dry-run`), `--confirm-project <ref>` and `--plan-sha256` of the plan generated for the same configuration; the plan binds every provisioned field (username, internal address, role, a digest of the display name). Credentials are appended to the private file before each remote creation, so a failure after creation never loses a password; a rerun reconciles an Auth user that lacks its application row and never regenerates a delivered password. `apply-schema` plans against the `app_schema_version` markers of every non-repeatable file (schema.sql through the latest migration; the frozen-trial preflight is the only repeatable file), skips applied files, refuses a partially applied, out-of-order or unknown lineage before writing, and refuses a database destination that differs from the reviewed plan. The credentials path is resolved through real paths, so a symlinked directory inside a repository is refused.
@@ -29,7 +35,7 @@ The privileged tool accepts only the staging reference recorded in `APPROVED_STA
 `node scripts/supabase-admin.mjs plan --config /absolute/private/supabase-admin.json` prints the plan without any remote request:
 
 - target: environment `staging`, project reference and URL from the configuration (must be `https://<ref>.supabase.co`; a production reference must be distinct or null);
-- schema: the ordered SQL inputs with SHA-256 and byte counts (`schema.sql`, migrations 0002 to 0021 with the frozen-trial preflight before 0008), the expected final `app_schema_version` (`6.0.3-account-locks`), and the explicit exclusion of `supabase_test_shim/auth_shim.sql`;
+- schema: the ordered SQL inputs with SHA-256 and byte counts (`schema.sql`, migrations 0002 to 0022 with the frozen-trial preflight before 0008), the expected final `app_schema_version` (`6.0.4-service-role-admin-grants`), and the explicit exclusion of `supabase_test_shim/auth_shim.sql`;
 - Auth settings to set by hand in the dashboard (sign-ups off, password length, leaked-password protection, TOTP, staging origin only);
 - the roster as usernames, internal addresses and roles (no e-mail addresses, no secrets).
 
@@ -57,7 +63,23 @@ Save as a private file outside every repository, `chmod 600`, and point `--confi
     },
     { "username": "syn-reviewer-1", "displayName": "Synthetic reviewer 1", "role": "REVIEWER" },
     { "username": "syn-reviewer-2", "displayName": "Synthetic reviewer 2", "role": "REVIEWER" },
-    { "username": "syn-adjudicator", "displayName": "Synthetic adjudicator", "role": "ADJUDICATOR" }
+    {
+      "username": "syn-adjudicator",
+      "displayName": "Synthetic adjudicator",
+      "role": "ADJUDICATOR"
+    },
+    {
+      "username": "syn-pilot-reviewer-1",
+      "displayName": "Synthetic pilot reviewer 1",
+      "role": "REVIEWER",
+      "isPilotTestAccount": true
+    },
+    {
+      "username": "syn-pilot-reviewer-2",
+      "displayName": "Synthetic pilot reviewer 2",
+      "role": "REVIEWER",
+      "isPilotTestAccount": true
+    }
   ]
 }
 ```
