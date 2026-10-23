@@ -634,7 +634,6 @@ function McInvestigator({
   const phase = c?.phase ?? null;
   return (
     <div>
-      <Banner />
       {error && (
         <div className="notice error" role="alert">
           {error}
@@ -643,7 +642,7 @@ function McInvestigator({
       <section className="panel" aria-label="Campaign">
         <div className="panel-header">
           <span className="section-label">Synthetic campaign</span>
-          <span className="muted" data-testid="mc-phase">
+          <span className="header-phase" data-testid="mc-phase">
             {c
               ? `${readable(c.phase)} · ${c.conditionSetId} (${c.conditionSetStatus})`
               : 'No campaign'}
@@ -657,33 +656,45 @@ function McInvestigator({
             </div>
             <div className="stat">
               <span className="stat-value">{workspace.counts.trainingExample}</span>
-              <span className="stat-label">Training examples (excluded)</span>
+              <span className="stat-label">Training examples, excluded from statistics</span>
             </div>
             <div className="stat">
               <span className="stat-value">{workspace.counts.evaluation}</span>
               <span className="stat-label">Evaluation mappings</span>
-              <span className="stat-detail">Import disabled pending approval</span>
             </div>
             <div className="stat">
               <span className="stat-value">{workspace.adjudicationsRecorded}</span>
               <span className="stat-label">Adjudications</span>
             </div>
           </div>
-          <div className="button-row">
-            {!c && (
+          {!c && (
+            <div className="step">
+              <h3>Start</h3>
+              <p>
+                Creates the campaign for the proposed condition list and draft rubric. Synthetic
+                records never enter any statistic.
+              </p>
               <button className="button" onClick={() => act({ action: 'create-campaign' })}>
                 Create synthetic campaign
               </button>
-            )}
-            {c && phase === 'OPEN' && (
-              <>
+            </div>
+          )}
+          {c && phase === 'OPEN' && (
+            <div className="step">
+              <h3>Prepare the pilot</h3>
+              <p>
+                Import the synthetic mappings, then assign each one to the two pilot reviewers.
+                Evaluation import opens once the condition list, sampling frame and rubric are
+                approved.
+              </p>
+              <div className="toolbar">
                 <button
                   className="button secondary"
                   onClick={() => act({ action: 'import-synthetic' })}
                 >
                   Import synthetic mappings
                 </button>
-                <label className="field" style={{ display: 'inline-block' }}>
+                <label className="field inline">
                   <span className="form-label">Seed</span>
                   <input
                     type="number"
@@ -701,22 +712,37 @@ function McInvestigator({
                 <button
                   className="button secondary"
                   disabled
-                  title="Disabled pending approval"
                   onClick={() => act({ action: 'import-evaluation' })}
                 >
-                  Import evaluation mappings (disabled)
+                  Import evaluation mappings
                 </button>
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          )}
           {c && phase !== 'LOCKED' && (
-            <>
+            <div className="step">
+              <h3>
+                {phase === 'OPEN'
+                  ? 'Close submissions'
+                  : phase === 'CLOSED'
+                    ? 'Authorize adjudication'
+                    : 'Lock the campaign'}
+              </h3>
+              <p>
+                {phase === 'OPEN'
+                  ? 'Ends reviewer submissions once every mapping has two final answers.'
+                  : phase === 'CLOSED'
+                    ? 'Lets the adjudicator resolve the disagreements.'
+                    : 'Makes the campaign immutable and enables the export.'}{' '}
+                Your attestation is recorded with the phase change.
+              </p>
               <label className="field">
-                <span className="form-label">Attestation (20 characters or more)</span>
+                <span className="form-label">Attestation</span>
                 <input
                   value={attestation}
                   onChange={(e) => setAttestation(e.target.value)}
                   maxLength={2000}
+                  placeholder="At least 20 characters"
                 />
               </label>
               <div className="button-row">
@@ -750,7 +776,7 @@ function McInvestigator({
                   </button>
                 )}
               </div>
-            </>
+            </div>
           )}
           {phase === 'LOCKED' && (
             <div className="button-row">

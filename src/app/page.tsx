@@ -348,8 +348,7 @@ export default function Home() {
               <div className="eyebrow">Supabase staging · synthetic records only</div>
               <h1>Mapping confirmation</h1>
               <p className="intro-copy">
-                Signed in as {user.displayName} ({user.role}). The local synthetic pilot workflows
-                are not served in this deployment mode.
+                Signed in as {user.displayName}, {user.role.toLowerCase()}.
               </p>
             </div>
           </div>
