@@ -437,6 +437,18 @@ export function revokeActorSessions(targetUserId: string, revokedBy: Actor): num
   return removed;
 }
 
+/**
+ * Let a revoked local demo account sign in again (the release of a local account lock). Sessions
+ * revoked earlier stay revoked, and so do JWTs issued before the revocation; only a new sign-in
+ * works.
+ */
+export function restoreLocalSignIn(targetUserId: string, restoredBy: Actor): void {
+  if (restoredBy.role !== 'INVESTIGATOR') {
+    throw new HttpError(403, 'Only an investigator may restore a sign-in.');
+  }
+  revokedUsers.delete(targetUserId);
+}
+
 export function resetInvitedAuthStateForTests(): void {
   invites.clear();
   revokedUsers.clear();

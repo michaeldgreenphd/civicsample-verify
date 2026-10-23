@@ -15,6 +15,7 @@ import type {
 import { Icon } from '@/components/icons';
 import { Tlv5Panel } from './tlv5-workspace';
 import { McPanel } from './mapconf-workspace';
+import { Mu7Panel } from './mu7-workspace';
 import { MfaPanel } from './mfa-panel';
 type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean };
 
@@ -362,7 +363,17 @@ export default function Home() {
               }
             />
           ) : (
-            <McPanel user={user} />
+            <>
+              <nav className="workspace-tabs" aria-label="Workspace sections">
+                <button className={tab !== 'mu7' ? 'active' : ''} onClick={() => setTab('review')}>
+                  Mapping confirmation
+                </button>
+                <button className={tab === 'mu7' ? 'active' : ''} onClick={() => setTab('mu7')}>
+                  Mapping units <span className="count-pill">Design v7</span>
+                </button>
+              </nav>
+              {tab === 'mu7' ? <Mu7Panel user={user} /> : <McPanel user={user} />}
+            </>
           )}
           {error && (
             <div className="notice error" role="alert">
@@ -419,6 +430,9 @@ export default function Home() {
             <button className={tab === 'mapconf' ? 'active' : ''} onClick={() => setTab('mapconf')}>
               Mapping confirmation <span className="count-pill">Synthetic</span>
             </button>
+            <button className={tab === 'mu7' ? 'active' : ''} onClick={() => setTab('mu7')}>
+              Mapping units <span className="count-pill">Design v7</span>
+            </button>
             <button
               className={tab === 'module-b' ? 'active' : ''}
               onClick={() => setTab('module-b')}
@@ -453,6 +467,8 @@ export default function Home() {
             <Tlv5Panel user={user} />
           ) : tab === 'mapconf' ? (
             <McPanel user={user} />
+          ) : tab === 'mu7' ? (
+            <Mu7Panel user={user} />
           ) : tab === 'module-b' ? (
             <ModuleB />
           ) : user.role === 'INVESTIGATOR' ? (

@@ -4,6 +4,7 @@
 //
 //   node scripts/mapconf-demo.mjs setup --credentials /abs/private/mapconf-demo.json
 //   node scripts/mapconf-demo.mjs start --credentials /abs/private/mapconf-demo.json [--port 3200]
+//        [--database .local/pglite-<name>]   (a separate synthetic database, e.g. for review design v7)
 //
 // setup writes the four synthetic role passwords (investigator, reviewer-a, reviewer-b,
 // adjudicator) to the private file with mode 600 and prints only its path. start reads that file
@@ -81,9 +82,13 @@ if (command === 'setup') {
   if (!existsSync(join(root, '.next', 'BUILD_ID')))
     fail('No production build; run `npm run build` first.');
   const port = options['--port'] ?? '3200';
+  // Another separate synthetic database may be named; never the pilot database .local/pglite.
+  const dbDir = options['--database'] ?? DEMO_DB_DIR;
+  if (!/^\.local\/pglite-[a-z0-9][a-z0-9-]{2,40}$/.test(dbDir))
+    fail('--database must name a separate folder .local/pglite-<name> (never .local/pglite).');
   const env = {
     ...process.env,
-    VERIFY_DB_DIR: join(root, DEMO_DB_DIR),
+    VERIFY_DB_DIR: join(root, dbDir),
     NEXT_TELEMETRY_DISABLED: '1',
   };
   for (const [account, variable] of Object.entries(ROLE_ENV))
@@ -92,7 +97,7 @@ if (command === 'setup') {
   delete env.VERIFY_STAGING_REVIEWER_1_PASSWORD;
   delete env.VERIFY_STAGING_REVIEWER_2_PASSWORD;
   console.log(
-    `Mapping-confirmation demo: http://127.0.0.1:${port}/ (database ${DEMO_DB_DIR}; accounts investigator, reviewer-a, reviewer-b, adjudicator from the private file)`,
+    `Synthetic demo: http://127.0.0.1:${port}/ (database ${dbDir}; accounts investigator, reviewer-a, reviewer-b, adjudicator from the private file)`,
   );
   const child = spawn('npx', ['next', 'start', '--hostname', '127.0.0.1', '--port', port], {
     cwd: root,

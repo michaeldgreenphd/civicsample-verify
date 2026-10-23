@@ -413,6 +413,11 @@ small {
 .queue-item:hover {
   background: #f7faf7;
 }
+.queue-item:disabled {
+  color: var(--muted);
+  background: #fafbf8;
+  cursor: not-allowed;
+}
 .queue-item.selected {
   background: #edf4ef;
 }

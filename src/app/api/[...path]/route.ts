@@ -17,6 +17,10 @@ import * as service from '@/server/service';
 import * as tlv5 from '@/server/tlv5';
 import * as mapconf from '@/server/mapconf';
 import * as mapconfRest from '@/server/mapconf-rest';
+import * as mu7 from '@/server/mu7';
+import * as mu7Rest from '@/server/mu7-rest';
+import { mu7AdjudicationSchema, mu7AdminSchema, mu7SubmissionSchema } from '@/lib/mu7-validation';
+import type { Actor } from '@/lib/types';
 import { dataBackend } from '@/lib/supabase-config';
 import {
   clearedSessionCookieHeaders,
@@ -80,6 +84,89 @@ async function body(request: Request) {
     throw new HttpError(400, 'The request must contain valid JSON.');
   }
 }
+/** Review design v7 (mapping units): the same routes in both deployment modes. Role first, then the
+ *  body: a caller without the role is refused whatever it sends. Returns null when no v7 route
+ *  matches. FORMAL operations have no route here. */
+async function mu7Route(
+  request: Request,
+  path: string,
+  actor: Actor,
+  impl: typeof mu7 | typeof mu7Rest,
+  respond: (data: unknown) => Response,
+): Promise<Response | null> {
+  if (!path.startsWith('/api/mu7/')) return null;
+  // The two implementations take the same calls; the local one with an Actor, the REST one with
+  // the SessionActor that carries the caller's token.
+  const api = impl as typeof mu7;
+  const requireRole = (role: Actor['role'], what: string) => {
+    if (actor.role !== role) throw new HttpError(403, `This action requires ${what}.`);
+  };
+  if (path === '/api/mu7/workspace' && request.method === 'GET')
+    return respond(await api.getMu7Workspace(actor));
+  if (path === '/api/mu7/training/acknowledge' && request.method === 'POST') {
+    requireRole('REVIEWER', 'a reviewer account');
+    return respond(await api.acknowledgeMu7Training(actor));
+  }
+  const assignment = /^\/api\/mu7\/assignments\/([0-9a-f-]{36})(?:\/(submit))?$/.exec(path);
+  if (assignment) {
+    requireRole('REVIEWER', 'a reviewer account');
+    if (request.method === 'GET' && !assignment[2])
+      return respond(await api.getMu7ReviewerUnit(actor, assignment[1]));
+    if (request.method === 'POST' && assignment[2] === 'submit')
+      return respond(
+        await api.submitMu7(actor, assignment[1], mu7SubmissionSchema.parse(await body(request))),
+      );
+  }
+  const unit = /^\/api\/mu7\/adjudication\/((?:SYN7|MU7)-[A-Z0-9_-]{6,60})$/.exec(path);
+  if (unit && request.method === 'GET') {
+    requireRole('ADJUDICATOR', 'the adjudicator account');
+    return respond(await api.getMu7AdjudicatorUnit(actor, unit[1]));
+  }
+  if (path === '/api/mu7/adjudicate' && request.method === 'POST') {
+    requireRole('ADJUDICATOR', 'the adjudicator account');
+    return respond(
+      await api.recordMu7Adjudication(actor, mu7AdjudicationSchema.parse(await body(request))),
+    );
+  }
+  if (path.startsWith('/api/mu7/admin/')) requireRole('INVESTIGATOR', 'an investigator account');
+  if (path === '/api/mu7/admin/action' && request.method === 'POST')
+    return respond(await api.mu7AdminAction(actor, mu7AdminSchema.parse(await body(request))));
+  const exported = /^\/api\/mu7\/admin\/export\/(PILOT|FORMAL)(?:\/([a-z_]+\.(?:csv|json)))?$/.exec(
+    path,
+  );
+  if (exported && request.method === 'GET') {
+    const bundle = await api.exportMu7Bundle(actor, exported[1] as 'PILOT' | 'FORMAL');
+    if (!exported[2])
+      return respond({
+        mode: bundle.mode,
+        manifest: bundle.manifest,
+        manifestSha256: bundle.manifestSha256,
+        files: bundle.files.map((f) => ({
+          name: f.name,
+          role: f.role,
+          rows: f.rows,
+          sha256: f.sha256,
+        })),
+      });
+    const file =
+      exported[2] === bundle.manifestName
+        ? { name: bundle.manifestName, content: bundle.manifestText, type: 'application/json' }
+        : bundle.files
+            .filter((f) => f.name === exported[2])
+            .map((f) => ({ name: f.name, content: f.content, type: 'text/csv' }))[0];
+    if (!file) throw new HttpError(404, 'Resource not available.');
+    return new Response(file.content, {
+      status: 200,
+      headers: {
+        ...jsonHeaders,
+        'Content-Type': `${file.type}; charset=utf-8`,
+        'Content-Disposition': `attachment; filename="${bundle.mode.toLowerCase()}-${file.name}"`,
+      },
+    });
+  }
+  throw new HttpError(404, 'Resource not available.');
+}
+
 async function handle(request: Request) {
   try {
     const mutation = request.method !== 'GET';
@@ -271,6 +358,8 @@ async function handle(request: Request) {
     const mcCase = /^\/api\/mc\/cases\/(MC-[A-Z]{3,4}-[A-Z0-9][A-Z0-9-]{1,40})$/.exec(path);
     if (mcCase && request.method === 'GET')
       return json(await mapconf.getMcAdjudicatorCase(actor, mcCase[1]));
+    const v7 = await mu7Route(request, path, actor, mu7, (data) => json(data));
+    if (v7) return v7;
     const match = /^\/api\/cases\/(SYN-[0-9]{3})(?:\/(draft|submit|step1|adjudicate))?$/.exec(path);
     if (match) {
       const [, caseId, action] = match;
@@ -433,6 +522,15 @@ async function withSupabaseActor(
   const mcCase = /^\/api\/mc\/cases\/(MC-[A-Z]{3,4}-[A-Z0-9][A-Z0-9-]{1,40})$/.exec(path);
   if (mcCase && request.method === 'GET')
     return json(await mapconfRest.getMcAdjudicatorCase(actor, mcCase[1]), 200, {}, setCookies);
+  if (path.startsWith('/api/mu7/admin/') && actor.role === 'INVESTIGATOR' && actor.aal !== 'aal2')
+    throw new HttpError(
+      403,
+      'Investigator actions need a verified authenticator (second factor). Complete multi-factor sign-in first.',
+    );
+  const v7 = await mu7Route(request, path, actor, mu7Rest, (data) =>
+    json(data, 200, {}, setCookies),
+  );
+  if (v7) return v7;
   if (/^\/api\/(workspace|tlv5|cases|admin)(\/|$)/.test(path))
     throw new HttpError(
       503,

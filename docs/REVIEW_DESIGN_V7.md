@@ -15,7 +15,14 @@ One review unit is one (trial, mapping) pair with the study's assignment shown. 
 | `tools/check_public_repo_leakage_v6.py`, `_v7.py`                           | the supplied checkers; `npm run check` and the commit hook run the v7 checker; `.gitignore` carries every entry the v6 and v7 checkers require (added, none removed).                                                                                                                                                                                                         |
 | Review of the migration                                                     | ten findings, recorded in `docs/test_runs/V7_MIGRATION_REVIEW.md` and posted on the pull request for the package authors; two are rated blocking before any staging apply.                                                                                                                                                                                                    |
 
-Not integrated in this increment: the v7 reviewer, adjudicator and investigator screens; the bundle 7.0 export writer; the Python analysis (`performance_analysis_v7.py`, `mu7_*`) and its fixtures; the private FORMAL dry run on a disposable staging copy; the v7 synthetic pilot through the app. Each is a later increment on the same branch family and needs no scientific decision, except where the gates below say otherwise.
+Integrated on branch `codex/v7-app-workflow` (stacked on the fix migrations, synthetic only):
+
+- **Screens.** Reviewer: queue, unit screen, answer with reason code, note and uncertainty, revisions, read-only worked examples with an optional acknowledgment. Adjudicator: routed units only, both answers, the tie-break. Investigator: synthetic design, pilot import, both queues, progress counts, a synthetic routing check, the pilot lock, export and registration, and the gate status with the formal review disabled. Code: `src/app/mu7-workspace.tsx` and `src/server/mu7-core.ts`. The core runs on the local database (`src/server/mu7.ts`) and over PostgREST under the caller's token (`src/server/mu7-rest.ts`).
+- **Bundle 7.0 writer.** `src/lib/mu7-export.ts`, with the contract's columns and the suite's CSV text. A PILOT bundle is marked synthetic and excluded from every statistic.
+- **Analysis.** `analysis/v7/`, vendored from the package, with one marked change in its test (a synthetic identifier built at run time). `tests/mu7-analysis.test.ts` runs database to application export to analysis on the supplied suite's FORMAL scenario, in a disposable database with synthetic gate specifications, and checks that the analysis refuses a PILOT bundle.
+- **Walkthrough.** See `docs/LOCAL_V7_WALKTHROUGH.md`.
+
+Still not integrated: the private FORMAL dry run on a disposable staging copy (needs authorization), and any FORMAL operation in the application (needs the study decisions below).
 
 ## Pending decisions and how each is kept visible and enforceable
 
@@ -42,3 +49,15 @@ The `mc_*` module served the synthetic pilot that ran on staging on 2026-10-23 (
 Gate approvals, applying 0023 and 0024 to staging, the freeze, production accounts and import, opening the formal phase, reviewer invitations.
 | `migrations/0025_v7_review_fixes.sql` (branch `codex/v7-review-fixes`) | this repository's fixes to 0024: keyed audit digests, phase serialization, a lock-aware adjudicator helper, once-only phase events, no PILOT answer after adjudication, no service_role writes on v7 tables. Each reproduced first and pinned by `tests/mu7-findings.test.ts` (without and with 0025) and `tests/mu7-postgres.test.ts` (native race, CI). **Not applied to staging.** |
 | `migrations/0026_v7_lifecycle_and_gates.sql` (branch `codex/v7-review-fixes`) | second round of fixes to 0024. A nonempty, dually assigned pilot inventory is bound through the lock, the export and the sign-off. No pilot import is accepted after the pilot lock. The FORMAL freeze and the formal opening are gated by study decisions, all recorded as pending, so both stay disabled. Adjudications take the exclusive lock. Pinned by `tests/mu7-lifecycle.test.ts` (without and with 0026) and `tests/mu7-postgres.test.ts` (native races, CI). **Not applied to staging.** |
+
+## Vendored analysis (`analysis/v7/`, from the package's `validation/`)
+
+| File                                    | SHA-256 as supplied (manifest checked) | In this repository           |
+| --------------------------------------- | -------------------------------------- | ---------------------------- |
+| `performance_analysis_v7.py`            | `5a652591…b27e`                        | identical                    |
+| `mu7_bundle.py`                         | `b08610d2…0959`                        | identical                    |
+| `mu7_estimators.py`                     | `e7be00fa…c06c`                        | identical                    |
+| `fixtures/make_synthetic_v7_bundle.py`  | `0ba804a7…c3e`                         | identical                    |
+| `tests/test_performance_analysis_v7.py` | `7d3fa531…cd2`                         | `57d04403…8b91` (one change) |
+
+The one change builds the test's synthetic placeholder identifier at run time, so this public source carries no registry-format literal; the value and every assertion are unchanged. The package's database-written bundle (`fixtures/db_bundle_v7_synthetic/`) is not copied, because it carries those literals; `tests/mu7-analysis.test.ts` writes the same scenario's bundle with this application's exporter and runs the supplied end-to-end test on it.
