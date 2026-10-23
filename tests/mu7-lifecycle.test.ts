@@ -247,7 +247,7 @@ test('finding 3 reproduced without 0026: the formal phase opens with G-PAIN-01 a
 const FREEZE_GATES = ['G-MH-V53', 'G-OVERLAP-01', 'G-PROV-01', 'G-TEXT-01'];
 const OPEN_ONLY_GATES = ['G-EST-01', 'G-OQ-03', 'G-OQ-04', 'G-PAIN-01'];
 
-test('finding 3 with 0026: every documented gate is recorded as pending, with no approval and nothing satisfied', async () => {
+test('finding 3 with 0026: every documented gate is recorded as pending (0028 later specifies two), with no approval and nothing satisfied', async () => {
   const { db } = await signedOffPilot({ stopAfter: 'design' });
   try {
     const req = await rows<{
@@ -258,7 +258,9 @@ test('finding 3 with 0026: every documented gate is recorded as pending, with no
     }>(
       db,
       'owner',
-      'select gate_id, requirement_status, blocks, decision_reference from public.mu7_gate_requirements order by gate_id',
+      // The state 0026 records (version 1 of each requirement); 0028 adds version 2 of G-PAIN-01
+      // and G-MH-V53 (tests/mu7-gates-v8-1.test.ts).
+      'select gate_id, requirement_status, blocks, decision_reference from public.mu7_gate_requirements where requirement_version = 1 order by gate_id',
     );
     assert.deepEqual(
       req.map((r) => r.gate_id),
@@ -298,7 +300,8 @@ test('finding 3 with 0026: every documented gate is recorded as pending, with no
         'inv',
         "select count(*)::int from public.rpc_mu7_gate_status() where requirement_status = 'PENDING_SPECIFICATION'",
       ),
-      10,
+      8,
+      'every gate but the two 0028 specifies is still pending',
     );
   } finally {
     await db.close();
@@ -310,12 +313,22 @@ test('finding 3 fixed with 0026: a pending gate cannot be approved and the FORMA
   try {
     const approve = await attempt(
       f.db,
-      `select public.rpc_mu7_approve_gate('G-PAIN-01', '${ATT}', 'synthetic decision record')`,
+      `select public.rpc_mu7_approve_gate('G-OVERLAP-01', '${ATT}', 'synthetic decision record')`,
     );
     assert.ok(!approve.ok);
     assert.match(
       approve.error,
-      /MU7X-G08: gate G-PAIN-01 cannot be approved while its requirement is pending/,
+      /MU7X-G08: gate G-OVERLAP-01 cannot be approved while its requirement is pending/,
+    );
+    // G-PAIN-01 is specified since 0028; an approval naming another record is still refused.
+    const pain = await attempt(
+      f.db,
+      `select public.rpc_mu7_approve_gate('G-PAIN-01', '${ATT}', 'synthetic decision record')`,
+    );
+    assert.ok(!pain.ok);
+    assert.match(
+      pain.error,
+      /MU7X-G08: an approval of gate G-PAIN-01 names its specified decision record/,
     );
     const freeze = await attempt(f.db, freezeSql());
     assert.ok(!freeze.ok);
@@ -328,7 +341,14 @@ test('finding 3 fixed with 0026: a pending gate cannot be approved and the FORMA
       assert.ok(!again.ok);
       assert.match(again.error, /MU7X-G06: the FORMAL freeze is disabled until/);
       for (const gate of FREEZE_GATES)
-        assert.ok(again.error.includes(`${gate} (requirement pending specification)`), gate);
+        assert.ok(
+          again.error.includes(
+            gate === 'G-MH-V53'
+              ? `${gate} (not approved)`
+              : `${gate} (requirement pending specification)`,
+          ),
+          gate,
+        );
       assert.ok(!again.error.includes('G-PAIN-01'), 'the specified and approved gate is satisfied');
     } finally {
       await g.db.close();
@@ -409,9 +429,10 @@ test('0026 gate requirements: investigator-readable, reviewer-invisible, append-
   try {
     const { db: pilotDb } = await signedOffPilot({ existing: undefined, stopAfter: 'design' });
     try {
+      // The ten requirements of 0026 and the two specified versions of 0028.
       assert.equal(
         (await rows(pilotDb, 'inv', 'select gate_id from public.mu7_gate_requirements')).length,
-        10,
+        12,
       );
       assert.equal(
         (await rows(pilotDb, 'r1', 'select gate_id from public.mu7_gate_requirements')).length,

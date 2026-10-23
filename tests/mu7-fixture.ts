@@ -74,8 +74,26 @@ export type ChainOptions = {
    */
   gates?: 'all' | string[];
 };
+/** Migrations that build on another: leaving one out leaves its dependents out too. */
+const DEPENDENTS: Record<string, string[]> = {
+  'migrations/0025_v7_review_fixes.sql': ['migrations/0026_v7_lifecycle_and_gates.sql'],
+  'migrations/0026_v7_lifecycle_and_gates.sql': ['migrations/0028_v7_gate_specifications_v8_1.sql'],
+};
+function withDependents(without: string[]): string[] {
+  const out = new Set(without);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const f of [...out])
+      for (const d of DEPENDENTS[f] ?? [])
+        if (!out.has(d)) {
+          out.add(d);
+          grew = true;
+        }
+  }
+  return [...out];
+}
 export const chainFiles = (without: string[] = []) =>
-  (HOSTED_SCHEMA_FILES as string[]).filter((f) => !without.includes(f));
+  (HOSTED_SCHEMA_FILES as string[]).filter((f) => !withDependents(without).includes(f));
 export async function seedChain(db: FixtureDb, without: string[] = []) {
   await db.exec(readFileSync('supabase_test_shim/auth_shim.sql', 'utf8'));
   for (const file of chainFiles(without)) await db.exec(readFileSync(file, 'utf8'));

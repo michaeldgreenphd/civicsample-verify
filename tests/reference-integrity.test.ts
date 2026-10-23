@@ -2060,9 +2060,12 @@ test('0010 loader upgrade preserves existing locked references and historical pi
       "insert into public.verify_cases(id,kind,packet) values('SYN-901','DESCRIPTOR',$1)",
       [j({ title: 'Preserved fictional packet' })],
     );
+    // Every pre-existing audit row must be unchanged. The only rows a later migration may add are
+    // its own audited records (0028 specifies two study-decision gates); they are checked below.
     const query = `select jsonb_build_object(
       'judgments',(select jsonb_agg(to_jsonb(a) order by adjudication_id) from public.adjudications a),
-      'audit',(select jsonb_agg(to_jsonb(a) order by audit_id) from public.audit_log a),
+      'audit',(select jsonb_agg(to_jsonb(a) order by audit_id) from public.audit_log a where a.entity_table <> 'mu7_gate_requirements'),
+      'migrationAudit',(select jsonb_agg(a.entity_id order by a.entity_id) from public.audit_log a where a.entity_table = 'mu7_gate_requirements'),
       'locks',(select jsonb_agg(to_jsonb(l)) from public.reference_locks l),
       'snapshots',(select jsonb_agg(to_jsonb(s)) from public.judgment_snapshots_v4 s)) as state`;
     const before = (await f.db.query(query)).rows;
@@ -2074,7 +2077,15 @@ test('0010 loader upgrade preserves existing locked references and historical pi
         ['--import', 'tsx', '--input-type=module', '-e', script],
         { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
       );
-      assert.deepEqual(JSON.parse(result.stdout.trim()), { versions: 1, records: before });
+      const after = JSON.parse(result.stdout.trim());
+      // The two requirement records 0028 writes are its only additions to the audit log.
+      const expected = before.map((r) => ({
+        state: {
+          ...(r as { state: Record<string, unknown> }).state,
+          migrationAudit: ['G-MH-V53', 'G-PAIN-01'],
+        },
+      }));
+      assert.deepEqual(after, { versions: 1, records: expected });
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

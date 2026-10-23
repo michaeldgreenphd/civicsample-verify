@@ -66,8 +66,10 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0024_v7_mapping_units.sql',
   'migrations/0025_v7_review_fixes.sql',
   'migrations/0026_v7_lifecycle_and_gates.sql',
+  'migrations/0027_service_role_least_privilege.sql',
+  'migrations/0028_v7_gate_specifications_v8_1.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '7.0.2-v7-lifecycle-and-gates';
+export const EXPECTED_SCHEMA_VERSION = '7.0.3-v7-gate-specifications-v8-1';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -104,6 +106,8 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0024_v7_mapping_units.sql': ['7.0.0'],
   'migrations/0025_v7_review_fixes.sql': ['7.0.1-v7-review-fixes'],
   'migrations/0026_v7_lifecycle_and_gates.sql': ['7.0.2-v7-lifecycle-and-gates'],
+  'migrations/0027_service_role_least_privilege.sql': ['6.0.6-service-role-least-privilege'],
+  'migrations/0028_v7_gate_specifications_v8_1.sql': ['7.0.3-v7-gate-specifications-v8-1'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([
