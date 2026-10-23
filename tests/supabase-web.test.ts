@@ -513,6 +513,11 @@ test('routes in Supabase mode: sign-in sets cookies, session reports role and aa
     }),
   );
   assert.equal(noFactor.status, 409);
+  // A reviewer is refused the adjudication route before its body is parsed (403, not 400).
+  const notAdjudicator = await POST(
+    req('/api/mc/adjudicate', { method: 'POST', cookie: cookieJar(reviewer), body: '{}' }),
+  );
+  assert.equal(notAdjudicator.status, 403);
   // Logout clears the cookies and invalidates the token at Auth.
   const out = await DELETE(req('/api/session', { method: 'DELETE', cookie: aal2Cookies }));
   assert.ok(out.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));

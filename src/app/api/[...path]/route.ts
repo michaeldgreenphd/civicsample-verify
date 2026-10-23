@@ -376,7 +376,10 @@ async function withSupabaseActor(
       {},
       setCookies,
     );
-  if (path === '/api/mc/adjudicate' && request.method === 'POST')
+  if (path === '/api/mc/adjudicate' && request.method === 'POST') {
+    // Role before body: a non-adjudicator is refused whatever it sends, not told how to shape it.
+    if (actor.role !== 'ADJUDICATOR')
+      throw new HttpError(403, 'This action requires the adjudicator account.');
     return json(
       await mapconfRest.recordMcAdjudication(
         actor,
@@ -386,6 +389,7 @@ async function withSupabaseActor(
       {},
       setCookies,
     );
+  }
   if (path === '/api/mc/admin/action' && request.method === 'POST')
     return json(
       await mapconfRest.mcAdminAction(actor, mcAdminSchema.parse(await body(request))),
