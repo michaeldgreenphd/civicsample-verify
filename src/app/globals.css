@@ -683,7 +683,9 @@ small {
   color: var(--muted);
   margin-top: var(--s2);
 }
+/* Fields are labels; make them block so their vertical margins apply. */
 .field {
+  display: block;
   margin-bottom: var(--s5);
 }
 textarea,
@@ -1488,6 +1490,10 @@ legend {
   font-size: var(--text-sm);
   color: var(--muted);
   margin: 0;
+}
+/* The inline seed field stays inline inside the toolbar. */
+.toolbar .field.inline {
+  display: flex;
 }
 /* A labelled step: heading, one-line explanation, controls. */
 .step h3 {

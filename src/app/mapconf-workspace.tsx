@@ -755,6 +755,10 @@ function McInvestigator({
                   maxLength={2000}
                   placeholder="At least 20 characters"
                 />
+                <span className="form-hint">
+                  One sentence in your own words on why you are making this change. It is stored
+                  with the phase change as your signature.
+                </span>
               </label>
               <div className="button-row">
                 {phase === 'OPEN' && (
