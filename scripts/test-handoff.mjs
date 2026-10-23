@@ -54,6 +54,8 @@ const migrationFiles = {
   ],
   // Byte-identical copy of the supplied v7 migration NNNN_v7_mapping_units.sql.
   m24: 'migrations/0024_v7_mapping_units.sql',
+  // This repository's fixes to 0024 (review findings).
+  m25: 'migrations/0025_v7_review_fixes.sql',
 };
 
 function copy(source, destination) {
@@ -208,6 +210,29 @@ try {
     ],
     362,
     ['MU7-SCHEMA-01'],
+  );
+  // The same suite with this repository's fix migration 0025 appended to 0024, to show the fixes
+  // keep every supplied behaviour. Expected differences: MU7-SCHEMA-01 (version list) and
+  // MU7-ADD-01 (0025 replaces private.is_adjudicator from 0002 with a lock-aware body, as 0021 did
+  // for the other identity helpers; the additive check compares every earlier function's text).
+  concat(join(v7dir, 'nnnn_0024_0025.sql'), [migrationFiles.m24, migrationFiles.m25]);
+  run(
+    'v7-on-app-chain-with-0025',
+    v7dir,
+    'rls_tests_v7.mjs',
+    [
+      ...base,
+      m2,
+      m3,
+      'chain_app_0004_to_0011.sql',
+      m12,
+      'chain_app_0013_to_0023.sql',
+      'nnnn_0024_0025.sql',
+      `../../tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json`,
+      `../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json`,
+    ],
+    362,
+    ['MU7-SCHEMA-01', 'MU7-ADD-01'],
   );
   console.log(
     'SYNTHETIC ENGINEERING ONLY. PGlite is not a live PostgreSQL or Supabase deployment test.',

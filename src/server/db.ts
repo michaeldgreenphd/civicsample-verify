@@ -202,6 +202,10 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     path.join(process.cwd(), 'migrations/0024_v7_mapping_units.sql'),
     'utf8',
   );
+  const v7ReviewFixes = await readFile(
+    path.join(process.cwd(), 'migrations/0025_v7_review_fixes.sql'),
+    'utf8',
+  );
   for (const [version, migration] of [
     ['5.0.0', trialLabelVerification],
     ['5.1.0', trainingExamples],
@@ -217,6 +221,7 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ['6.0.4-service-role-admin-grants', serviceRoleGrants],
     ['6.0.5-service-role-truncate-revoke', truncateRevoke],
     ['7.0.0', mappingUnitsV7],
+    ['7.0.1-v7-review-fixes', v7ReviewFixes],
   ] as const) {
     const present = await db.query<{ present: boolean }>(
       `select exists(select 1 from public.app_schema_version where version='${version}') as present`,

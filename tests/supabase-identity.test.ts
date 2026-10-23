@@ -227,7 +227,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
-  assert.equal(plan.schema.expectedFinalVersion, '7.0.0');
+  assert.equal(plan.schema.expectedFinalVersion, '7.0.1-v7-review-fixes');
   assert.equal(plan.database, null);
   const withDb = config({
     databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,
@@ -251,6 +251,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   );
   assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0023_service_role_truncate_revoke.sql'));
   assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0024_v7_mapping_units.sql'));
+  assert.ok(HOSTED_SCHEMA_FILES.includes('migrations/0025_v7_review_fixes.sql'));
   assert.deepEqual(SCHEMA_FILE_MARKERS['migrations/0018_mapping_confirmation_review_fixes.sql'], [
     '6.0.1-mapping-confirmation-review-fixes',
   ]);
