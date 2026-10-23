@@ -464,16 +464,25 @@ export function adminClient(config, fetchImpl = fetch) {
       const app = await this.findAppUserByAuthUid(id);
       if (!app) refuse('APP_USER', 'No application row is linked to this Auth user.');
       if (locked) {
-        const rows = await call(
-          'POST',
-          '/rest/v1/account_locks',
-          [{ user_id: app.user_id, locked_by: actor }],
-          {
-            Prefer: 'return=representation',
-          },
+        // Resumable: a run interrupted after the lock row was written (for example by a failed
+        // Auth request) is completed by running lock again; the existing row is kept and the ban
+        // is applied. Banning an already banned user is harmless.
+        const existing = await call(
+          'GET',
+          `/rest/v1/account_locks?user_id=eq.${encodeURIComponent(app.user_id)}&released_at=is.null&select=lock_id`,
         );
-        if (!Array.isArray(rows) || rows.length !== 1)
-          refuse('APP_USER', 'The account lock was not recorded.');
+        if (!Array.isArray(existing) || existing.length === 0) {
+          const rows = await call(
+            'POST',
+            '/rest/v1/account_locks',
+            [{ user_id: app.user_id, locked_by: actor }],
+            {
+              Prefer: 'return=representation',
+            },
+          );
+          if (!Array.isArray(rows) || rows.length !== 1)
+            refuse('APP_USER', 'The account lock was not recorded.');
+        }
         await call('PUT', `/auth/v1/admin/users/${encodeURIComponent(id)}`, {
           ban_duration: '876000h',
         });

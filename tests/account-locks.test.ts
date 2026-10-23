@@ -19,15 +19,25 @@ const serviceKey = `h.${Buffer.from(JSON.stringify({ role: 'service_role' })).to
 const AUTH_UID = GUARD_IDS.a; // the guard fixture links auth.users.id = users.user_id = auth_uid
 
 /** Translate the few PostgREST calls the client makes into owner SQL on the PGlite database. */
-function restGateway(db: PGlite) {
+function restGateway(db: PGlite, faults: { failBans?: number } = {}) {
   const bans: Record<string, string> = {};
   return async (input: string | URL, options?: RequestInit) => {
+    try {
+      return await handle(input, options);
+    } catch (e) {
+      // PostgREST answers a constraint violation with an error status, not a dropped request.
+      return new Response(JSON.stringify({ message: (e as Error).message }), { status: 409 });
+    }
+  };
+  async function handle(input: string | URL, options?: RequestInit) {
     const url = new URL(String(input));
     const method = options?.method ?? 'GET';
     const body = options?.body ? JSON.parse(String(options.body)) : undefined;
     const eq = (k: string) => url.searchParams.get(k)?.replace(/^eq\./, '');
     let rows: unknown = [];
     if (url.pathname.startsWith('/auth/v1/admin/users/') && method === 'PUT') {
+      if (faults.failBans && faults.failBans-- > 0)
+        return new Response(JSON.stringify({ message: 'synthetic interruption' }), { status: 503 });
       bans[url.pathname.split('/').at(-1)!] = body.ban_duration;
       rows = { id: url.pathname.split('/').at(-1) };
     } else if (url.pathname === '/rest/v1/users' && method === 'GET') {
@@ -63,7 +73,7 @@ function restGateway(db: PGlite) {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
-  };
+  }
 }
 async function reviewerCanAct(db: PGlite) {
   return guardActor(db, 'a', async () => {
@@ -165,6 +175,60 @@ test('lock blocks a reviewer immediately without deactivating the row; unlock re
       db.query('update public.users set is_active = true where user_id = $1', [GUARD_IDS.b]),
       /only first account linking, display_name and deactivation may change/,
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test('PR #7 review: a lock interrupted after its row is written is completed by a retry', async () => {
+  const db = new PGlite({ extensions: { pgcrypto } });
+  try {
+    await seedGuardDatabase(db);
+    for (const path of HOSTED_SCHEMA_FILES.filter((p: string) =>
+      /0014|0015|0016|0017|0018|0019|0020|0021/.test(p),
+    ))
+      await db.exec(readFileSync(path, 'utf8'));
+    const faults = { failBans: 1 };
+    const calls: { method: string; path: string; body?: unknown }[] = [];
+    const gateway = restGateway(db, faults);
+    const client = adminClient(
+      {
+        project: {
+          environment: 'staging',
+          stagingProjectRef: APPROVED,
+          productionProjectRef: null,
+          projectUrl: `https://${APPROVED}.supabase.co`,
+        },
+        serviceRoleKey: serviceKey,
+        databaseUrl: null,
+        accounts: [],
+      },
+      (async (input: string | URL, options?: RequestInit) => {
+        const u = new URL(String(input));
+        calls.push({
+          method: options?.method ?? 'GET',
+          path: u.pathname,
+          body: options?.body && JSON.parse(String(options.body)),
+        });
+        return gateway(input, options);
+      }) as unknown as typeof fetch,
+    );
+    // The Auth ban fails after the lock row is written: the account is locked in the
+    // application but sign-in is not yet banned.
+    await assert.rejects(client.setLocked(AUTH_UID, true));
+    assert.deepEqual(await reviewerCanAct(db), { who: 0, pseudo: null, cases: 0 });
+    // The retry completes the ban instead of failing on the existing lock row.
+    const retried = await client.setLocked(AUTH_UID, true);
+    assert.equal(retried.locked, true);
+    const bans = calls.filter((c) => c.method === 'PUT').map((c) => c.body);
+    assert.deepEqual(bans.at(-1), { ban_duration: '876000h' });
+    const rows = await db.query(
+      'select lock_id from public.account_locks where released_at is null',
+    );
+    assert.equal(rows.rows.length, 1, 'one active lock row, not two');
+    // Unlock after the recovered lock works as usual.
+    assert.equal((await client.setLocked(AUTH_UID, false)).locked, false);
+    assert.equal((await reviewerCanAct(db)).who, 1);
   } finally {
     await db.close();
   }
