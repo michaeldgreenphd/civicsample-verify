@@ -9,6 +9,6 @@ export default tseslint.config(
   { files: ['**/*.{ts,tsx,mjs}'], languageOptions: { globals: { console: 'readonly', process: 'readonly', Buffer: 'readonly', setTimeout: 'readonly', clearTimeout: 'readonly', URL: 'readonly', fetch: 'readonly', Request: 'readonly', Response: 'readonly', window: 'readonly', document: 'readonly', alert: 'readonly', confirm: 'readonly' } }, rules: { '@typescript-eslint/no-unused-vars': ['error',{argsIgnorePattern:'^_',varsIgnorePattern:'^_'}] } },
   // Supplied handoff test suites and harnesses are vendored verbatim (hash-checked against the
   // package manifests); their style is not ours to rewrite.
-  { files: ['tests/handoff/**/*.mjs'], rules: { '@typescript-eslint/no-unused-vars': 'off' } },
+  { files: ['tests/handoff/**/*.mjs'], linterOptions: { reportUnusedDisableDirectives: 'off' }, rules: { '@typescript-eslint/no-unused-vars': 'off' } },
   { files: ['**/*.tsx'], plugins: {'react-hooks':hooks,'jsx-a11y':a11y}, rules: {...hooks.configs.recommended.rules,...a11y.configs.recommended.rules} }
 );
