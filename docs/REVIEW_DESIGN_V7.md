@@ -49,3 +49,15 @@ The `mc_*` module served the synthetic pilot that ran on staging on 2026-10-23 (
 Gate approvals, applying 0023 and 0024 to staging, the freeze, production accounts and import, opening the formal phase, reviewer invitations.
 | `migrations/0025_v7_review_fixes.sql` (branch `codex/v7-review-fixes`) | this repository's fixes to 0024: keyed audit digests, phase serialization, a lock-aware adjudicator helper, once-only phase events, no PILOT answer after adjudication, no service_role writes on v7 tables. Each reproduced first and pinned by `tests/mu7-findings.test.ts` (without and with 0025) and `tests/mu7-postgres.test.ts` (native race, CI). **Not applied to staging.** |
 | `migrations/0026_v7_lifecycle_and_gates.sql` (branch `codex/v7-review-fixes`) | second round of fixes to 0024. A nonempty, dually assigned pilot inventory is bound through the lock, the export and the sign-off. No pilot import is accepted after the pilot lock. The FORMAL freeze and the formal opening are gated by study decisions, all recorded as pending, so both stay disabled. Adjudications take the exclusive lock. Pinned by `tests/mu7-lifecycle.test.ts` (without and with 0026) and `tests/mu7-postgres.test.ts` (native races, CI). **Not applied to staging.** |
+
+## Vendored analysis (`analysis/v7/`, from the package's `validation/`)
+
+| File                                    | SHA-256 as supplied (manifest checked) | In this repository           |
+| --------------------------------------- | -------------------------------------- | ---------------------------- |
+| `performance_analysis_v7.py`            | `5a652591…b27e`                        | identical                    |
+| `mu7_bundle.py`                         | `b08610d2…0959`                        | identical                    |
+| `mu7_estimators.py`                     | `e7be00fa…c06c`                        | identical                    |
+| `fixtures/make_synthetic_v7_bundle.py`  | `0ba804a7…c3e`                         | identical                    |
+| `tests/test_performance_analysis_v7.py` | `7d3fa531…cd2`                         | `57d04403…8b91` (one change) |
+
+The one change builds the test's synthetic placeholder identifier at run time, so this public source carries no registry-format literal; the value and every assertion are unchanged. The package's database-written bundle (`fixtures/db_bundle_v7_synthetic/`) is not copied, because it carries those literals; `tests/mu7-analysis.test.ts` writes the same scenario's bundle with this application's exporter and runs the supplied end-to-end test on it.
