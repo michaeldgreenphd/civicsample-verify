@@ -176,7 +176,7 @@ function Evidence({ c, ids = false }: { c: McCaseView; ids?: boolean }) {
         )}
         <p className="privacy-note">
           Evidence hash <span className="mono">{c.evidenceSha256.slice(0, 12)}…</span> · version{' '}
-          {c.evidenceVersion}· assignment hash{' '}
+          {c.evidenceVersion} · assignment hash{' '}
           <span className="mono">{c.assignmentSha256.slice(0, 12)}…</span>
         </p>
       </div>
@@ -683,32 +683,43 @@ function McInvestigator({
             <div className="step">
               <h3>Prepare the pilot</h3>
               <p>
-                Import the synthetic mappings, then assign each one to the two pilot reviewers.
+                {workspace.completion.length > 0
+                  ? 'Every mapping is assigned to both pilot reviewers.'
+                  : workspace.counts.syntheticPilot > 0
+                    ? 'The synthetic mappings are imported. Assign each one to the two pilot reviewers.'
+                    : 'Import the synthetic mappings, then assign each one to the two pilot reviewers.'}{' '}
                 Evaluation import opens once the condition list, sampling frame and rubric are
                 approved.
               </p>
               <div className="toolbar">
-                <button
-                  className="button secondary"
-                  onClick={() => act({ action: 'import-synthetic' })}
-                >
-                  Import synthetic mappings
-                </button>
-                <label className="field inline">
-                  <span className="form-label">Seed</span>
-                  <input
-                    type="number"
-                    value={seed}
-                    min={1}
-                    onChange={(e) => setSeed(Number(e.target.value))}
-                  />
-                </label>
-                <button
-                  className="button secondary"
-                  onClick={() => act({ action: 'assign', seed })}
-                >
-                  Assign to the two pilot reviewers
-                </button>
+                {workspace.counts.syntheticPilot === 0 && (
+                  <button
+                    className="button secondary"
+                    onClick={() => act({ action: 'import-synthetic' })}
+                  >
+                    Import synthetic mappings
+                  </button>
+                )}
+                {workspace.completion.length === 0 && (
+                  <>
+                    <label className="field inline">
+                      <span className="form-label">Seed</span>
+                      <input
+                        type="number"
+                        value={seed}
+                        min={1}
+                        onChange={(e) => setSeed(Number(e.target.value))}
+                      />
+                    </label>
+                    <button
+                      className="button secondary"
+                      disabled={workspace.counts.syntheticPilot === 0}
+                      onClick={() => act({ action: 'assign', seed })}
+                    >
+                      Assign to the two pilot reviewers
+                    </button>
+                  </>
+                )}
                 <button
                   className="button secondary"
                   disabled

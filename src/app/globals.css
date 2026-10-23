@@ -1437,6 +1437,16 @@ tr:last-child td {
   word-break: break-word;
 }
 
+/* Grouped controls use the field spacing, not the browser's fieldset box. */
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+legend {
+  padding: 0;
+}
 /* Vertical rhythm between stacked surfaces. */
 .panel + .panel,
 .notice + .panel,
