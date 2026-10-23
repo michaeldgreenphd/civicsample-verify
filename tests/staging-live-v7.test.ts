@@ -17,11 +17,17 @@ import test from 'node:test';
 import { PostgrestClient } from '../src/lib/postgrest';
 import { supabaseWebConfig } from '../src/lib/supabase-config';
 import { SupabaseAuth } from '../src/lib/supabase-auth';
-import { MU7_PILOT_EXPECTED_ROUTING, MU7_PILOT_PLANTED } from '../src/lib/mu7-synthetic';
+import { MU7_PILOT_EXPECTED_ROUTING } from '../src/lib/mu7-synthetic';
 import type { Mu7AdjudicatorWorkspace, Mu7ReviewerWorkspace } from '../src/lib/mu7-types';
 import * as core from '../src/server/mu7-core';
 import { mu7RestData } from '../src/server/mu7-rest';
-import { ServiceError } from '../src/server/service';
+import {
+  adjudicationDuplicateRefused,
+  adjudicatorPhase,
+  outcome,
+  reviewerPersistence,
+  reviewerPhase,
+} from './mu7-live-phases';
 
 const webPath = process.env.VERIFY_SUPABASE_WEB_CONFIG;
 const signInPath = process.env.VERIFY_SUPABASE_SIGNIN;
@@ -81,15 +87,6 @@ async function session(rt: Runtime, username: string) {
   };
   return { ctx, client, token: s.accessToken, signOut: () => rt.auth.signOut(s.accessToken) };
 }
-async function outcome(p: Promise<unknown>) {
-  try {
-    await p;
-    return { status: 200, message: '' };
-  } catch (e) {
-    if (e instanceof ServiceError) return { status: e.status, message: e.message };
-    throw e;
-  }
-}
 
 test(
   'staging v7 restrictions: reviewers, the adjudicator and an investigator without a second factor cannot run investigator actions',
@@ -148,7 +145,7 @@ test(
 );
 
 test(
-  'staging v7 reviewers: independent answers with the planted refusals, isolation and persistence across sessions',
+  'staging v7 reviewers: independent answers with the planted refusals, isolation and persistence across sessions (resumable)',
   only('reviewers'),
   async () => {
     const rt = runtime();
@@ -157,57 +154,12 @@ test(
       await session(rt, 'syn-pilot-reviewer-2'),
     ];
     try {
-      const q1 = (await core.getMu7Workspace(p1.ctx)) as Mu7ReviewerWorkspace;
-      const q2 = (await core.getMu7Workspace(p2.ctx)) as Mu7ReviewerWorkspace;
-      assert.equal(q1.queue.length, 12, 'the investigator assigned 12 units to slot 1');
-      assert.equal(q2.queue.length, 12);
-      assert.ok(q1.queue.filter((q) => q.unitRole === 'SUBGROUP').every((q) => !q.available));
-      // Isolation: neither reviewer reaches the other's assignment or answers.
-      assert.equal(
-        (await outcome(core.getMu7ReviewerUnit(p2.ctx, q1.queue[0].assignmentId))).status,
-        404,
-      );
-      for (const [s, slot, q] of [
-        [p1, 1, q1],
-        [p2, 2, q2],
-      ] as const) {
-        for (const item of q.queue) {
-          const unit = await core.getMu7ReviewerUnit(s.ctx, item.assignmentId);
-          const p = MU7_PILOT_PLANTED[unit.packet.unit.unit_id].find(
-            (x) => x.reviewer_slot === slot,
-          )!;
-          // Resumable: an answer already on record (from an earlier, interrupted run) must be the
-          // planted one and is not submitted again, so a rerun never adds a revision.
-          const last = unit.ownAnswers.at(-1);
-          if (last) {
-            assert.equal(last.answer, p.answer, `${unit.packet.unit.unit_id}: answer on record`);
-            assert.equal(
-              last.reasonCode,
-              p.reason_code,
-              `${unit.packet.unit.unit_id}: reason on record`,
-            );
-            continue;
-          }
-          if (p.answer === 'DISAGREE')
-            assert.match(
-              (
-                await outcome(
-                  core.submitMu7(s.ctx, item.assignmentId, {
-                    answer: 'DISAGREE',
-                    reasonCode: p.reason_code,
-                  }),
-                )
-              ).message,
-              /^MU7-G36:/,
-            );
-          await core.submitMu7(s.ctx, item.assignmentId, {
-            answer: p.answer,
-            reasonCode: p.reason_code,
-            note: p.note,
-            uncertain: p.uncertain,
-          });
-        }
-      }
+      // tests/mu7-live-phases.ts: resumable; answers on record are validated, never resubmitted.
+      const stats = await reviewerPhase([
+        { ctx: p1.ctx, slot: 1 },
+        { ctx: p2.ctx, slot: 2 },
+      ]);
+      assert.equal(stats.submitted + stats.skipped, 24);
       const other = await p2.client.select<{ reviewer_slot: number }>(
         'mu7_judgments',
         'select=reviewer_slot',
@@ -222,13 +174,7 @@ test(
     // Persistence: a new session reads every answer back from the database.
     const again = await session(rt, 'syn-pilot-reviewer-1');
     try {
-      const ws = (await core.getMu7Workspace(again.ctx)) as Mu7ReviewerWorkspace;
-      assert.ok(ws.queue.every((q) => q.answered));
-      for (const item of ws.queue) {
-        const unit = await core.getMu7ReviewerUnit(again.ctx, item.assignmentId);
-        const p = MU7_PILOT_PLANTED[unit.packet.unit.unit_id].find((x) => x.reviewer_slot === 1)!;
-        assert.equal(unit.ownAnswers.at(-1)?.answer, p.answer, unit.packet.unit.unit_id);
-      }
+      await reviewerPersistence({ ctx: again.ctx, slot: 1 });
     } finally {
       await again.signOut();
     }
@@ -236,51 +182,41 @@ test(
 );
 
 test(
-  'staging v7 adjudicator: only the 5 routed units, routing as expected, tie-breaks recorded once',
+  'staging v7 adjudicator: only the 5 routed units, routing as expected, missing tie-breaks recorded once (resumable)',
   only('adjudicator'),
   async () => {
     const rt = runtime();
     const a = await session(rt, 'syn-adjudicator');
     try {
-      const ws = (await core.getMu7Workspace(a.ctx)) as Mu7AdjudicatorWorkspace;
-      const routed = Object.entries(MU7_PILOT_EXPECTED_ROUTING)
-        .filter(([, r]) => r === 'ROUTED')
-        .map(([u]) => u)
-        .sort();
-      assert.deepEqual(
-        ws.queue.map((q) => q.unitId),
-        routed,
-      );
       const finals = await a.client.select<{ unit_id: string; routing: string }>(
         'v_mu7_final_reference',
         'select=unit_id,routing&mode=eq.PILOT',
       );
+      assert.equal(finals.length, 12);
       for (const f of finals)
         assert.equal(f.routing, MU7_PILOT_EXPECTED_ROUTING[f.unit_id], f.unit_id);
-      const concordant = finals.find((f) => f.routing === 'CONCORDANT_AGREE')!.unit_id;
-      assert.equal((await outcome(core.getMu7AdjudicatorUnit(a.ctx, concordant))).status, 404);
-      for (const unitId of routed) {
-        const done = await core.recordMu7Adjudication(a.ctx, {
-          unitId,
-          status: 'UNRESOLVED_ESCALATED',
-          basis: 'NONE',
-          rationale: 'Synthetic: escalated in the live staging pilot.',
-        });
-        assert.ok(done.adjudication);
-      }
-      assert.equal(
-        (
-          await outcome(
-            core.recordMu7Adjudication(a.ctx, {
-              unitId: routed[0],
-              status: 'UNRESOLVED_ESCALATED',
-              basis: 'NONE',
-              rationale: 'A second tie-break must be refused.',
-            }),
-          )
-        ).status,
-        409,
-      );
+      // tests/mu7-live-phases.ts: tie-breaks on record are validated and skipped; only missing
+      // ones are written.
+      const stats = await adjudicatorPhase(a.ctx);
+      assert.equal(stats.recorded + stats.skipped, 5);
+    } finally {
+      await a.signOut();
+    }
+  },
+);
+
+test(
+  'staging v7 adjudicator: a second tie-break of an adjudicated unit is refused',
+  only('adjudicator'),
+  async () => {
+    const rt = runtime();
+    const a = await session(rt, 'syn-adjudicator');
+    try {
+      const routed = Object.entries(MU7_PILOT_EXPECTED_ROUTING)
+        .filter(([, r]) => r === 'ROUTED')
+        .map(([u]) => u)
+        .sort();
+      await adjudicationDuplicateRefused(a.ctx, routed[0]);
     } finally {
       await a.signOut();
     }
