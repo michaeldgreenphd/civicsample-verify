@@ -27,7 +27,10 @@ const exactKeys = (value, keys) =>
 /** The staging project this repository is approved to administer (docs/SUPABASE_IDENTITY.md). A
  *  privileged configuration naming any other reference is refused before any request, whatever
  *  it calls itself; this list changes only through a reviewed commit. */
-export const APPROVED_STAGING_PROJECT_REFS = Object.freeze(['xmuiduugdrqvhssmeacz']);
+export const APPROVED_STAGING_PROJECT_REFS = Object.freeze([
+  'xmuiduugdrqvhssmeacz', // Completed pilot; preserve its records.
+  'wjntsoeifbelasidssmv', // Separate synthetic practice project selected by the investigator.
+]);
 export const ROLES = ['INVESTIGATOR', 'REVIEWER', 'ADJUDICATOR'];
 export const USERNAME = /^[a-z][a-z0-9._-]{2,31}$/;
 /** Reserved, never-deliverable domain (RFC 2606): usernames map to internal Auth identities and

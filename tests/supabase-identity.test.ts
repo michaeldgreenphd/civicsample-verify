@@ -62,6 +62,35 @@ const code = (fn: () => unknown) => {
   }
 };
 
+test('practice project is independently allowlisted and cannot use the completed pilot database', () => {
+  const ref = 'wjntsoeifbelasidssmv';
+  const practice = config({
+    project: {
+      ...config().project,
+      stagingProjectRef: ref,
+      projectUrl: `https://${ref}.supabase.co`,
+    },
+    databaseUrl: `postgresql://postgres.${ref}:synthetic@aws-0-us-east-1.pooler.supabase.com:5432/postgres`,
+  });
+  assert.equal(
+    code(() => validateAdminConfig(practice)),
+    null,
+  );
+  assert.equal(
+    code(() =>
+      validateAdminConfig({
+        ...practice,
+        databaseUrl: `postgresql://postgres.${APPROVED}:synthetic@aws-0-us-east-1.pooler.supabase.com:5432/postgres`,
+      }),
+    ),
+    'DATABASE_DESTINATION',
+  );
+  assert.equal(
+    code(() => validateAdminConfig(practice, [APPROVED])),
+    'PROJECT_NOT_APPROVED',
+  );
+});
+
 test('admin configuration: staging only, service-role key required, usernames instead of e-mail', () => {
   assert.equal(
     code(() => validateAdminConfig(config())),
