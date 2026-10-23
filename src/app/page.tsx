@@ -283,6 +283,7 @@ export default function Home() {
       .then((d) => {
         setUser(d.user);
         setEnvironment(d.environment ?? 'synthetic');
+        setTab(d.environment && d.environment !== 'synthetic' ? 'mu7' : 'review');
       })
       .catch((e) => setError(e.message))
       .finally(() => setInitializing(false));
@@ -314,7 +315,7 @@ export default function Home() {
       setSelected(null);
       setWorkspace(null);
       setError('');
-      setTab('review');
+      setTab(hosted ? 'mu7' : 'review');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -347,7 +348,7 @@ export default function Home() {
           <div className="page-intro">
             <div>
               <div className="eyebrow">Supabase staging · synthetic records only</div>
-              <h1>Mapping confirmation</h1>
+              <h1>Clinical review practice</h1>
               <p className="intro-copy">
                 Signed in as {user.displayName}, {user.role.toLowerCase()}.
               </p>
