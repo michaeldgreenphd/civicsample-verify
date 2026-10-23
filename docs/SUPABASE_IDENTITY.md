@@ -97,7 +97,7 @@ Every mutation needs all of: `VERIFY_SUPABASE_ADMIN_APPLY=1`, `--apply`, `--conf
 
 Order for the staging bootstrap, once authorized: (1) dashboard settings; (2) `plan`, review, record the hash; (3) `apply-schema`; (4) `accounts` with a synthetic roster first (`syn-investigator`, `syn-reviewer-1`, `syn-reviewer-2`, `syn-adjudicator`), then the real-JWT probes (`npm run test:supabase:staging -- --config …`); (5) only after the investigator's separate authorization, the real roster. Steps 3 to 5 are not performed in this increment. Status today: tooling prepared and tested against a mocked gateway; no remote request has been made; Supabase behaviour is UNTESTED.
 
-## Application integration (implemented; real Supabase behaviour untested)
+## Application integration (implemented; exercised end to end on staging 2026-10-23)
 
 The web application now has a second deployment mode, `VERIFY_DATA_BACKEND=supabase`, started with `node scripts/supabase-web.mjs start --config <private web-app.json>` (template: `~/Private/civicsample-verify-staging/web-app.json`; it holds the **publishable** key only, and the launcher refuses a placeholder or a secret key). The default mode, the local PGlite pilot, is unchanged.
 
@@ -119,8 +119,8 @@ The browser never receives a Supabase token (no client-side Supabase library); t
 2. **Sign-ups disabled** (dashboard: Authentication → Sign In / Providers → Email → "Allow new users to sign up" off). The read-only settings check currently shows sign-ups enabled.
 3. **Migration 0022 applied** (authorization needed; `apply-schema` resumes), after which `accounts`, `lock` and `unlock` work on staging.
 4. **Two synthetic pilot reviewer accounts** (`isPilotTestAccount: true`; authorization needed) so `SYNTHETIC_PILOT` mappings can be assigned.
-5. **TOTP enrolment** of the synthetic investigator through the app, by you, with your authenticator app.
-6. **Synthetic pilot import** on staging, from the reviewed plan (`node --import tsx scripts/mapconf-import-plan.mjs`), after your authorization.
+5. **TOTP enrolment** of the synthetic investigator through the app, by you, with your authenticator app. Done 2026-10-23.
+6. **Synthetic pilot import** on staging, from the reviewed plan (`node --import tsx scripts/mapconf-import-plan.mjs`), after your authorization. Done 2026-10-23 (see the verification section).
 
 ## Verification of this increment
 
@@ -134,7 +134,9 @@ Accounts on staging (2026-10-22, authorized against the same plan): `accounts --
 
 Prepared for review, not applied remotely: `0023_service_role_truncate_revoke.sql` revokes TRUNCATE, REFERENCES and TRIGGER from `service_role` on every public table (and by default privilege on later tables) while keeping the 0022 administration grants; `tests/service-role-truncate.test.ts` reproduces the project-default privileges and checks the revoke, the unchanged `anon`/`authenticated` privileges and the surviving administration read.
 
-Still UNTESTED on staging: TOTP enrolment and aal2, migration 0022 and account locks, the synthetic pilot import, assignment, submissions, adjudication, lock and export (all await authorization or your enrolment).
+Full synthetic workflow on staging (2026-10-23, each step authorized by the investigator and performed through the served app at `http://127.0.0.1:3300/`, never through the service-role key): the investigator enrolled a TOTP authenticator in the browser (Auth Admin read afterwards: exactly one verified factor on `syn-investigator-1`, no abandoned factor, no factor on any other account, so reviewers and the adjudicator are never asked for a second factor); the investigator created the campaign (`CONDSET-PPR-FIG2-v5.1-PROPOSED`, status PROPOSED, rubric `MAPPING_CONFIRMATION_RUBRIC-DRAFT-1`), imported the 12 `SYNTHETIC_PILOT` and 3 `TRAINING_EXAMPLE` cases from the reviewed plan and assigned them (24 assignments, seed 20261022, both pilot accounts enrolled with PILOT scope); the two pilot reviewers submitted 24 final answers through `/api/session` + `/api/mc/assignments/{id}/submit` (reviewer 2 refused `MC-SYN-011` with an annotation; both marked `MC-SYN-012` insufficient); neither reviewer's workspace carried the other's annotation, and both received 403 on the investigator route; the investigator closed submissions and authorized adjudication with attestations; the adjudicator recorded `DISCORDANT_RESOLVED` (NO, basis REVIEWER_2) for `MC-SYN-011` and `RUBRIC_ADDITION_REVIEWED` (no decision, basis NONE) for `MC-SYN-012`; the investigator locked the campaign, built the export and registered it (manifest `f34b9b54…`, `app_git_sha` 7107b71; three identical registration rows because the button was pressed three times, which the interface now prevents). Read-only database checks after each step: phase OPEN → CLOSED → ADJUDICATION → LOCKED, `mc_cases` 12 + 3, `mc_assignments` 24, `mc_responses` 24, `mc_adjudications` 2, `mc_exports` 3. Two defects found and fixed during the run: Auth returns the TOTP QR as raw SVG markup (now accepted and rendered inline), and an enrolled investigator signing in again was asked to type the authenticator's internal id (the server now finds the verified factor from the code alone). Export from a build made on a dirty tree was refused with "Export requires a verified application build commit", as designed; the rebuild from the clean tree at 7107b71 exported.
+
+Still UNTESTED on staging: migration 0023 (prepared only) and the reversible account lock/unlock on a synthetic account (awaits authorization to lock one briefly).
 
 ## What the investigator needs to provide
 

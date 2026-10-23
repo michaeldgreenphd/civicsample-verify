@@ -621,15 +621,22 @@ function McInvestigator({
   const [attestation, setAttestation] = useState('');
   const [seed, setSeed] = useState(20261022);
   const [bundle, setBundle] = useState<McBundle | null>(null);
+  const [busy, setBusy] = useState(false);
   async function act(input: McAdminAction) {
+    setBusy(true);
     try {
       await api('/api/mc/admin/action', { method: 'POST', body: JSON.stringify(input) });
       setError('');
       await onRefresh();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
+  // The registration is append-only, so the button goes quiet once this manifest is on record.
+  const registered =
+    bundle !== null && workspace.exports.some((x) => x.manifestSha256 === bundle.manifestSha256);
   const c = workspace.campaign;
   const phase = c?.phase ?? null;
   return (
@@ -794,26 +801,38 @@ function McInvestigator({
             </div>
           )}
           {phase === 'LOCKED' && (
-            <div className="button-row">
-              <button
-                className="button"
-                onClick={() =>
-                  api<McBundle>('/api/mc/admin/export')
-                    .then((b) => {
-                      setBundle(b);
-                      setError('');
-                    })
-                    .catch((e) => setError(e.message))
-                }
-              >
-                Build export
-              </button>
-              <button
-                className="button secondary"
-                onClick={() => act({ action: 'register-export' })}
-              >
-                Register export
-              </button>
+            <div className="step">
+              <h3>Export</h3>
+              <p>
+                Build the locked bundle, check the manifest, then register its hashes. Each
+                registration is a permanent record, so the button rests once this manifest is
+                registered.
+              </p>
+              <div className="button-row">
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    api<McBundle>('/api/mc/admin/export')
+                      .then((b) => {
+                        setBundle(b);
+                        setError('');
+                      })
+                      .catch((e) => setError(e.message))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Build export
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={busy || bundle === null || registered}
+                  onClick={() => act({ action: 'register-export' })}
+                >
+                  {registered ? 'Export registered' : 'Register export'}
+                </button>
+              </div>
             </div>
           )}
           {bundle && (
