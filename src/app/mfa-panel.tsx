@@ -80,6 +80,9 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
             <button className="button" onClick={enrol} disabled={busy}>
               Enrol an authenticator app
             </button>
+            <p className="muted" style={{ fontSize: 12 }}>
+              Starting again discards any earlier enrolment that was never verified.
+            </p>
           </>
         )}
         {enrolment && (
@@ -96,9 +99,18 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
                 height={180}
               />
             )}
-            <p className="mono" data-testid="mfa-secret">
-              {enrolment.secret}
+            <p>
+              Manual entry secret:{' '}
+              <span className="mono" data-testid="mfa-secret">
+                {enrolment.secret}
+              </span>
             </p>
+            {enrolment.uri && (
+              <p className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+                Setup link (same information as the QR code):{' '}
+                <span className="mono">{enrolment.uri}</span>
+              </p>
+            )}
           </>
         )}
         {(enrolled || enrolment) && (

@@ -34,6 +34,14 @@ export interface TotpEnrollment {
 export const internalEmail = (username: string, ref: string) =>
   `${username}@${ref}.accounts.invalid`;
 
+/** Auth returns the QR code as an SVG data URI with raw (unencoded) markup; browsers need the
+ *  payload percent-encoded to render it as an image source. */
+export function normaliseSvgDataUri(value: string): string {
+  const m = /^data:image\/svg\+xml(?:;utf-?8)?,(.*)$/s.exec(value);
+  if (!m) return value;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(m[1])}`;
+}
+
 function decodeClaims(token: string): Record<string, unknown> {
   const parts = token.split('.');
   if (parts.length !== 3) throw new HttpError(401, 'Sign in to continue.');
@@ -170,26 +178,38 @@ export class SupabaseAuth {
   }
 
   // ---- TOTP multi-factor authentication ----
+  /** Remove the caller's own unverified factors (an abandoned enrolment) so a fresh QR code can be
+   *  issued; verified factors are never touched here. */
+  async unenrollUnverified(accessToken: string): Promise<number> {
+    this.cache.delete(accessToken);
+    const user = await this.verify(accessToken);
+    for (const factor of user.unverifiedFactors)
+      await this.call(`/auth/v1/factors/${factor.id}`, { method: 'DELETE', token: accessToken });
+    this.cache.delete(accessToken);
+    return user.unverifiedFactors.length;
+  }
   async enrollTotp(accessToken: string, friendlyName: string): Promise<TotpEnrollment> {
-    const result = await this.call<{
-      id?: string;
-      totp?: { qr_code?: string; secret?: string; uri?: string };
-    }>('/auth/v1/factors', {
-      method: 'POST',
-      token: accessToken,
-      body: { factor_type: 'totp', friendly_name: friendlyName, issuer: 'CivicSample Verify' },
-    });
-    if (result.status === 422)
-      throw new HttpError(
-        409,
-        'An unverified authenticator is already enrolled; remove it or verify it.',
+    const start = () =>
+      this.call<{ id?: string; totp?: { qr_code?: string; secret?: string; uri?: string } }>(
+        '/auth/v1/factors',
+        {
+          method: 'POST',
+          token: accessToken,
+          body: { factor_type: 'totp', friendly_name: friendlyName, issuer: 'CivicSample Verify' },
+        },
       );
+    let result = await start();
+    if (result.status === 422) {
+      // An earlier enrolment was abandoned before verification: discard it and start again.
+      await this.unenrollUnverified(accessToken);
+      result = await start();
+    }
     if (result.status !== 200 || !result.body?.id || !result.body.totp?.secret)
       throw new HttpError(502, 'The identity service could not start enrolment.');
     this.cache.delete(accessToken);
     return {
       factorId: result.body.id,
-      qrCode: result.body.totp.qr_code ?? '',
+      qrCode: normaliseSvgDataUri(result.body.totp.qr_code ?? ''),
       secret: result.body.totp.secret,
       uri: result.body.totp.uri ?? '',
     };

@@ -121,9 +121,18 @@ function gateway() {
       }
       return new Response(null, { status: 204 });
     }
+    const unenroll = /^\/auth\/v1\/factors\/([^/]+)$/.exec(url.pathname);
+    if (unenroll && init?.method === 'DELETE') {
+      if (!session) return respond(401, {});
+      const u = Object.values(users).find((x) => x.id === session.sub)!;
+      u.factors = u.factors.filter((f) => f.id !== unenroll[1]);
+      return respond(200, { id: unenroll[1] });
+    }
     if (url.pathname === '/auth/v1/factors' && init?.method === 'POST') {
       if (!session) return respond(401, {});
       const u = Object.values(users).find((x) => x.id === session.sub)!;
+      if (u.factors.some((f) => f.status === 'unverified'))
+        return respond(422, { message: 'An unverified factor already exists' });
       const factor = {
         id: '00000000-0000-4000-8000-0000000000f1',
         status: 'unverified',
@@ -290,6 +299,19 @@ test('TOTP enrolment and verification raise the session to aal2 through Auth', a
   const session = await auth.signIn('syn-investigator-1', 'pw-investigator-synthetic');
   const enrolment = await auth.enrollTotp(session.accessToken, 'Synthetic investigator');
   assert.equal(enrolment.secret, 'SYNTHETICSECRET');
+  assert.match(
+    enrolment.qrCode,
+    /^data:image\/svg\+xml;charset=utf-8,%3Csvg/,
+    'QR payload percent-encoded for an image source',
+  );
+  // An abandoned enrolment (unverified factor) is discarded automatically and a fresh QR issued.
+  const again = await auth.enrollTotp(session.accessToken, 'Synthetic investigator');
+  assert.equal(again.secret, 'SYNTHETICSECRET');
+  assert.equal(
+    (await auth.verify(session.accessToken)).unverifiedFactors.length,
+    1,
+    'only one pending factor remains',
+  );
   await assert.rejects(
     auth.verifyTotp(session.accessToken, enrolment.factorId, '000000'),
     /code was not accepted/,
