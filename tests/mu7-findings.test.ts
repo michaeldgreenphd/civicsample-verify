@@ -381,7 +381,7 @@ test('finding 3 (characterization, no fix yet): what coexists with a recorded v7
 test(
   'finding 3 (proposed guard): v7 and the other formal paths exclude each other without touching synthetic pilots',
   {
-    todo: 'proposed in docs/test_runs/V7_MIGRATION_REVIEW.md section 8; awaits the investigator and the package authors',
+    todo: 'prepared, not applied: migrations/proposed/v7_cross_design_coexistence.sql, tested by tests/mu7-coexistence-proposal.test.ts; awaits the investigator',
   },
   () => {},
 );

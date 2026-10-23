@@ -60,7 +60,13 @@ export type ChainOptions = {
   stopAfterPilotAdjudication?: boolean;
   /** Stop earlier or later than the default end of each builder (see signedOffPilot, formalOpen). */
   stopAfter?:
-    'design' | 'pilotAnswers' | 'pilotAdjudication' | 'pilotLock' | 'formalImport' | 'freeze';
+    | 'accounts'
+    | 'design'
+    | 'pilotAnswers'
+    | 'pilotAdjudication'
+    | 'pilotLock'
+    | 'formalImport'
+    | 'freeze';
   /**
    * Study-decision gates of migration 0026 to specify and approve SYNTHETICALLY in this disposable
    * test database ('all' by default). With [] every gate stays as 0026 records it, pending.
@@ -375,6 +381,9 @@ export async function specifyAndApproveGates(db: FixtureDb, gates: 'all' | strin
     );
   }
 }
+/** The design record call of the fixture (for tests that record it themselves). */
+export const recordDesignSql = () =>
+  `select public.rpc_mu7_record_design(${lit({ design_version: DESIGN_VERSION, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })}) as d`;
 export const phase = (t: string, o: Record<string, unknown> = {}) =>
   `select public.rpc_mu7_phase('${t}', ${lit({ attestation: ATT, ...o })}) as e`;
 export const assignmentOf = (db: FixtureDb, pseudo: string, unit: string) =>
@@ -461,6 +470,7 @@ export async function signedOffPilot(
     );
   const PT1 = await pidOf(db, 'pt1');
   const PT2 = await pidOf(db, 'pt2');
+  if (options.stopAfter === 'accounts') return { db, PT1, PT2 };
   await must(
     db,
     'inv',

@@ -81,7 +81,7 @@ Categories with nothing to report: every function sets `search_path = ''` and is
 
 The supplied v7 suite with 0024 and 0025 together on this chain: **360 / 362**; the two differences are MU7-SCHEMA-01 (version list) and MU7-ADD-01 (the additive check sees `private.is_adjudicator` changed, which is the intended fix). Not fixed here and reported to the package authors: findings 6 (unverifiable `queue_sha256` at the freeze; the investigator console will compute it from the frozen queue file), 8 (mode literal) and 10 (header).
 
-## 8. Cross-design coexistence (finding 3): reachable scenario and proposed guard (not implemented)
+## 8. Cross-design coexistence (finding 3): reachable scenario and proposed guard (prepared, not applied)
 
 Characterized by `tests/mu7-findings.test.ts` on a database where a v7 design is recorded and its pilot signed off:
 
@@ -94,6 +94,15 @@ Characterized by `tests/mu7-findings.test.ts` on a database where a v7 design is
 1. Refuse an `mc_cases` row with `record_category = 'EVALUATION'` once a v7 design is recorded, and refuse recording a v7 design while any EVALUATION mapping exists. Synthetic pilot and training mappings stay allowed in both orders, so the existing locked synthetic pilot campaign on staging does not block v7.
 2. Refuse a v2 `FORMAL_UNLOCKED` phase event once a v7 design is recorded, which closes the v2 FORMAL enrolment path without changing v2 PILOT behaviour.
 3. Optionally, refuse creating a new mapping-confirmation campaign after a v7 design is recorded, if the investigator wants one mapping review per database. This is the only option that changes current synthetic behaviour, so it is listed last.
+
+**Prepared for review, not applied** (`migrations/proposed/v7_cross_design_coexistence.sql`, outside the hosted chain and the local loader). It implements points 1 and 2 in both orders: MU7C-G01 refuses an EVALUATION mapping and MU7C-G02 refuses the v2 unlock once v7 is recorded, while MU7C-G03 refuses recording v7 next to either. Each side takes one advisory lock, so a racing pair serializes. Point 3 is left out because it changes current synthetic behaviour. `tests/mu7-coexistence-proposal.test.ts` applies it to disposable copies of the full chain, and its 5 tests pass:
+
+- An existing synthetic mapping pilot, with a pilot and a training case, is preserved. v7 is then recorded, and a further synthetic mapping is still accepted.
+- An EVALUATION import next to v7 is refused by MU7C-G01 before 0018's build-wide refusal.
+- Recording v7 next to an EVALUATION mapping or a v2 unlock is refused. Each of those rows is written by the owner with triggers off, standing in for a later migration that lifts today's refusal.
+- The v2 unlock is refused by MU7C-G02 before the v2 pilot check.
+
+Before it is applied to staging, a read-only check should confirm that staging holds no EVALUATION mapping and no `FORMAL_UNLOCKED` event. The existing locked synthetic campaign is unaffected either way.
 
 ## 9. Local run on `codex/v7-review-fixes` before its first commit
 
