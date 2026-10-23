@@ -118,11 +118,13 @@ test(
           assert.ok([403, 409].includes(r.status), `${username} ${action.action}: ${r.status}`);
           assert.notEqual(r.status, 200);
         }
+        // A gate still pending specification: even if every role check failed, MU7X-G08 would refuse
+        // the row, so this refusal check can never record an approval.
         const approve = await outcome(
           s.client.rpc('rpc_mu7_approve_gate', {
-            p_gate_id: 'G-PAIN-01',
+            p_gate_id: 'G-PROV-01',
             p_attestation: 'Synthetic attestation, live restriction check.',
-            p_evidence_reference: 'investigator decisions 2026-10-23, addendum 8, item 40',
+            p_evidence_reference: 'synthetic restriction check, not a decision record',
           }),
         );
         assert.equal(approve.status, 403, `${username} cannot approve a gate`);
