@@ -16,6 +16,14 @@ import { authorSyntheticPilotCase, evaluateApprovalGates } from '@/server/admin-
 import * as service from '@/server/service';
 import * as tlv5 from '@/server/tlv5';
 import * as mapconf from '@/server/mapconf';
+import * as mapconfRest from '@/server/mapconf-rest';
+import { dataBackend } from '@/lib/supabase-config';
+import {
+  clearedSessionCookieHeaders,
+  sessionCookieHeaders,
+  readSessionCookies,
+} from '@/lib/supabase-auth';
+import { publicActor, resolveSession, supabaseRuntime, type SessionActor } from '@/server/session';
 import { mcManifestText } from '@/lib/mapconf-export';
 import { MC_RUBRIC, MC_RUBRIC_VERSION, renderMcRubric } from '@/lib/mapconf-types';
 import { mcAdjudicationSchema, mcAdminSchema, mcSubmissionSchema } from '@/lib/mapconf-validation';
@@ -30,8 +38,26 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const jsonHeaders = { 'Cache-Control': 'no-store, private', Pragma: 'no-cache' };
-function json(data: unknown, status = 200, headers: Record<string, string> = {}) {
-  return Response.json(data, { status, headers: { ...jsonHeaders, ...headers } });
+function json(
+  data: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+  cookies: string[] = [],
+) {
+  const response = Response.json(data, { status, headers: { ...jsonHeaders, ...headers } });
+  for (const cookie of cookies) response.headers.append('Set-Cookie', cookie);
+  return response;
+}
+const supabase = () => dataBackend() === 'supabase';
+/** Mutations must come from the application's own origin: localhost for the local pilot, the
+ *  configured site origin for a Supabase deployment. */
+function assertRequestOrigin(request: Request, mutation: boolean) {
+  if (!supabase()) return assertLocalRequest(request, mutation);
+  const { config } = supabaseRuntime();
+  if (!mutation) return;
+  const origin = request.headers.get('origin');
+  if (!origin || origin !== config.siteOrigin)
+    throw new HttpError(403, 'Request origin was not accepted. Reload the application.');
 }
 async function body(request: Request) {
   const reader = request.body?.getReader();
@@ -57,11 +83,61 @@ async function body(request: Request) {
 async function handle(request: Request) {
   try {
     const mutation = request.method !== 'GET';
-    assertLocalRequest(request, mutation);
+    assertRequestOrigin(request, mutation);
     const path = new URL(request.url).pathname.replace(/\/$/, '');
+    if (supabase()) {
+      const { config, auth } = supabaseRuntime();
+      const secure = config.siteOrigin.startsWith('https://');
+      if (path === '/api/session' && request.method === 'POST') {
+        const input = z
+          .object({ username: z.string().min(1).max(80), password: z.string().min(1).max(256) })
+          .strict()
+          .parse(await body(request));
+        const session = await auth.signIn(input.username.trim().toLowerCase(), input.password);
+        const cookies = sessionCookieHeaders(session, secure);
+        const probe = new Request(request.url, {
+          headers: { cookie: cookies.map((c) => c.split(';')[0]).join('; ') },
+        });
+        const resolved = await resolveSession(probe);
+        if (!resolved.actor) {
+          await auth.signOut(session.accessToken).catch(() => undefined);
+          throw new HttpError(403, 'This account has no active application role.');
+        }
+        return json(
+          { ok: true, user: publicActor(resolved.actor), environment: 'supabase-staging' },
+          200,
+          {},
+          cookies,
+        );
+      }
+      if (path === '/api/session' && request.method === 'DELETE') {
+        const cookies = readSessionCookies(request);
+        if (cookies.access) await auth.signOut(cookies.access).catch(() => undefined);
+        return json({ ok: true }, 200, {}, clearedSessionCookieHeaders(secure));
+      }
+      const resolved = await resolveSession(request);
+      if (path === '/api/session' && request.method === 'GET')
+        return json(
+          {
+            user: resolved.actor ? publicActor(resolved.actor) : null,
+            environment: 'supabase-staging',
+          },
+          200,
+          {},
+          resolved.setCookies,
+        );
+      if (!resolved.actor) throw new HttpError(401, 'Sign in to continue.');
+      // Awaited inside the try block so a thrown HttpError or ServiceError is mapped below.
+      return await withSupabaseActor(request, path, resolved.actor, resolved.setCookies);
+    }
     if (path === '/api/session') {
-      if (request.method === 'GET')
-        return json({ user: getActor(request), environment: 'synthetic' });
+      if (request.method === 'GET') {
+        const local = getActor(request);
+        return json({
+          user: local ? { ...local, aal: 'aal2', mfaEnrolled: false } : null,
+          environment: 'synthetic',
+        });
+      }
       if (request.method === 'DELETE') {
         logout(request);
         return json({ ok: true }, 200, { 'Set-Cookie': expiredCookie() });
@@ -72,9 +148,13 @@ async function handle(request: Request) {
           .strict()
           .parse(await body(request));
         const token = login(input.account, input.password);
-        return json({ ok: true, user: ACCOUNTS[input.account] }, 200, {
-          'Set-Cookie': sessionCookie(token),
-        });
+        return json(
+          { ok: true, user: { ...ACCOUNTS[input.account], aal: 'aal2', mfaEnrolled: false } },
+          200,
+          {
+            'Set-Cookie': sessionCookie(token),
+          },
+        );
       }
     }
     const actor = requireActor(request);
@@ -223,6 +303,142 @@ async function handle(request: Request) {
       500,
     );
   }
+}
+
+/** Supabase mode: multi-factor endpoints, the mapping-confirmation routes through PostgREST under
+ *  the caller's token, and nothing else (the local synthetic pilot routes are not served). */
+async function withSupabaseActor(
+  request: Request,
+  path: string,
+  actor: SessionActor,
+  setCookies: string[],
+) {
+  const { config, auth } = supabaseRuntime();
+  const secure = config.siteOrigin.startsWith('https://');
+  if (!actor.accessToken) throw new HttpError(401, 'Sign in to continue.');
+  if (path === '/api/mfa/enroll' && request.method === 'POST') {
+    const enrolment = await auth.enrollTotp(
+      actor.accessToken,
+      `CivicSample Verify (${actor.displayName})`,
+    );
+    return json(
+      {
+        factorId: enrolment.factorId,
+        qrCode: enrolment.qrCode,
+        qrSvg: enrolment.qrSvg,
+        secret: enrolment.secret,
+        uri: enrolment.uri,
+      },
+      200,
+      {},
+      setCookies,
+    );
+  }
+  if (path === '/api/mfa/verify' && request.method === 'POST') {
+    const input = z
+      .object({ factorId: z.string().uuid().optional(), code: z.string().regex(/^\d{6}$/) })
+      .strict()
+      .parse(await body(request));
+    // An already-enrolled investigator only supplies the code; the verified factor is looked up
+    // here so nobody has to know or type an authenticator id.
+    let factorId = input.factorId;
+    if (!factorId) {
+      const verified = await auth.verify(actor.accessToken);
+      factorId = verified.verifiedFactors[0]?.id;
+      if (!factorId) throw new HttpError(409, 'Enrol an authenticator app first.');
+    }
+    const session = await auth.verifyTotp(actor.accessToken, factorId, input.code);
+    const cookies = sessionCookieHeaders(session, secure);
+    const probe = new Request(request.url, {
+      headers: { cookie: cookies.map((c) => c.split(';')[0]).join('; ') },
+    });
+    const resolved = await resolveSession(probe);
+    return json(
+      { ok: true, user: resolved.actor ? publicActor(resolved.actor) : null },
+      200,
+      {},
+      cookies,
+    );
+  }
+  if (path.startsWith('/api/mc/admin/') && actor.role !== 'INVESTIGATOR')
+    throw new HttpError(403, 'This action requires an investigator account.');
+  if (actor.role === 'INVESTIGATOR' && actor.aal !== 'aal2' && path.startsWith('/api/mc/admin/'))
+    throw new HttpError(
+      403,
+      'Investigator actions need a verified authenticator (second factor). Complete multi-factor sign-in first.',
+    );
+  if (path === '/api/mc/workspace' && request.method === 'GET')
+    return json(await mapconfRest.getMcWorkspace(actor), 200, {}, setCookies);
+  if (path === '/api/mc/rubric' && request.method === 'GET')
+    return json(
+      { version: MC_RUBRIC_VERSION, sections: MC_RUBRIC, text: renderMcRubric() },
+      200,
+      {},
+      setCookies,
+    );
+  if (path === '/api/mc/adjudicate' && request.method === 'POST') {
+    // Role before body: a non-adjudicator is refused whatever it sends, not told how to shape it.
+    if (actor.role !== 'ADJUDICATOR')
+      throw new HttpError(403, 'This action requires the adjudicator account.');
+    return json(
+      await mapconfRest.recordMcAdjudication(
+        actor,
+        mcAdjudicationSchema.parse(await body(request)),
+      ),
+      200,
+      {},
+      setCookies,
+    );
+  }
+  if (path === '/api/mc/admin/action' && request.method === 'POST')
+    return json(
+      await mapconfRest.mcAdminAction(actor, mcAdminSchema.parse(await body(request))),
+      200,
+      {},
+      setCookies,
+    );
+  const mcExport = /^\/api\/mc\/admin\/export(?:\/([a-z0-9_.]+\.(?:csv|json)))?$/.exec(path);
+  if (mcExport && request.method === 'GET') {
+    const bundle = await mapconfRest.exportMcBundle(actor);
+    if (!mcExport[1]) return json(bundle, 200, {}, setCookies);
+    const file =
+      mcExport[1] === bundle.manifestName
+        ? { name: bundle.manifestName, content: mcManifestText(bundle), type: 'application/json' }
+        : bundle.files
+            .filter((f) => f.name === mcExport[1])
+            .map((f) => ({ name: f.name, content: f.content, type: 'text/csv' }))[0];
+    if (!file) throw new HttpError(404, 'Resource not available.');
+    return new Response(file.content, {
+      status: 200,
+      headers: {
+        ...jsonHeaders,
+        'Content-Type': `${file.type}; charset=utf-8`,
+        'Content-Disposition': `attachment; filename="${file.name}"`,
+      },
+    });
+  }
+  const mcAssignment = /^\/api\/mc\/assignments\/([0-9a-f-]{36})(?:\/(submit))?$/.exec(path);
+  if (mcAssignment) {
+    const [, id, action] = mcAssignment;
+    if (request.method === 'GET' && !action)
+      return json(await mapconfRest.getMcReviewerCase(actor, id), 200, {}, setCookies);
+    if (request.method === 'POST' && action === 'submit')
+      return json(
+        await mapconfRest.submitMc(actor, id, mcSubmissionSchema.parse(await body(request))),
+        200,
+        {},
+        setCookies,
+      );
+  }
+  const mcCase = /^\/api\/mc\/cases\/(MC-[A-Z]{3,4}-[A-Z0-9][A-Z0-9-]{1,40})$/.exec(path);
+  if (mcCase && request.method === 'GET')
+    return json(await mapconfRest.getMcAdjudicatorCase(actor, mcCase[1]), 200, {}, setCookies);
+  if (/^\/api\/(workspace|tlv5|cases|admin)(\/|$)/.test(path))
+    throw new HttpError(
+      503,
+      'This workflow is not served in the Supabase deployment mode; only the mapping-confirmation review is connected.',
+    );
+  throw new HttpError(404, 'Resource not available.');
 }
 export const GET = handle;
 export const POST = handle;

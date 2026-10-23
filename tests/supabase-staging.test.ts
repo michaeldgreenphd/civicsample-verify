@@ -29,6 +29,8 @@ function configuration() {
       developmentCaseId: 'DEV4-TESTFX-STAGING1',
       calibrationCaseId: 'CAL4-TESTFX-STAGING1',
       pilotCaseId: 'SYN-STAGING1',
+      mappingCaseId: 'MC-SYN-STAGING1',
+      mappingReviewerAResponseId: id(31),
     },
   };
 }
@@ -62,7 +64,12 @@ function mockGateway(config: Config, override?: Override) {
           investigator_session_ok: account < 2,
         },
       ];
-    else if (url.pathname === '/rest/v1/reviews') {
+    else if (url.pathname === '/rest/v1/mc_responses') {
+      if (account === 2 && url.searchParams.get('response_id') === `eq.${id(31)}`)
+        body = [
+          { response_id: id(31), case_id: 'MC-SYN-STAGING1', reviewer_pseudo_id: 'SYN-REVIEWER-2' },
+        ];
+    } else if (url.pathname === '/rest/v1/reviews') {
       const wanted = url.searchParams.get('review_id');
       if (
         (account === 2 && wanted === `eq.${id(21)}`) ||
@@ -82,6 +89,7 @@ function mockGateway(config: Config, override?: Override) {
         development_registry_v4: [{ dev_case_id: config.fixtures.developmentCaseId }],
         calibration_cases_v4: [{ cal_case_id: config.fixtures.calibrationCaseId }],
         cases: [{ case_id: config.fixtures.pilotCaseId, mode: 'PILOT' }],
+        mc_cases: [{ case_id: config.fixtures.mappingCaseId, record_category: 'SYNTHETIC_PILOT' }],
       };
       body = byTable[url.pathname.split('/').at(-1)!];
       assert.notEqual(body, undefined);
@@ -100,7 +108,7 @@ test('preflight verifies five real-session endpoints and positive-control-backed
   assert.equal(report.mutationsPerformed, false);
   assert.equal(report.accountsCreated, 0);
   assert.equal(report.invitationsSent, 0);
-  assert.equal(report.checks.length, 7);
+  assert.equal(report.checks.length, 8);
   assert.ok(report.checks.every((check: { status: string }) => check.status === 'PASS'));
   assert.equal(
     gateway.requests.filter((request) => new URL(request.url).pathname === '/auth/v1/user').length,
@@ -143,7 +151,7 @@ test('missing fixture identifiers and empty positive controls remain UNTESTED, n
   );
 });
 
-test('cross-review, prediction, audit and excluded-record leaks fail with sanitized output', async () => {
+test('cross-review, prediction, audit, excluded-record and mapping leaks fail with sanitized output', async () => {
   for (const path of [
     'reviews',
     'frozen_predictions_v4',
@@ -151,10 +159,17 @@ test('cross-review, prediction, audit and excluded-record leaks fail with saniti
     'development_registry_v4',
     'calibration_cases_v4',
     'cases',
+    'mc_cases',
+    'mc_responses',
   ]) {
     const config = configuration();
+    // Mapping tables are probed against the adjudicator (account 4), the others against reviewer A.
+    const leaking = path.startsWith('mc_') ? 4 : 2;
     const gateway = mockGateway(config, (endpoint, account, body) =>
-      endpoint === `/rest/v1/${path}` && account === 2 && Array.isArray(body) && body.length === 0
+      endpoint === `/rest/v1/${path}` &&
+      account === leaking &&
+      Array.isArray(body) &&
+      body.length === 0
         ? Response.json([{ privatePayload: 'synthetic-secret-must-not-print' }])
         : undefined,
     );

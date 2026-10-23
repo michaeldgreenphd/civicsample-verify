@@ -12,6 +12,8 @@ const fixturePatterns = {
   developmentCaseId: /^DEV4-TESTFX-[A-Za-z0-9-]{1,30}$/,
   calibrationCaseId: /^CAL4-TESTFX-[A-Za-z0-9-]{1,30}$/,
   pilotCaseId: /^SYN-[A-Za-z0-9-]{1,40}$/,
+  mappingCaseId: /^MC-SYN-[A-Z0-9][A-Z0-9-]{1,40}$/,
+  mappingReviewerAResponseId: uuid,
 };
 const probeNames = [
   'existing_staging_sessions',
@@ -21,6 +23,7 @@ const probeNames = [
   'development_registry_blinding',
   'unassigned_calibration_blinding',
   'unassigned_pilot_blinding',
+  'mapping_confirmation_isolation',
 ];
 
 function exactKeys(value, keys) {
@@ -125,7 +128,7 @@ async function read(config, account, path, fetchImpl) {
   if (!(
     path === '/auth/v1/user' ||
     path === '/rest/v1/rpc/rpc_whoami' ||
-    /^\/rest\/v1\/(?:frozen_predictions_v4|reviews|audit_log|development_registry_v4|calibration_cases_v4|cases)\?/.test(
+    /^\/rest\/v1\/(?:frozen_predictions_v4|reviews|audit_log|development_registry_v4|calibration_cases_v4|cases|mc_cases|mc_responses)\?/.test(
       path,
     )
   ))
@@ -305,6 +308,40 @@ export async function runStagingPreflight(config, fetchImpl = fetch) {
       reviewers,
     ),
   );
+  // Mapping confirmation (migrations 0016/0018): the investigator reads the synthetic mapping and
+  // reviewer A reads their own known response to it (positive control); the adjudicator reads
+  // neither the mapping nor that response before the campaign closes and adjudication is
+  // authorized. An empty adjudicator result counts only after the response was seen to exist.
+  await probe(7, ['mappingCaseId', 'mappingReviewerAResponseId'], async () => {
+    const adjudicator = [config.accounts[4]];
+    const present = await investigatorControl(
+      tablePath('mc_cases', 'case_id,record_category', 'case_id', f.mappingCaseId),
+      (row) => row.case_id === f.mappingCaseId && row.record_category === 'SYNTHETIC_PILOT',
+      adjudicator,
+    );
+    if (!present) return false;
+    const responsePath = tablePath(
+      'mc_responses',
+      'response_id,case_id,reviewer_pseudo_id',
+      'response_id',
+      f.mappingReviewerAResponseId,
+    );
+    const own = rows(await read(config, reviewers[0], responsePath, fetchImpl));
+    if (!own || own.length === 0) return false;
+    if (
+      own.length !== 1 ||
+      own[0].response_id !== f.mappingReviewerAResponseId ||
+      own[0].case_id !== f.mappingCaseId ||
+      own[0].reviewer_pseudo_id !== identities[2].reviewer_pseudo_id
+    )
+      refuse();
+    await deny([reviewers[1], ...adjudicator], responsePath);
+    await deny(
+      adjudicator,
+      tablePath('mc_responses', 'response_id,case_id', 'case_id', f.mappingCaseId),
+    );
+    return true;
+  });
   report.status = report.checks.some((check) => check.status === 'FAIL')
     ? 'FAIL'
     : report.checks.some((check) => check.status === 'UNTESTED')

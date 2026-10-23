@@ -239,7 +239,7 @@ test('approval-gate inspector and canonical synthetic case authoring workflow en
   assert.equal(report.gates.length, 11);
   assert.ok(report.gates.some((g) => g.gate === 'sample_adequacy' && g.status === 'BLOCKED'));
   assert.ok(report.gates.some((g) => g.gate === 'security' && g.status === 'BLOCKED'));
-  assert.equal(report.schemaVersion, '6.0.2-mapping-confirmation-completeness-serialization');
+  assert.equal(report.schemaVersion, '6.0.5-service-role-truncate-revoke');
 
   // Formal activation via adminAction remains disabled even after configuring a proposal
   await adminAction(investigator, {

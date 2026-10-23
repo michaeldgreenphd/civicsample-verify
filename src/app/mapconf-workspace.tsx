@@ -176,7 +176,7 @@ function Evidence({ c, ids = false }: { c: McCaseView; ids?: boolean }) {
         )}
         <p className="privacy-note">
           Evidence hash <span className="mono">{c.evidenceSha256.slice(0, 12)}…</span> · version{' '}
-          {c.evidenceVersion}· assignment hash{' '}
+          {c.evidenceVersion} · assignment hash{' '}
           <span className="mono">{c.assignmentSha256.slice(0, 12)}…</span>
         </p>
       </div>
@@ -621,20 +621,26 @@ function McInvestigator({
   const [attestation, setAttestation] = useState('');
   const [seed, setSeed] = useState(20261022);
   const [bundle, setBundle] = useState<McBundle | null>(null);
+  const [busy, setBusy] = useState(false);
   async function act(input: McAdminAction) {
+    setBusy(true);
     try {
       await api('/api/mc/admin/action', { method: 'POST', body: JSON.stringify(input) });
       setError('');
       await onRefresh();
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
+  // The registration is append-only, so the button goes quiet once this manifest is on record.
+  const registered =
+    bundle !== null && workspace.exports.some((x) => x.manifestSha256 === bundle.manifestSha256);
   const c = workspace.campaign;
   const phase = c?.phase ?? null;
   return (
     <div>
-      <Banner />
       {error && (
         <div className="notice error" role="alert">
           {error}
@@ -643,7 +649,7 @@ function McInvestigator({
       <section className="panel" aria-label="Campaign">
         <div className="panel-header">
           <span className="section-label">Synthetic campaign</span>
-          <span className="muted" data-testid="mc-phase">
+          <span className="header-phase" data-testid="mc-phase">
             {c
               ? `${readable(c.phase)} · ${c.conditionSetId} (${c.conditionSetStatus})`
               : 'No campaign'}
@@ -657,67 +663,109 @@ function McInvestigator({
             </div>
             <div className="stat">
               <span className="stat-value">{workspace.counts.trainingExample}</span>
-              <span className="stat-label">Training examples (excluded)</span>
+              <span className="stat-label">Training examples, excluded from statistics</span>
             </div>
             <div className="stat">
               <span className="stat-value">{workspace.counts.evaluation}</span>
               <span className="stat-label">Evaluation mappings</span>
-              <span className="stat-detail">Import disabled pending approval</span>
             </div>
             <div className="stat">
               <span className="stat-value">{workspace.adjudicationsRecorded}</span>
               <span className="stat-label">Adjudications</span>
             </div>
           </div>
-          <div className="button-row">
-            {!c && (
+          {!c && (
+            <div className="step">
+              <h3>Start</h3>
+              <p>
+                Creates the campaign for the proposed condition list and draft rubric. Synthetic
+                records never enter any statistic.
+              </p>
               <button className="button" onClick={() => act({ action: 'create-campaign' })}>
                 Create synthetic campaign
               </button>
-            )}
-            {c && phase === 'OPEN' && (
-              <>
-                <button
-                  className="button secondary"
-                  onClick={() => act({ action: 'import-synthetic' })}
-                >
-                  Import synthetic mappings
-                </button>
-                <label className="field" style={{ display: 'inline-block' }}>
-                  <span className="form-label">Seed</span>
-                  <input
-                    type="number"
-                    value={seed}
-                    min={1}
-                    onChange={(e) => setSeed(Number(e.target.value))}
-                  />
-                </label>
-                <button
-                  className="button secondary"
-                  onClick={() => act({ action: 'assign', seed })}
-                >
-                  Assign to the two pilot reviewers
-                </button>
+            </div>
+          )}
+          {c && phase === 'OPEN' && (
+            <div className="step">
+              <h3>Prepare the pilot</h3>
+              <p>
+                {workspace.completion.length > 0
+                  ? 'Every mapping is assigned to both pilot reviewers.'
+                  : workspace.counts.syntheticPilot > 0
+                    ? 'The synthetic mappings are imported. Assign each one to the two pilot reviewers.'
+                    : 'Import the synthetic mappings, then assign each one to the two pilot reviewers.'}{' '}
+                Evaluation import opens once the condition list, sampling frame and rubric are
+                approved.
+              </p>
+              <div className="toolbar">
+                {workspace.counts.syntheticPilot === 0 && (
+                  <button
+                    className="button secondary"
+                    onClick={() => act({ action: 'import-synthetic' })}
+                  >
+                    Import synthetic mappings
+                  </button>
+                )}
+                {workspace.completion.length === 0 && (
+                  <>
+                    <label className="field inline">
+                      <span className="form-label">Seed</span>
+                      <input
+                        type="number"
+                        value={seed}
+                        min={1}
+                        onChange={(e) => setSeed(Number(e.target.value))}
+                      />
+                    </label>
+                    <button
+                      className="button secondary"
+                      disabled={workspace.counts.syntheticPilot === 0}
+                      onClick={() => act({ action: 'assign', seed })}
+                    >
+                      Assign to the two pilot reviewers
+                    </button>
+                  </>
+                )}
                 <button
                   className="button secondary"
                   disabled
-                  title="Disabled pending approval"
                   onClick={() => act({ action: 'import-evaluation' })}
                 >
-                  Import evaluation mappings (disabled)
+                  Import evaluation mappings
                 </button>
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          )}
           {c && phase !== 'LOCKED' && (
-            <>
+            <div className="step">
+              <h3>
+                {phase === 'OPEN'
+                  ? 'Close submissions'
+                  : phase === 'CLOSED'
+                    ? 'Authorize adjudication'
+                    : 'Lock the campaign'}
+              </h3>
+              <p>
+                {phase === 'OPEN'
+                  ? 'Ends reviewer submissions once every mapping has two final answers.'
+                  : phase === 'CLOSED'
+                    ? 'Lets the adjudicator resolve the disagreements.'
+                    : 'Makes the campaign immutable and enables the export.'}{' '}
+                Your attestation is recorded with the phase change.
+              </p>
               <label className="field">
-                <span className="form-label">Attestation (20 characters or more)</span>
+                <span className="form-label">Attestation</span>
                 <input
                   value={attestation}
                   onChange={(e) => setAttestation(e.target.value)}
                   maxLength={2000}
+                  placeholder="At least 20 characters"
                 />
+                <span className="form-hint">
+                  One sentence in your own words on why you are making this change. It is stored
+                  with the phase change as your signature.
+                </span>
               </label>
               <div className="button-row">
                 {phase === 'OPEN' && (
@@ -750,29 +798,41 @@ function McInvestigator({
                   </button>
                 )}
               </div>
-            </>
+            </div>
           )}
           {phase === 'LOCKED' && (
-            <div className="button-row">
-              <button
-                className="button"
-                onClick={() =>
-                  api<McBundle>('/api/mc/admin/export')
-                    .then((b) => {
-                      setBundle(b);
-                      setError('');
-                    })
-                    .catch((e) => setError(e.message))
-                }
-              >
-                Build export
-              </button>
-              <button
-                className="button secondary"
-                onClick={() => act({ action: 'register-export' })}
-              >
-                Register export
-              </button>
+            <div className="step">
+              <h3>Export</h3>
+              <p>
+                Build the locked bundle, check the manifest, then register its hashes. Each
+                registration is a permanent record, so the button rests once this manifest is
+                registered.
+              </p>
+              <div className="button-row">
+                <button
+                  className="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true);
+                    api<McBundle>('/api/mc/admin/export')
+                      .then((b) => {
+                        setBundle(b);
+                        setError('');
+                      })
+                      .catch((e) => setError(e.message))
+                      .finally(() => setBusy(false));
+                  }}
+                >
+                  Build export
+                </button>
+                <button
+                  className="button secondary"
+                  disabled={busy || bundle === null || registered}
+                  onClick={() => act({ action: 'register-export' })}
+                >
+                  {registered ? 'Export registered' : 'Register export'}
+                </button>
+              </div>
             </div>
           )}
           {bundle && (

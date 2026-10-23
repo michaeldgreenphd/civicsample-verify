@@ -186,6 +186,18 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ),
     'utf8',
   );
+  const accountLocks = await readFile(
+    path.join(process.cwd(), 'migrations/0021_account_locks.sql'),
+    'utf8',
+  );
+  const serviceRoleGrants = await readFile(
+    path.join(process.cwd(), 'migrations/0022_service_role_admin_grants.sql'),
+    'utf8',
+  );
+  const truncateRevoke = await readFile(
+    path.join(process.cwd(), 'migrations/0023_service_role_truncate_revoke.sql'),
+    'utf8',
+  );
   for (const [version, migration] of [
     ['5.0.0', trialLabelVerification],
     ['5.1.0', trainingExamples],
@@ -197,6 +209,9 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ['6.0.0-mapping-confirmation', mappingConfirmation],
     ['6.0.1-mapping-confirmation-review-fixes', mappingReviewFixes],
     ['6.0.2-mapping-confirmation-completeness-serialization', mappingCompleteness],
+    ['6.0.3-account-locks', accountLocks],
+    ['6.0.4-service-role-admin-grants', serviceRoleGrants],
+    ['6.0.5-service-role-truncate-revoke', truncateRevoke],
   ] as const) {
     const present = await db.query<{ present: boolean }>(
       `select exists(select 1 from public.app_schema_version where version='${version}') as present`,
