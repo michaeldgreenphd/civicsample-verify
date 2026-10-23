@@ -28,6 +28,7 @@ const sqlInputs = new Set([
   'migrations/0020_mapping_confirmation_completeness_and_serialization.sql',
   'migrations/0021_account_locks.sql',
   'migrations/0022_service_role_admin_grants.sql',
+  'migrations/0023_service_role_truncate_revoke.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {
