@@ -23,6 +23,7 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
   const [enrolment, setEnrolment] = useState<{
     factorId: string;
     qrCode: string;
+    qrSvg: string | null;
     secret: string;
     uri: string;
   } | null>(null);
@@ -34,10 +35,13 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
     setBusy(true);
     setError('');
     try {
-      const next = await api<{ factorId: string; qrCode: string; secret: string; uri: string }>(
-        '/api/mfa/enroll',
-        { method: 'POST', body: '{}' },
-      );
+      const next = await api<{
+        factorId: string;
+        qrCode: string;
+        qrSvg: string | null;
+        secret: string;
+        uri: string;
+      }>('/api/mfa/enroll', { method: 'POST', body: '{}' });
       setEnrolment(next);
       setFactorId(next.factorId);
     } catch (e) {
@@ -91,14 +95,23 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
               Scan the QR code with your authenticator app, or enter the secret manually, then enter
               the first code it shows.
             </p>
-            {enrolment.qrCode && (
+            {enrolment.qrSvg ? (
+              // Inline SVG from Supabase Auth (plain vector markup, checked server-side); the
+              // generated image has no XML namespace, so an <img> source would not render it.
+              <div
+                role="img"
+                aria-label="Authenticator enrolment QR code"
+                style={{ width: 200, height: 200 }}
+                dangerouslySetInnerHTML={{ __html: enrolment.qrSvg }}
+              />
+            ) : enrolment.qrCode ? (
               <img
                 src={enrolment.qrCode}
                 alt="Authenticator enrolment QR code"
                 width={180}
                 height={180}
               />
-            )}
+            ) : null}
             <p>
               Manual entry secret:{' '}
               <span className="mono" data-testid="mfa-secret">

@@ -26,7 +26,10 @@ export interface VerifiedUser {
 }
 export interface TotpEnrollment {
   factorId: string;
-  qrCode: string; // data: URI (SVG) from Auth
+  qrCode: string; // data: URI from Auth, percent-encoded for an image source
+  /** The SVG markup of the QR code when Auth supplied an SVG data URI (rendered inline: the
+   *  generated SVG carries no XML namespace, so browsers refuse it as an image source). */
+  qrSvg: string | null;
   secret: string;
   uri: string;
 }
@@ -36,6 +39,23 @@ export const internalEmail = (username: string, ref: string) =>
 
 /** Auth returns the QR code as an SVG data URI with raw (unencoded) markup; browsers need the
  *  payload percent-encoded to render it as an image source. */
+/** The raw SVG markup of an SVG data URI, or null when the value is not one or is not plain
+ *  vector markup (no scripts, no event handlers, no external references). */
+export function svgMarkupFromDataUri(value: string): string | null {
+  const m = /^data:image\/svg\+xml(?:;utf-?8|;charset=utf-8)?,(.*)$/s.exec(value);
+  if (!m) return null;
+  let markup = m[1];
+  try {
+    markup = decodeURIComponent(markup);
+  } catch {
+    /* already raw */
+  }
+  const trimmed = markup.trim();
+  if (!/^<svg[\s>]/i.test(trimmed) || !/<\/svg>\s*$/i.test(trimmed)) return null;
+  if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:|href\s*=\s*["']?(?!#)/i.test(trimmed))
+    return null;
+  return trimmed;
+}
 export function normaliseSvgDataUri(value: string): string {
   const m = /^data:image\/svg\+xml(?:;utf-?8)?,(.*)$/s.exec(value);
   if (!m) return value;
@@ -210,6 +230,7 @@ export class SupabaseAuth {
     return {
       factorId: result.body.id,
       qrCode: normaliseSvgDataUri(result.body.totp.qr_code ?? ''),
+      qrSvg: svgMarkupFromDataUri(result.body.totp.qr_code ?? ''),
       secret: result.body.totp.secret,
       uri: result.body.totp.uri ?? '',
     };

@@ -325,6 +325,7 @@ async function withSupabaseActor(
       {
         factorId: enrolment.factorId,
         qrCode: enrolment.qrCode,
+        qrSvg: enrolment.qrSvg,
         secret: enrolment.secret,
         uri: enrolment.uri,
       },
