@@ -174,3 +174,84 @@ test('in a disposable database where the other freeze gates are satisfied synthe
     await f.db.close();
   }
 });
+
+// ---- Codex review of PR #11: approvals keyed to requirement versions (migration 0029) ---------
+async function reSpecifyPain(db: FixtureDb, record: string) {
+  // A later reviewed migration re-specifying G-PAIN-01 (version 3), stood in for by the owner.
+  await db.query(
+    `insert into public.mu7_gate_requirements (gate_id, requirement_version, blocks, requirement_status, question, decision_reference, source)
+     values ('G-PAIN-01', 3, array['FORMAL_OPEN'], 'SPECIFIED', 'Synthetic re-specification for the regression.', $1, 'SYNTHETIC test')`,
+    [record],
+  );
+}
+const painSatisfied = async (db: FixtureDb) =>
+  (await one(
+    db,
+    'inv',
+    "select satisfied from public.rpc_mu7_gate_status() where gate_id = 'G-PAIN-01'",
+  )) === true;
+
+test('without 0029 a re-specified gate can never be approved again (reproduced)', async () => {
+  const f = await formalOpen({
+    gates: [],
+    stopAfter: 'formalImport',
+    without: ['migrations/0029_v7_versioned_gate_approvals.sql'],
+  });
+  try {
+    assert.ok((await attempt(f.db, 'inv', approve('G-PAIN-01', PAIN_RECORD))).ok);
+    assert.equal(await painSatisfied(f.db), true);
+    await reSpecifyPain(f.db, 'SYNTHETIC-TEST-RECORD-PAIN-V3');
+    assert.equal(await painSatisfied(f.db), false);
+    const again = await attempt(f.db, 'inv', approve('G-PAIN-01', 'SYNTHETIC-TEST-RECORD-PAIN-V3'));
+    assert.ok(!again.ok, 'reproduced: the investigator cannot approve the new version');
+    assert.equal(await painSatisfied(f.db), false);
+  } finally {
+    await f.db.close();
+  }
+});
+
+test('with 0029 the investigator re-approves a re-specified gate citing its new record; history is kept', async () => {
+  const f = await formalOpen({ gates: [], stopAfter: 'formalImport' });
+  try {
+    assert.ok((await attempt(f.db, 'inv', approve('G-PAIN-01', PAIN_RECORD))).ok);
+    assert.equal(await painSatisfied(f.db), true);
+    // Approving the same version again is refused.
+    assert.ok(!(await attempt(f.db, 'inv', approve('G-PAIN-01', PAIN_RECORD))).ok);
+    await reSpecifyPain(f.db, 'SYNTHETIC-TEST-RECORD-PAIN-V3');
+    assert.equal(
+      await painSatisfied(f.db),
+      false,
+      'the earlier approval does not cover the new version',
+    );
+    // Citing the old record, or a non-investigator, is refused.
+    const stale = await attempt(f.db, 'inv', approve('G-PAIN-01', PAIN_RECORD));
+    assert.ok(!stale.ok);
+    assert.match(stale.error, /MU7X-G09: an approval names the latest specified requirement/);
+    for (const who of ['r1', 'adj'] as const)
+      assert.ok(
+        !(await attempt(f.db, who, approve('G-PAIN-01', 'SYNTHETIC-TEST-RECORD-PAIN-V3'))).ok,
+        `${who} is refused`,
+      );
+    assert.ok(
+      (await attempt(f.db, 'inv', approve('G-PAIN-01', 'SYNTHETIC-TEST-RECORD-PAIN-V3'))).ok,
+    );
+    assert.equal(await painSatisfied(f.db), true);
+    const history = await rows<{ requirement_version: number; evidence_reference: string }>(
+      f.db,
+      'inv',
+      "select requirement_version, evidence_reference from public.mu7_gate_approval_versions where gate_id = 'G-PAIN-01' order by requirement_version",
+    );
+    assert.deepEqual(history, [
+      { requirement_version: 2, evidence_reference: PAIN_RECORD },
+      { requirement_version: 3, evidence_reference: 'SYNTHETIC-TEST-RECORD-PAIN-V3' },
+    ]);
+    // The approval rows are append-only, even for the owner.
+    assert.ok(!(await attempt(f.db, 'owner', 'delete from public.mu7_gate_approval_versions')).ok);
+    assert.equal(
+      await one(f.db, 'owner', 'select count(*)::int from public.mu7_gate_approvals'),
+      1,
+    );
+  } finally {
+    await f.db.close();
+  }
+});

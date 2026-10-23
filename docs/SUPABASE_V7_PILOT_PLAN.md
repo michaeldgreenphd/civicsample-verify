@@ -24,14 +24,15 @@ Conflicts with v7: none. Recording a v7 design is refused only when a v4, v5 or 
 
 **A. Schema** (one `apply-schema` run of the reviewed plan; each file is its own transaction; the runner resumes after the last applied file):
 
-| File | Marker                               | Effect                                                                               |
-| ---- | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| 0023 | `6.0.5-service-role-truncate-revoke` | revokes TRUNCATE, REFERENCES, TRIGGER from service_role                              |
-| 0024 | `7.0.0`                              | review design v7 (supplied migration, byte-identical)                                |
-| 0025 | `7.0.1-v7-review-fixes`              | audit digests, serialization, lock-aware adjudicator                                 |
-| 0026 | `7.0.2-v7-lifecycle-and-gates`       | pilot inventory rules, gates recorded as pending, FORMAL freeze and opening disabled |
-| 0027 | `6.0.6-service-role-least-privilege` | service_role keeps exactly the 0022 administration grants; schema default follows    |
-| 0028 | `7.0.3-v7-gate-specifications-v8-1`  | G-PAIN-01 and G-MH-V53 specified with their decision records; nothing approved       |
+| File | Marker                               | Effect                                                                                                                      |
+| ---- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| 0023 | `6.0.5-service-role-truncate-revoke` | revokes TRUNCATE, REFERENCES, TRIGGER from service_role                                                                     |
+| 0024 | `7.0.0`                              | review design v7 (supplied migration, byte-identical)                                                                       |
+| 0025 | `7.0.1-v7-review-fixes`              | audit digests, serialization, lock-aware adjudicator                                                                        |
+| 0026 | `7.0.2-v7-lifecycle-and-gates`       | pilot inventory rules, gates recorded as pending, FORMAL freeze and opening disabled                                        |
+| 0027 | `6.0.6-service-role-least-privilege` | service_role keeps exactly the 0022 administration grants; schema default follows                                           |
+| 0028 | `7.0.3-v7-gate-specifications-v8-1`  | G-PAIN-01 and G-MH-V53 specified with their decision records; nothing approved                                              |
+| 0029 | `7.0.4-v7-versioned-gate-approvals`  | gate approvals keyed to requirement versions, append-only; a re-specified gate can be approved again, citing its new record |
 
 The plan file, its SHA-256 and the destination are produced by `node scripts/supabase-admin.mjs plan --config <private admin config>` at the reviewed commit; the apply refuses any other plan hash.
 
@@ -53,7 +54,7 @@ The guard matters only if a later change re-enables evaluation import or a v2 fo
 
 1. **Provider backup.** In the Supabase dashboard (Database, Backups), confirm that a recent backup of `xmuiduugdrqvhssmeacz` exists, and note whether point-in-time recovery is available on the plan. This is the investigator's check; no API key for it is held here.
 2. **Record-level snapshot.** Immediately before the apply, run the read-only snapshot again into a new private file and keep its printed SHA-256 with the apply log.
-3. **Inspection before and after.** Run the read-only inspection before the apply and after it; the after-run must show the six new markers, the unchanged mapping-confirmation counts and the service_role grants of 0027.
+3. **Inspection before and after.** Run the read-only inspection before the apply and after it; the after-run must show the seven new markers, the unchanged mapping-confirmation counts and the service_role grants of 0027.
 4. **Recovery.** Every migration is additive and runs in its own transaction, so a failing file changes nothing and the runner stops; fix forward with a new numbered migration. Restoring the provider backup is the fallback for anything else; the snapshot shows which records changed.
 
 ## 5. Connection test: the app locally against staging
@@ -73,7 +74,7 @@ The tests below use `VERIFY_SUPABASE_WEB_CONFIG` (that file) and `VERIFY_SUPABAS
 | Step | Who                           | Action                                                                                                                            | Expected                                                                                                                                                                                    |
 | ---- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1    | operator                      | read-only inspection and snapshot                                                                                                 | as in section 1                                                                                                                                                                             |
-| 2    | operator, authorized          | `apply-schema` with the reviewed plan hash                                                                                        | six files applied; final marker `7.0.3-v7-gate-specifications-v8-1`                                                                                                                         |
+| 2    | operator, authorized          | `apply-schema` with the reviewed plan hash                                                                                        | seven files applied; final marker `7.0.4-v7-versioned-gate-approvals`                                                                                                                       |
 | 3    | operator                      | read-only inspection                                                                                                              | v7 objects present and empty; 2 gates SPECIFIED, 8 pending, 0 approvals; mapping-confirmation counts unchanged; service_role per 0027                                                       |
 | 4    | test                          | `VERIFY_STAGING_V7_PHASE=restrictions`                                                                                            | reviewers, the adjudicator and the second investigator (no second factor) are refused every investigator action and gate approval; none reads the export views or design rows               |
 | 5    | investigator, browser         | sign in with the authenticator; record the synthetic design; import the pilot units and worked examples; assign both pilot queues | 12 units, 3 worked examples, 24 assignments                                                                                                                                                 |

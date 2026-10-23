@@ -415,7 +415,8 @@ test('finding 3 fixed with 0026: an approval counts only for the specified decis
       );
       const open = await attempt(reSpecified.db, phase('FORMAL_OPENED'));
       assert.ok(!open.ok);
-      assert.match(open.error, /G-OQ-03 \(approval does not name the specified decision record\)/);
+      // Since 0029 an approval belongs to the version it approved: the new version is not approved.
+      assert.match(open.error, /G-OQ-03 \(not approved\)/);
     } finally {
       await reSpecified.db.close();
     }

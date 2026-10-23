@@ -77,7 +77,10 @@ export type ChainOptions = {
 /** Migrations that build on another: leaving one out leaves its dependents out too. */
 const DEPENDENTS: Record<string, string[]> = {
   'migrations/0025_v7_review_fixes.sql': ['migrations/0026_v7_lifecycle_and_gates.sql'],
-  'migrations/0026_v7_lifecycle_and_gates.sql': ['migrations/0028_v7_gate_specifications_v8_1.sql'],
+  'migrations/0026_v7_lifecycle_and_gates.sql': [
+    'migrations/0028_v7_gate_specifications_v8_1.sql',
+    'migrations/0029_v7_versioned_gate_approvals.sql',
+  ],
 };
 function withDependents(without: string[]): string[] {
   const out = new Set(without);
