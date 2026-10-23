@@ -3,7 +3,8 @@
 // that is always rolled back, and the bundle verifier accepts an application-written bundle and
 // refuses tampered ones.
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -27,7 +28,7 @@ test('inspection and snapshot send only reads, inside one read-only transaction,
         return db.query(sql);
       });
       assert.equal(result.readOnly, true);
-      assert.equal(sent[0], 'begin transaction read only');
+      assert.equal(sent[0], 'begin transaction isolation level repeatable read read only');
       assert.equal(sent.at(-1), 'rollback');
       assert.ok(
         sent.every((s) => READ_ONLY_STATEMENT.test(s)),
@@ -105,5 +106,57 @@ test('the bundle verifier accepts an application-written pilot bundle and refuse
   } finally {
     rmSync(dir, { recursive: true, force: true });
     await db.close();
+  }
+});
+
+test('equal data gives an equal snapshot digest whatever the physical row order', async () => {
+  const digests: string[] = [];
+  for (const order of [
+    ['alpha', 'beta', 'gamma'],
+    ['gamma', 'alpha', 'beta'],
+  ]) {
+    const db = await newDatabase();
+    try {
+      await db.exec('create table public.zz_order_probe (v text)');
+      for (const v of order) await db.query('insert into public.zz_order_probe values ($1)', [v]);
+      const s = await snapshotWith((sql: string) => db.query(sql));
+      digests.push((s.digests as Record<string, { sha256: string }>).zz_order_probe.sha256);
+    } finally {
+      await db.close();
+    }
+  }
+  assert.equal(digests[0], digests[1]);
+});
+
+test('the live v7 test refuses a sign-in file inside a Git repository, before any request', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'verify-signin-in-repo-'));
+  try {
+    execFileSync('git', ['init', '--quiet'], { cwd: repo });
+    for (const name of ['web.json', 'signin.json']) {
+      writeFileSync(join(repo, name), JSON.stringify({ project: {}, accounts: [] }), {
+        mode: 0o600,
+      });
+      chmodSync(join(repo, name), 0o600);
+    }
+    const r = spawnSync(
+      process.execPath,
+      ['--import', 'tsx', '--test', 'tests/staging-live-v7.test.ts'],
+      {
+        encoding: 'utf8',
+        env: {
+          // Run as its own test process, not as a subtest reporting to this runner.
+          ...(Object.fromEntries(
+            Object.entries(process.env).filter(([k]) => k !== 'NODE_TEST_CONTEXT'),
+          ) as NodeJS.ProcessEnv),
+          VERIFY_SUPABASE_WEB_CONFIG: join(repo, 'web.json'),
+          VERIFY_SUPABASE_SIGNIN: join(repo, 'signin.json'),
+          VERIFY_STAGING_V7_PHASE: 'restrictions',
+        },
+      },
+    );
+    assert.notEqual(r.status, 0);
+    assert.match(r.stdout + r.stderr, /private files must live outside every Git repository/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });

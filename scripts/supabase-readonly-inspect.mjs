@@ -2,7 +2,7 @@
 //
 //   node scripts/supabase-readonly-inspect.mjs --config /abs/private/supabase-admin.json [--out /abs/private/report.json]
 //
-// Every query runs inside one `begin transaction read only` block (PostgreSQL refuses any write in
+// Every query runs inside one read-only REPEATABLE READ transaction, one snapshot (PostgreSQL refuses any write in
 // it) and the block is rolled back. Only aggregates are reported: schema markers, counts by
 // category, role and state, privilege sets and extension placement. No e-mail address, name,
 // token, password, answer text or connection detail is printed. The destination is validated as
@@ -19,7 +19,7 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** Statements this tool may send: reads, and the read-only transaction around them. */
 export const READ_ONLY_STATEMENT =
-  /^\s*(select|with|begin transaction read only|set local statement_timeout|rollback)\b/i;
+  /^\s*(select|with|begin transaction isolation level repeatable read read only|set local statement_timeout|rollback)\b/i;
 
 const regclass = (name) => `select to_regclass('${name}') is not null as present`;
 /** The inspection, written against `query(sql)`; returns aggregates only. */
@@ -31,7 +31,7 @@ export async function inspectWith(query) {
   const present = async (name) => (await q(regclass(name)))[0].present === true;
   const count = async (sql) => Number((await q(sql))[0]?.n ?? 0);
   const report = { readOnly: true };
-  await q('begin transaction read only');
+  await q('begin transaction isolation level repeatable read read only');
   try {
     await q("set local statement_timeout = '15s'");
     const server = (

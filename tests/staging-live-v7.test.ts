@@ -11,7 +11,8 @@
 //    VERIFY_STAGING_V7_PLAN_SHA256: it runs the privileged lock and unlock tool itself)
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { PostgrestClient } from '../src/lib/postgrest';
 import { supabaseWebConfig } from '../src/lib/supabase-config';
@@ -34,9 +35,18 @@ const only = (name: string) => ({
         : false,
   timeout: 300_000,
 });
+/** A private file: owner-only and outside every Git repository (it holds synthetic passwords). */
 function privateJson(path: string) {
-  assert.equal(statSync(path).mode & 0o077, 0, 'private files must be mode 600');
-  return JSON.parse(readFileSync(path, 'utf8'));
+  const real = realpathSync(path);
+  assert.equal(statSync(real).mode & 0o077, 0, 'private files must be mode 600');
+  for (let dir = dirname(real); ; dir = dirname(dir)) {
+    assert.ok(
+      !existsSync(join(dir, '.git')),
+      'private files must live outside every Git repository',
+    );
+    if (dirname(dir) === dir) break;
+  }
+  return JSON.parse(readFileSync(real, 'utf8'));
 }
 function runtime() {
   const web = privateJson(webPath!);
@@ -166,6 +176,18 @@ test(
           const p = MU7_PILOT_PLANTED[unit.packet.unit.unit_id].find(
             (x) => x.reviewer_slot === slot,
           )!;
+          // Resumable: an answer already on record (from an earlier, interrupted run) must be the
+          // planted one and is not submitted again, so a rerun never adds a revision.
+          const last = unit.ownAnswers.at(-1);
+          if (last) {
+            assert.equal(last.answer, p.answer, `${unit.packet.unit.unit_id}: answer on record`);
+            assert.equal(
+              last.reasonCode,
+              p.reason_code,
+              `${unit.packet.unit.unit_id}: reason on record`,
+            );
+            continue;
+          }
           if (p.answer === 'DISAGREE')
             assert.match(
               (
@@ -202,8 +224,11 @@ test(
     try {
       const ws = (await core.getMu7Workspace(again.ctx)) as Mu7ReviewerWorkspace;
       assert.ok(ws.queue.every((q) => q.answered));
-      const first = await core.getMu7ReviewerUnit(again.ctx, ws.queue[0].assignmentId);
-      assert.equal(first.ownAnswers.length, 1);
+      for (const item of ws.queue) {
+        const unit = await core.getMu7ReviewerUnit(again.ctx, item.assignmentId);
+        const p = MU7_PILOT_PLANTED[unit.packet.unit.unit_id].find((x) => x.reviewer_slot === 1)!;
+        assert.equal(unit.ownAnswers.at(-1)?.answer, p.answer, unit.packet.unit.unit_id);
+      }
     } finally {
       await again.signOut();
     }
@@ -298,8 +323,10 @@ test(
     const s = await session(rt, 'syn-reviewer-1');
     const whoami = async () => (await s.client.rpc<unknown[]>('rpc_whoami', {})).length;
     assert.equal(await whoami(), 1);
-    tool('lock');
     try {
+      // Inside the cleanup scope: if the lock stops part-way, the release below still runs (the
+      // privileged tool's lock and unlock are both resumable).
+      tool('lock');
       assert.equal(await whoami(), 0, 'the issued token resolves to no user while locked');
       await assert.rejects(
         rt.auth.signIn('syn-reviewer-1', rt.account('syn-reviewer-1').password),

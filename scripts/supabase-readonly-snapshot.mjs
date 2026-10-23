@@ -2,7 +2,7 @@
 //
 //   node scripts/supabase-readonly-snapshot.mjs --config /abs/private/supabase-admin.json --out /abs/private/snapshot.json
 //
-// One `begin transaction read only` block reads every table of the public schema (rows as JSON),
+// One read-only REPEATABLE READ transaction (a single database snapshot) reads every table of the public schema (rows as JSON),
 // the schema markers and the table list, then rolls back. The output file is written owner-only
 // (mode 600), never overwritten, and must lie outside every Git repository. It holds synthetic
 // records only today, but it is treated as private: nothing from it is printed except per-table
@@ -29,7 +29,7 @@ export async function snapshotWith(query) {
     return (await query(sql)).rows;
   };
   const snapshot = { readOnly: true, tables: {}, digests: {} };
-  await q('begin transaction read only');
+  await q('begin transaction isolation level repeatable read read only');
   try {
     await q("set local statement_timeout = '60s'");
     snapshot.schemaVersions = (
@@ -42,9 +42,13 @@ export async function snapshotWith(query) {
     ).map((r) => r.name);
     for (const t of tables) {
       if (!IDENT.test(t)) throw new Error('unexpected table name');
-      const rows = (
-        await q(`select coalesce(jsonb_agg(to_jsonb(x)), '[]'::jsonb) as rows from public.${t} x`)
-      )[0].rows;
+      const rows =
+        // Rows in a canonical order (their JSON text), so equal data gives an equal digest.
+        (
+          await q(
+            `select coalesce(jsonb_agg(to_jsonb(x) order by to_jsonb(x)::text), '[]'::jsonb) as rows from public.${t} x`,
+          )
+        )[0].rows;
       snapshot.tables[t] = rows;
       snapshot.digests[t] = {
         rows: rows.length,

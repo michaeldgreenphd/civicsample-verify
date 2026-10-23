@@ -4,7 +4,8 @@
 // records, changes the schema, enrols a factor or creates an account.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { PostgrestClient } from '../src/lib/postgrest';
 import { supabaseWebConfig } from '../src/lib/supabase-config';
 import { SupabaseAuth } from '../src/lib/supabase-auth';
@@ -23,9 +24,16 @@ const options = {
       : false,
 };
 function privateJson(path: string) {
-  const info = statSync(path);
-  assert.equal(info.mode & 0o077, 0, 'private files must be mode 600');
-  return JSON.parse(readFileSync(path, 'utf8'));
+  const real = realpathSync(path);
+  assert.equal(statSync(real).mode & 0o077, 0, 'private files must be mode 600');
+  for (let dir = dirname(real); ; dir = dirname(dir)) {
+    assert.ok(
+      !existsSync(join(dir, '.git')),
+      'private files must live outside every Git repository',
+    );
+    if (dirname(dir) === dir) break;
+  }
+  return JSON.parse(readFileSync(real, 'utf8'));
 }
 function runtime() {
   assert.ok(
