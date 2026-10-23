@@ -49,7 +49,7 @@ text (OQ-04) are pending (gates G-OQ-03 and G-OQ-04); the investigator adds them
 - COVID-19
 - Schizophrenia
 - Hypertension
-- Pain (descriptive row; provisional until gate G-PAIN-01)
+- Pain (descriptive row)
 
 ## 4. Reason codes
 

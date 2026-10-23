@@ -17,7 +17,7 @@ Use one browser profile or private window per role. Sign in with the account nam
 
 **Investigator**
 
-1. Write an attestation (one sentence, 20 characters or more) and click **Record the synthetic design** (`SYN-7-LOCAL-WALKTHROUGH`).
+1. Write an attestation (one sentence, 20 characters or more) and click **Record the synthetic design** (`SYN-7-SYNTHETIC-PILOT`).
 2. **Import the synthetic pilot units** (12), **Import the worked examples** (3, read only), **Assign both pilot queues** (reviewer-a is slot 1, reviewer-b slot 2; primary units first, subgroup units last).
 3. Try **Lock the pilot reference** now: the database refuses it with its own message (MU7-G48), because nothing is answered yet.
 

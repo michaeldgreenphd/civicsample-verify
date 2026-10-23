@@ -837,6 +837,7 @@ function Investigator({
   const [bundle, setBundle] = useState<BundleSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [lockReason, setLockReason] = useState('');
+  const [gateAttestation, setGateAttestation] = useState<Record<string, string>>({});
   async function act(input: Mu7AdminAction) {
     setBusy(true);
     try {
@@ -911,8 +912,8 @@ function Investigator({
             <div className="step">
               <h3>Record the design</h3>
               <p>
-                Records a synthetic local design ({'SYN-7-LOCAL-WALKTHROUGH'}). The study’s own
-                design values wait for the investigator’s decisions.
+                Records a synthetic local design ({'SYN-7-SYNTHETIC-PILOT'}). The study’s own design
+                values wait for the investigator’s decisions.
               </p>
               {AttestationField}
               <div className="button-row">
@@ -1130,9 +1131,62 @@ function Investigator({
                         .join(' and ')}
                     </span>
                   )}
+                  {g.decisionReference && (
+                    <span
+                      className="muted"
+                      style={{ display: 'block' }}
+                      data-testid={`gate-record-${g.gateId}`}
+                    >
+                      Decision record: {g.decisionReference}
+                    </span>
+                  )}
+                  {g.satisfied && g.approvedAt && (
+                    <span className="muted" style={{ display: 'block' }}>
+                      Approved {when(g.approvedAt)}, citing the record above.
+                    </span>
+                  )}
+                  {g.requirementStatus === 'SPECIFIED' && !g.satisfied && (
+                    <span className="gate-approval" style={{ display: 'block', marginTop: 12 }}>
+                      <label className="field">
+                        <span className="form-label">
+                          Your approval as investigator ({g.gateId})
+                        </span>
+                        <input
+                          value={gateAttestation[g.gateId] ?? ''}
+                          onChange={(e) =>
+                            setGateAttestation({ ...gateAttestation, [g.gateId]: e.target.value })
+                          }
+                          maxLength={2000}
+                          placeholder="At least 20 characters"
+                        />
+                        <span className="form-hint">
+                          The approval cites the decision record above and is stored with your
+                          attestation. It cannot be withdrawn or replaced. It does not open the
+                          formal review while other gates are pending.
+                        </span>
+                      </label>
+                      <button
+                        className="button secondary"
+                        disabled={busy || (gateAttestation[g.gateId] ?? '').trim().length < 20}
+                        onClick={() =>
+                          act({
+                            action: 'approve-gate',
+                            gateId: g.gateId,
+                            attestation: gateAttestation[g.gateId] ?? '',
+                          })
+                        }
+                      >
+                        Approve {g.gateId}
+                      </button>
+                    </span>
+                  )}
                 </span>
                 <span className="status">
-                  {g.satisfied ? 'Approved' : readable(g.requirementStatus)}
+                  {g.satisfied
+                    ? 'Approved'
+                    : g.requirementStatus === 'SPECIFIED'
+                      ? 'Ready for approval'
+                      : readable(g.requirementStatus)}
                 </span>
               </li>
             ))}

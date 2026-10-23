@@ -29,7 +29,10 @@ test('service_role can link accounts and write locks only after 0022; anon and a
   const db = new PGlite({ extensions: { pgcrypto } });
   try {
     await db.exec(readFileSync('supabase_test_shim/auth_shim.sql', 'utf8'));
-    const before0022 = HOSTED_SCHEMA_FILES.filter((p: string) => !p.includes('0022'));
+    // 0027 re-grants exactly the 0022 administration privileges, so it is left out as well.
+    const before0022 = HOSTED_SCHEMA_FILES.filter(
+      (p: string) => !p.includes('0022') && !p.includes('0027'),
+    );
     for (const path of before0022) await db.exec(readFileSync(path, 'utf8'));
     // Reproduction of the live finding: BYPASSRLS without grants.
     await assert.rejects(

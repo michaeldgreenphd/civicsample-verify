@@ -44,6 +44,7 @@ The PostgreSQL suite needs a suitable test server and `VERIFY_PG_TEST_URL`; unav
 - [docs/APPROVAL_GATES.md](docs/APPROVAL_GATES.md): formal activation prerequisites.
 - [docs/ANALYSIS.md](docs/ANALYSIS.md): the separate synthetic database-to-CSV-to-Python analysis path.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): future staging and invited-team deployment plan.
+- [docs/SHARED_PRACTICE_DEPLOYMENT.md](docs/SHARED_PRACTICE_DEPLOYMENT.md): shared synthetic practice website: process-local state, required changes, hosting options (not deployed).
 
 This public repository must never contain private research handoffs, real cases or evidence, formal sample IDs, clinician identities, credentials, reviewer responses, or raw research extracts. Only generalized code, inspected documentation, and synthetic fixtures belong here. Historical migrations remain unchanged; new safeguards use additive changes.
 

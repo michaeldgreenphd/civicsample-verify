@@ -236,8 +236,10 @@ test('finding 2 (blocker): every v7 write and transition is serialized, before 0
   const triggers = await serializingTriggers(true);
   // On the full chain 0026 moves mu7_adjudications from the shared to the exclusive lock (a revision
   // and the first adjudication of a unit must not both commit; tests/mu7-lifecycle.test.ts).
+  // 0029 adds the per-version gate approvals, serialized like every other v7 write.
   const expectWrite = [
     'mu7_frozen_assignments',
+    'mu7_gate_approval_versions',
     'mu7_gate_approvals',
     'mu7_judgments',
     'mu7_queue',

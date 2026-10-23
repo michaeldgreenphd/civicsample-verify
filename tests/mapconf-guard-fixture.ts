@@ -46,6 +46,10 @@ export async function seedMcGuardDatabase(db: GuardDb) {
   await db.exec(await readFile('migrations/0024_v7_mapping_units.sql', 'utf8'));
   await db.exec(await readFile('migrations/0025_v7_review_fixes.sql', 'utf8'));
   await db.exec(await readFile('migrations/0026_v7_lifecycle_and_gates.sql', 'utf8'));
+  await db.exec(await readFile('migrations/0027_service_role_least_privilege.sql', 'utf8'));
+  await db.exec(await readFile('migrations/0028_v7_gate_specifications_v8_1.sql', 'utf8'));
+  await db.exec(await readFile('migrations/0029_v7_versioned_gate_approvals.sql', 'utf8'));
+  await db.exec(await readFile('migrations/0030_v7_current_unit_freeze_gates.sql', 'utf8'));
   await guardActor(db, 'investigator', async () => {
     await db.query('select public.rpc_mc_create_campaign($1::jsonb)', [
       JSON.stringify({
