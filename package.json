@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "NEXT_TELEMETRY_DISABLED=1 next dev --hostname 127.0.0.1",
     "build": "NEXT_TELEMETRY_DISABLED=1 next build && node scripts/check-build-traces.mjs",
-    "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1",
+    "start": "NEXT_TELEMETRY_DISABLED=1 next start --hostname 127.0.0.1 --keepAliveTimeout 70000",
     "setup": "node scripts/setup.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
