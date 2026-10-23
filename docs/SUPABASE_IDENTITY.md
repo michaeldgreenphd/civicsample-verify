@@ -119,9 +119,13 @@ The browser never receives a Supabase token (no client-side Supabase library); t
 5. **TOTP enrolment** of the synthetic investigator through the app, by you, with your authenticator app.
 6. **Synthetic pilot import** on staging, from the reviewed plan (`node --import tsx scripts/mapconf-import-plan.mjs`), after your authorization.
 
-## Verification of this increment (local, synthetic)
+## Verification of this increment
 
-`npm run check` PASS (147 passed, 0 failed, 13 native PostgreSQL tests skipped as BLOCKED; third round after the Codex re-review of PR #7); `npm run build` PASS (6 manifests, 23 SQL inputs); `npm run test:e2e:production` PASS (4 scenarios); `npm run format:check` and `git diff --check` PASS; `node scripts/supabase-admin.mjs plan` without a configuration reports BLOCKED (`PRIVATE_ADMIN_CONFIG_UNAVAILABLE`, exit 2) and makes no request. Supabase itself: UNTESTED; no remote request was made by any test.
+Local (fake Auth/PostgREST gateway): `npm run check` PASS (154 passed, 0 failed, 15 skipped: 13 native PostgreSQL BLOCKED locally, 2 real-staging BLOCKED without private files); `npm run build` PASS (6 manifests, 24 SQL inputs); `npm run test:e2e:production` PASS (4 scenarios); formatting and whitespace clean. Hosted CI at `5a5de0b`: web, analysis and postgres:16 jobs success, 12/12 native tests.
+
+Real Supabase staging (`xmuiduugdrqvhssmeacz`), after the publishable key was placed in the private web configuration (2026-10-22): `npm run supabase:web -- check` OK (sign-ups still ENABLED on the project); `npm run test:supabase:live` PASS, 2 tests: every synthetic account signs in by username through Supabase Auth, verifies with `GET /auth/v1/user`, resolves its application role through `rpc_whoami` over PostgREST and reads its own `users` row; sign-out invalidates the token; anonymous requests are refused on `users`, `mc_cases`, `mc_responses` and `reviewers`; a reviewer sees only their own user row and no responses and cannot call `rpc_mc_phase`; the adjudicator cannot create a campaign; the investigator at aal1 is refused by `rpc_mc_completion_summary` (`require_investigator_mfa`). Browser smoke against the served app in Supabase mode: a wrong password is refused, a reviewer signs in and sees the mapping tab (empty queue: nothing imported), the access cookie is HttpOnly, no key, token or password appears in the page, sign-out clears the session, and the investigator signs in at aal1 and is shown the second-factor panel (enrolment left to the investigator) while an admin action returns 403.
+
+Still UNTESTED on staging: TOTP enrolment and aal2, migration 0022 and account locks, the synthetic pilot import, assignment, submissions, adjudication, lock and export (all await authorization or your enrolment).
 
 ## What the investigator needs to provide
 
