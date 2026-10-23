@@ -17,8 +17,9 @@ import { Tlv5Panel } from './tlv5-workspace';
 import { McPanel } from './mapconf-workspace';
 import { Mu7Panel } from './mu7-workspace';
 import { MfaPanel } from './mfa-panel';
+import { PracticeObserverPanel } from './practice-observer';
 import type { LoginChoice } from '@/lib/login-choices';
-type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean };
+type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean; practiceReadOnly?: boolean };
 
 const decisions: { value: Decision; label: string; description: string }[] = [
   {
@@ -83,7 +84,7 @@ function Brand() {
     </a>
   );
 }
-function Header({ user, onLogout }: { user: Actor | null; onLogout: () => void }) {
+function Header({ user, onLogout }: { user: SessionUser | null; onLogout: () => void }) {
   return (
     <>
       <a className="skip-link" href="#main">
@@ -96,7 +97,9 @@ function Header({ user, onLogout }: { user: Actor | null; onLogout: () => void }
             <div className="account-area">
               <div className="account-name">
                 {user.displayName}
-                <span className="account-role">{readable(user.role)}</span>
+                <span className="account-role">
+                  {user.practiceReadOnly ? 'View-only practice' : readable(user.role)}
+                </span>
               </div>
               <button className="text-button" onClick={onLogout}>
                 Sign out
@@ -388,11 +391,14 @@ export default function Home() {
               <div className="eyebrow">Supabase staging · synthetic records only</div>
               <h1>Clinical review practice</h1>
               <p className="intro-copy">
-                Signed in as {user.displayName}, {user.role.toLowerCase()}.
+                Signed in as {user.displayName},{' '}
+                {user.practiceReadOnly ? 'view-only practice' : user.role.toLowerCase()}.
               </p>
             </div>
           </div>
-          {user.role === 'INVESTIGATOR' && user.aal !== 'aal2' ? (
+          {user.practiceReadOnly ? (
+            <PracticeObserverPanel />
+          ) : user.role === 'INVESTIGATOR' && user.aal !== 'aal2' ? (
             <MfaPanel
               enrolled={user.mfaEnrolled === true}
               onVerified={() =>

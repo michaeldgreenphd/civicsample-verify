@@ -94,3 +94,41 @@ test('served page hydrates under nonce CSP and refuses an injected unnonced scri
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByText('Account or password was not accepted.')).toBeVisible();
 });
+
+test('view-only investigator sees progress without MFA or editing controls (mock session)', async ({
+  page,
+}) => {
+  await page.route('**/api/session', (route) =>
+    route.fulfill({
+      json: {
+        environment: 'supabase-staging',
+        user: {
+          id: 'synthetic-observer',
+          displayName: 'Synthetic observer',
+          role: 'INVESTIGATOR',
+          aal: 'aal1',
+          practiceReadOnly: true,
+        },
+      },
+    }),
+  );
+  await page.route('**/api/practice-observer', (route) =>
+    route.fulfill({
+      json: {
+        pilotUnits: 12,
+        locked: false,
+        training: [],
+        completion: [
+          { reviewerSlot: 1, assigned: 12, answered: 3 },
+          { reviewerSlot: 2, assigned: 12, answered: 2 },
+        ],
+      },
+    }),
+  );
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'View-only practice' })).toBeVisible();
+  await expect(page.getByText('Reviewer 1: 3 of 12 answered')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /enrol|verify|import|assign|lock|approve|export/i }),
+  ).toHaveCount(0);
+});

@@ -36,6 +36,7 @@ const sqlInputs = new Set([
   'migrations/0028_v7_gate_specifications_v8_1.sql',
   'migrations/0029_v7_versioned_gate_approvals.sql',
   'migrations/0030_v7_current_unit_freeze_gates.sql',
+  'migrations/0031_practice_observer.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {
