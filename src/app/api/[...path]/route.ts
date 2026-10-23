@@ -336,10 +336,18 @@ async function withSupabaseActor(
   }
   if (path === '/api/mfa/verify' && request.method === 'POST') {
     const input = z
-      .object({ factorId: z.string().uuid(), code: z.string().regex(/^\d{6}$/) })
+      .object({ factorId: z.string().uuid().optional(), code: z.string().regex(/^\d{6}$/) })
       .strict()
       .parse(await body(request));
-    const session = await auth.verifyTotp(actor.accessToken, input.factorId, input.code);
+    // An already-enrolled investigator only supplies the code; the verified factor is looked up
+    // here so nobody has to know or type an authenticator id.
+    let factorId = input.factorId;
+    if (!factorId) {
+      const verified = await auth.verify(actor.accessToken);
+      factorId = verified.verifiedFactors[0]?.id;
+      if (!factorId) throw new HttpError(409, 'Enrol an authenticator app first.');
+    }
+    const session = await auth.verifyTotp(actor.accessToken, factorId, input.code);
     const cookies = sessionCookieHeaders(session, secure);
     const probe = new Request(request.url, {
       headers: { cookie: cookies.map((c) => c.split(';')[0]).join('; ') },

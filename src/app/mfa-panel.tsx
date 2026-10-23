@@ -55,7 +55,12 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
     setBusy(true);
     setError('');
     try {
-      await api('/api/mfa/verify', { method: 'POST', body: JSON.stringify({ factorId, code }) });
+      // During a new enrolment the factor id comes from the enrol response; an already-enrolled
+      // investigator sends only the code and the server finds their verified authenticator.
+      await api('/api/mfa/verify', {
+        method: 'POST',
+        body: JSON.stringify(enrolment ? { factorId, code } : { code }),
+      });
       onVerified();
     } catch (e) {
       setError((e as Error).message);
@@ -126,15 +131,10 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
         {(enrolled || enrolment) && (
           <form onSubmit={verify}>
             {enrolled && !enrolment && (
-              <label className="field">
-                <span className="form-label">Authenticator</span>
-                <input
-                  value={factorId}
-                  onChange={(e) => setFactorId(e.target.value)}
-                  placeholder="factor id"
-                  className="mono"
-                />
-              </label>
+              <p>
+                Your authenticator app is already enrolled. Enter the six-digit code it shows now to
+                continue as investigator.
+              </p>
             )}
             <label className="field">
               <span className="form-label">Six-digit code</span>
@@ -149,7 +149,7 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
               <button
                 className="button"
                 type="submit"
-                disabled={busy || code.length !== 6 || !factorId}
+                disabled={busy || code.length !== 6 || (enrolment !== null && !factorId)}
               >
                 Verify code
               </button>

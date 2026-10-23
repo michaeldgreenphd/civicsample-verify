@@ -470,6 +470,49 @@ test('routes in Supabase mode: sign-in sets cookies, session reports role and aa
     }),
   );
   assert.equal(created.status, 200, JSON.stringify(await created.json()));
+  // Signing in again later lands at aal1 with the factor enrolled; the investigator supplies only
+  // the current code and the server finds their verified authenticator (no factor id to type).
+  const again = await POST(
+    req('/api/session', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: 'syn-investigator-1',
+        password: 'pw-investigator-synthetic',
+      }),
+    }),
+  );
+  const againBody = (await again.json()) as { user: { aal: string; mfaEnrolled: boolean } };
+  assert.equal(againBody.user.aal, 'aal1');
+  assert.equal(againBody.user.mfaEnrolled, true);
+  const againCookies = cookieJar(again);
+  const reverify = await POST(
+    req('/api/mfa/verify', {
+      method: 'POST',
+      cookie: againCookies,
+      body: JSON.stringify({ code: '123456' }),
+    }),
+  );
+  assert.equal(reverify.status, 200, JSON.stringify(await reverify.clone().json()));
+  assert.equal(
+    ((await reverify.json()) as { user: { aal: string } }).user.aal,
+    'aal2',
+    'code-only verification upgrades the enrolled session',
+  );
+  // Without any enrolled authenticator, a code-only request is refused with guidance.
+  const reviewer = await POST(
+    req('/api/session', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'syn-reviewer-1', password: 'pw-reviewer-1-synthetic' }),
+    }),
+  );
+  const noFactor = await POST(
+    req('/api/mfa/verify', {
+      method: 'POST',
+      cookie: cookieJar(reviewer),
+      body: JSON.stringify({ code: '123456' }),
+    }),
+  );
+  assert.equal(noFactor.status, 409);
   // Logout clears the cookies and invalidates the token at Auth.
   const out = await DELETE(req('/api/session', { method: 'DELETE', cookie: aal2Cookies }));
   assert.ok(out.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));
