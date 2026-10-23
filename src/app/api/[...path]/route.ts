@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { publicLoginChoices } from '@/lib/login-choices';
 import {
   ACCOUNTS,
   assertLocalRequest,
@@ -208,6 +209,7 @@ async function handle(request: Request) {
           {
             user: resolved.actor ? publicActor(resolved.actor) : null,
             environment: 'supabase-staging',
+            loginChoices: publicLoginChoices(),
           },
           200,
           {},

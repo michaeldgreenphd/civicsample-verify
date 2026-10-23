@@ -17,6 +17,7 @@ import { Tlv5Panel } from './tlv5-workspace';
 import { McPanel } from './mapconf-workspace';
 import { Mu7Panel } from './mu7-workspace';
 import { MfaPanel } from './mfa-panel';
+import type { LoginChoice } from '@/lib/login-choices';
 type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean };
 
 const decisions: { value: Decision; label: string; description: string }[] = [
@@ -156,7 +157,15 @@ function Rubric() {
     </details>
   );
 }
-function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; environment: string }) {
+function Login({
+  onLogin,
+  environment,
+  choices,
+}: {
+  onLogin: (user: Actor) => void;
+  environment: string;
+  choices: LoginChoice[];
+}) {
   const hosted = environment !== 'synthetic';
   const [username, setUsername] = useState('');
   const [account, setAccount] = useState('reviewer-a');
@@ -209,7 +218,9 @@ function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; envir
         <h2>Enter the review workspace</h2>
         <p>
           {hosted
-            ? 'Sign in with your assigned username and password.'
+            ? choices.length
+              ? 'Select your name and enter your individual password.'
+              : 'Sign in with your assigned username and password.'
             : 'Select your assigned pilot account to continue.'}
         </p>
         {error && (
@@ -217,7 +228,29 @@ function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; envir
             {error}
           </div>
         )}
-        {hosted ? (
+        {hosted && choices.length ? (
+          <div className="field">
+            <label className="form-label" htmlFor="username">
+              Your name
+            </label>
+            <select
+              id="username"
+              autoComplete="username"
+              required
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            >
+              <option value="" disabled>
+                Select your name
+              </option>
+              {choices.map((choice) => (
+                <option key={choice.username} value={choice.username}>
+                  {choice.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : hosted ? (
           <div className="field">
             <label className="form-label" htmlFor="username">
               Username
@@ -273,16 +306,20 @@ function Login({ onLogin, environment }: { onLogin: (user: Actor) => void; envir
 export default function Home() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [environment, setEnvironment] = useState('synthetic');
+  const [loginChoices, setLoginChoices] = useState<LoginChoice[]>([]);
   const [initializing, setInitializing] = useState(true);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [tab, setTab] = useState('review');
   useEffect(() => {
-    api<{ user: SessionUser | null; environment: string }>('/api/session')
+    api<{ user: SessionUser | null; environment: string; loginChoices?: LoginChoice[] }>(
+      '/api/session',
+    )
       .then((d) => {
         setUser(d.user);
         setEnvironment(d.environment ?? 'synthetic');
+        setLoginChoices(d.loginChoices ?? []);
         setTab(d.environment && d.environment !== 'synthetic' ? 'mu7' : 'review');
       })
       .catch((e) => setError(e.message))
@@ -331,6 +368,7 @@ export default function Home() {
       ) : !user ? (
         <>
           <Login
+            choices={loginChoices}
             environment={environment}
             onLogin={(u) => {
               setError('');

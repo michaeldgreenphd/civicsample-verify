@@ -106,6 +106,16 @@ check on the actual public HTTPS URL.
 
 ### Practice data is a separate deployment prerequisite
 
+An optional `VERIFY_PUBLIC_LOGIN_CHOICES` environment value supplies the requested
+name selector. It is a JSON array of objects with exactly `username` and `label`.
+Only intentionally public sign-in labels belong here: the unauthenticated session
+endpoint returns them. Keep the actual roster in private deployment configuration,
+never in repository code. Labels can contain spaces; usernames retain the existing
+internal identity format. Passwords, roles and Auth IDs are refused in this value.
+Selecting a name grants no access: Supabase still verifies that account's password,
+and MFA and database permissions are unchanged. Without this optional setting,
+the existing username input remains available.
+
 The completed staging pilot is locked and must remain intact. Pointing a hosted
 app at that project allows inspection of completed work, not a fresh exercise.
 Before inviting colleagues, provision a separately approved practice database and

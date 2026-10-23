@@ -1,5 +1,36 @@
 import { test, expect } from '@playwright/test';
 
+test('hosted name chooser submits only the selected username and password (mock Auth)', async ({
+  page,
+}) => {
+  let submitted: unknown;
+  await page.route('**/api/session', async (route) => {
+    if (route.request().method() === 'POST') {
+      submitted = route.request().postDataJSON();
+      return route.fulfill({
+        status: 401,
+        json: { error: 'Account or password was not accepted.' },
+      });
+    }
+    return route.fulfill({
+      json: {
+        user: null,
+        environment: 'supabase-staging',
+        loginChoices: [{ username: 'synthetic-person', label: 'Synthetic Person' }],
+      },
+    });
+  });
+  await page.goto('/');
+  await page.getByLabel('Your name').selectOption({ label: 'Synthetic Person' });
+  await page.getByLabel('Password', { exact: true }).fill('fictional-wrong-password');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.locator('form [role="alert"]')).toContainText(
+    'Account or password was not accepted.',
+  );
+  expect(submitted).toEqual({ username: 'synthetic-person', password: 'fictional-wrong-password' });
+  await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+});
+
 test('hosted navigation opens Mapping units by default (mock session, no remote Auth claim)', async ({
   page,
 }) => {
