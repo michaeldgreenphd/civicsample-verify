@@ -65,7 +65,17 @@ export function svgMarkupFromDataUri(value: string): string | null {
   if (/<!DOCTYPE|<!ENTITY|<\?/i.test(trimmed)) return null;
   if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:|href\s*=\s*["']?(?!#)/i.test(trimmed))
     return null;
-  return trimmed;
+  return withViewBox(trimmed);
+}
+/** SVGo emits width/height but no viewBox; add one so the image can scale to its container. */
+function withViewBox(svg: string): string {
+  const open = /^<svg\b[^>]*>/i.exec(svg);
+  if (!open || /\bviewBox\s*=/i.test(open[0])) return svg;
+  const w = /\bwidth\s*=\s*["']?(\d+(?:\.\d+)?)/i.exec(open[0]);
+  const h = /\bheight\s*=\s*["']?(\d+(?:\.\d+)?)/i.exec(open[0]);
+  if (!w || !h) return svg;
+  const tag = open[0].replace(/^<svg\b/i, `<svg viewBox="0 0 ${w[1]} ${h[1]}"`);
+  return tag + svg.slice(open[0].length);
 }
 export function normaliseSvgDataUri(value: string): string {
   const markup = svgPayload(value);

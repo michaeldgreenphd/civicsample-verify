@@ -1390,3 +1390,25 @@ tr:last-child td {
     display: none;
   }
 }
+
+/* Second-factor enrolment: the QR code is inline SVG from Auth; size it as a block so the
+   manual-entry text below never flows underneath, and let long secrets/links wrap anywhere. */
+.mfa-qr {
+  display: block;
+  width: min(220px, 100%);
+  margin: 12px 0 16px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.mfa-qr svg,
+.mfa-qr img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.mfa-text {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}

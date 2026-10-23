@@ -311,6 +311,16 @@ test('TOTP enrolment and verification raise the session to aal2 through Auth', a
   assert.match(enrolment.qrSvg ?? '', /^<svg[\s>]/, 'XML declaration and comment stripped');
   assert.match(enrolment.qrSvg ?? '', /<\/svg>$/);
   assert.doesNotMatch(enrolment.qrSvg ?? '', /<\?xml|<!--/);
+  assert.match(
+    enrolment.qrSvg ?? '',
+    /^<svg viewBox="0 0 243 243" width="243"/,
+    'viewBox derived from width/height so the QR scales to its container',
+  );
+  assert.equal(
+    svgMarkupFromDataUri('<svg viewBox="0 0 1 1" width="9" height="9"></svg>'),
+    '<svg viewBox="0 0 1 1" width="9" height="9"></svg>',
+    'an existing viewBox is left alone',
+  );
   assert.equal(
     svgMarkupFromDataUri('data:image/svg+xml;utf-8,%3Csvg%3E%3C/svg%3E'),
     '<svg></svg>',

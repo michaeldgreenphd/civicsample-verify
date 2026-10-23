@@ -96,30 +96,27 @@ export function MfaPanel({ enrolled, onVerified }: { enrolled: boolean; onVerifi
               the first code it shows.
             </p>
             {enrolment.qrSvg ? (
-              // Inline SVG from Supabase Auth (plain vector markup, checked server-side); the
-              // generated image has no XML namespace, so an <img> source would not render it.
+              // Auth returns the QR as raw SVG markup (validated and given a viewBox server-side);
+              // rendered inline so it scales with the panel instead of overflowing it.
               <div
                 role="img"
                 aria-label="Authenticator enrolment QR code"
-                style={{ width: 200, height: 200 }}
+                className="mfa-qr"
                 dangerouslySetInnerHTML={{ __html: enrolment.qrSvg }}
               />
             ) : enrolment.qrCode ? (
-              <img
-                src={enrolment.qrCode}
-                alt="Authenticator enrolment QR code"
-                width={180}
-                height={180}
-              />
+              <div className="mfa-qr">
+                <img src={enrolment.qrCode} alt="Authenticator enrolment QR code" />
+              </div>
             ) : null}
-            <p>
+            <p className="mfa-text">
               Manual entry secret:{' '}
               <span className="mono" data-testid="mfa-secret">
                 {enrolment.secret}
               </span>
             </p>
             {enrolment.uri && (
-              <p className="muted" style={{ fontSize: 12, wordBreak: 'break-all' }}>
+              <p className="muted mfa-text" style={{ fontSize: 12 }}>
                 Setup link (same information as the QR code):{' '}
                 <span className="mono">{enrolment.uri}</span>
               </p>
