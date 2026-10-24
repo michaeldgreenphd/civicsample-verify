@@ -1,8 +1,8 @@
 // The v7 reviewer rubric: the supplied text is kept verbatim, and the current version (7.1) differs
 // from it exactly by the Pain edit of engineering message v8.3 (investigator decisions, addendum 11,
 // item 60). Any further rubric change must update docs/design_v7/RUBRIC_PROVENANCE_v7.md and this
-// test together. Reviewers receive the rubric as docs/design_v7/REVIEW_RUBRIC_v7.md; the application
-// does not render it, so this file is the copy they read.
+// test together. These are source provenance checks, not proof of rubric delivery to reviewers.
+// The application currently does not render this document; delivery needs separate browser tests.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, statSync } from 'node:fs';

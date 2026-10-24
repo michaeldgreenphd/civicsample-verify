@@ -23,7 +23,9 @@ point. Revision 1 had changed the same Pain line to `- Pain (descriptive row)`; 
 stays in this table so that a copy of it can still be recognized.
 
 No rubric version is frozen: the formal review has not been frozen or opened, and no database record holds a rubric hash
-for design v7. Reviewers receive the rubric as this document; the application does not render it. The decision record of
+for design v7. This file is the approved source copy; delivery to reviewers is not established by this patch.
+The application does not render it. In-app delivery of versioned reviewer guidance remains a formal-readiness blocker:
+the source-file checksum tests do not verify what a reviewer sees. The decision record of
 gate G-PAIN-01, version 3 (migration 0032), names rubric 7.1 by its SHA-256, so an approval of that gate cites this version.
 
 Still pending and not in this repository: the Depression (OQ-03) and smoking cessation (OQ-04) policy texts, which would

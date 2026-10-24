@@ -88,7 +88,7 @@ jobs:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
       - name: Current v5 database boundaries and concurrency
-        run: node --import tsx --test tests/tlv5-postgres.test.ts tests/mapconf-postgres.test.ts tests/mu7-postgres.test.ts
+        run: node --import tsx --test tests/tlv5-postgres.test.ts tests/mapconf-postgres.test.ts tests/mu7-postgres.test.ts tests/mu7-gates-upgrade.test.ts
         env:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
