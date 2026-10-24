@@ -372,10 +372,32 @@ test('v7 synthetic pilot through the application service, end to end', async () 
   });
   const pain = inv.gates.find((g) => g.gateId === 'G-PAIN-01')!;
   assert.equal(pain.satisfied, true);
-  assert.equal(pain.decisionReference, 'investigator decisions 2026-10-23, addendum 8, item 40');
+  // Migration 0032 (version 3): the record of addendum 8, item 40 and addendum 11, item 60 with rubric 7.1.
+  assert.equal(
+    pain.decisionReference,
+    'investigator decisions 2026-10-23, addendum 8, item 40, and addendum 11, item 60, with rubric 7.1 (SHA-256 9ab8d6a9aa146b648358c7f3993068a8963146861a5d0b04ae5d6e1bda60cf46)',
+  );
   assert.equal(inv.formalOperationsEnabled, false);
   assert.doesNotMatch(inv.formalDisabledReason, /G-PAIN-01/);
-  assert.match(inv.formalDisabledReason, /G-MH-V53, G-OVERLAP-01, G-PROV-01, G-TEXT-01/);
+  // Since 0032, G-EST-01, G-OQ-03 and G-OQ-04 hold the freeze as well as the opening.
+  assert.match(
+    inv.formalDisabledReason,
+    /The FORMAL freeze waits for G-EST-01, G-MH-V53, G-OQ-03, G-OQ-04, G-OVERLAP-01, G-PROV-01, G-TEXT-01;/,
+  );
+  for (const gateId of ['G-EST-01', 'G-OQ-03', 'G-OQ-04'])
+    assert.match(
+      (
+        await refusal(
+          mu7AdminAction(investigator, {
+            action: 'approve-gate',
+            gateId,
+            attestation: PAIN_ATT,
+          }),
+        )
+      ).message,
+      /pending specification/,
+      `${gateId} cannot be approved before it is specified`,
+    );
   assert.equal(
     (
       await refusal(

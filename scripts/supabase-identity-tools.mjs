@@ -74,8 +74,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0029_v7_versioned_gate_approvals.sql',
   'migrations/0030_v7_current_unit_freeze_gates.sql',
   'migrations/0031_practice_observer.sql',
+  'migrations/0032_v7_freeze_gates_v8_4.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '7.0.6-practice-observer';
+export const EXPECTED_SCHEMA_VERSION = '7.0.7-v7-freeze-gates-v8-4';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -117,6 +118,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0029_v7_versioned_gate_approvals.sql': ['7.0.4-v7-versioned-gate-approvals'],
   'migrations/0030_v7_current_unit_freeze_gates.sql': ['7.0.5-v7-current-unit-freeze-gates'],
   'migrations/0031_practice_observer.sql': ['7.0.6-practice-observer'],
+  'migrations/0032_v7_freeze_gates_v8_4.sql': ['7.0.7-v7-freeze-gates-v8-4'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([

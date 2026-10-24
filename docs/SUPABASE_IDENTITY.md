@@ -43,7 +43,7 @@ The privileged tool accepts only the staging references recorded in `APPROVED_ST
 `node scripts/supabase-admin.mjs plan --config /absolute/private/supabase-admin.json` prints the plan without any remote request:
 
 - target: environment `staging`, project reference and URL from the configuration (must be `https://<ref>.supabase.co`; a production reference must be distinct or null);
-- schema: the ordered SQL inputs with SHA-256 and byte counts (`schema.sql`, migrations 0002 to 0031 with the frozen-trial preflight before 0008), the expected final `app_schema_version` (`7.0.6-practice-observer`, the marker of 0031, which adds restricted practice oversight without changing full-investigator MFA), and the explicit exclusion of `supabase_test_shim/auth_shim.sql`;
+- schema: the ordered SQL inputs with SHA-256 and byte counts (`schema.sql`, migrations 0002 to 0032 with the frozen-trial preflight before 0008), the expected final `app_schema_version` (`7.0.7-v7-freeze-gates-v8-4`, the marker of 0032, which moves G-OQ-03, G-OQ-04 and G-EST-01 to the freeze and re-specifies G-PAIN-01; 0031 adds restricted practice oversight without changing full-investigator MFA), and the explicit exclusion of `supabase_test_shim/auth_shim.sql`;
 - Auth settings to set by hand in the dashboard (sign-ups off, password length, leaked-password protection, TOTP, staging origin only);
 - the roster as usernames, internal addresses and roles (no e-mail addresses, no secrets).
 

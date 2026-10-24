@@ -5,6 +5,10 @@
 // or the formal phase while the other gates are pending. Synthetic data only; every approval below
 // is made in a disposable test database, and the synthetic specifications of the other gates exist
 // only there.
+//
+// These tests pin the chain through migration 0031, before 0032 re-specifies G-PAIN-01 (version 3)
+// and moves G-OQ-03, G-OQ-04 and G-EST-01 to the freeze: 0032 is left out (PRE_0032; the fixture
+// also leaves it out with 0029 or 0030). tests/mu7-gates-v8-4.test.ts covers the chain with 0032.
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
@@ -18,6 +22,7 @@ import {
   type FixtureDb,
 } from './mu7-fixture';
 
+const PRE_0032 = ['migrations/0032_v7_freeze_gates_v8_4.sql'];
 const PAIN_RECORD = 'investigator decisions 2026-10-23, addendum 8, item 40';
 const MH_RECORD =
   'investigator decision 37 with the G-MH-V53 check of 2026-10-23, run 2 (SHA-256 7c66e1b098c5cfde2f322f443c3412fd7e766d00e87c83f674e5eed1cc1fd46e)';
@@ -32,7 +37,7 @@ async function attempt(db: FixtureDb, who: Parameters<typeof one>[1], sql: strin
 }
 
 test('0028 specifies G-PAIN-01 and G-MH-V53 with their records, approves nothing, and leaves the other gates pending', async () => {
-  const f = await formalOpen({ gates: [], stopAfter: 'formalImport' });
+  const f = await formalOpen({ gates: [], stopAfter: 'formalImport', without: PRE_0032 });
   try {
     const status = await rows<{
       gate_id: string;
@@ -62,7 +67,7 @@ test('0028 specifies G-PAIN-01 and G-MH-V53 with their records, approves nothing
 });
 
 test('only the investigator, with a second factor and naming the specified record, can approve a gate', async () => {
-  const f = await formalOpen({ gates: [], stopAfter: 'formalImport' });
+  const f = await formalOpen({ gates: [], stopAfter: 'formalImport', without: PRE_0032 });
   try {
     for (const who of ['r1', 'r2', 'pt1', 'adj', 'out'] as const) {
       const r = await attempt(f.db, who, approve('G-PAIN-01', PAIN_RECORD));
@@ -102,7 +107,7 @@ test('only the investigator, with a second factor and naming the specified recor
 });
 
 test('MU7-G29 holds the Pain units until G-PAIN-01 is approved; Pain approval alone does not open the freeze or the formal phase', async () => {
-  const f = await formalOpen({ gates: [], stopAfter: 'formalImport' });
+  const f = await formalOpen({ gates: [], stopAfter: 'formalImport', without: PRE_0032 });
   try {
     const before = await attempt(f.db, 'inv', freezeSql());
     assert.ok(!before.ok);
@@ -155,7 +160,7 @@ test('in a disposable database where the other freeze gates are satisfied synthe
   // Synthetic specifications and approvals of G-PROV-01, G-OVERLAP-01 and G-TEXT-01 exist only in
   // this test database; with them in place, only the Pain approval stands between the Pain units
   // and the freeze, as v8.1 describes for MU7-G29.
-  const f = await formalOpen({ gates: [], stopAfter: 'formalImport' });
+  const f = await formalOpen({ gates: [], stopAfter: 'formalImport', without: PRE_0032 });
   try {
     await specifyAndApproveGates(f.db, ['G-PROV-01', 'G-OVERLAP-01', 'G-TEXT-01']);
     assert.ok((await attempt(f.db, 'inv', approve('G-MH-V53', MH_RECORD))).ok);
@@ -211,7 +216,7 @@ test('without 0029 a re-specified gate can never be approved again (reproduced)'
 });
 
 test('with 0029 the investigator re-approves a re-specified gate citing its new record; history is kept', async () => {
-  const f = await formalOpen({ gates: [], stopAfter: 'formalImport' });
+  const f = await formalOpen({ gates: [], stopAfter: 'formalImport', without: PRE_0032 });
   try {
     assert.ok((await attempt(f.db, 'inv', approve('G-PAIN-01', PAIN_RECORD))).ok);
     assert.equal(await painSatisfied(f.db), true);
@@ -261,7 +266,7 @@ async function supersededPainFreeze(withFix: boolean) {
   const f = await formalOpen({
     gates: [],
     stopAfter: 'formalImport',
-    without: withFix ? [] : ['migrations/0030_v7_current_unit_freeze_gates.sql'],
+    without: withFix ? PRE_0032 : ['migrations/0030_v7_current_unit_freeze_gates.sql'],
   });
   try {
     // The other freeze gates satisfied synthetically (this disposable database only).

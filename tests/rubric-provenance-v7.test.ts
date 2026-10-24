@@ -32,6 +32,10 @@ test('the supplied v7 rubric is kept verbatim and the current rubric is version 
   const provenance = readFileSync('docs/design_v7/RUBRIC_PROVENANCE_v7.md', 'utf8');
   for (const h of [SUPPLIED_SHA256, RUBRIC_7_1_SHA256, WITHDRAWN_REVISION_1_SHA256])
     assert.ok(provenance.includes(h), h);
+  // Gate G-PAIN-01, version 3 (migration 0032), names this version in its decision record.
+  assert.ok(
+    readFileSync('migrations/0032_v7_freeze_gates_v8_4.sql', 'utf8').includes(RUBRIC_7_1_SHA256),
+  );
 });
 
 test('7.1 changes exactly the Pain line and adds the Pain paragraph below the list of rows', () => {
