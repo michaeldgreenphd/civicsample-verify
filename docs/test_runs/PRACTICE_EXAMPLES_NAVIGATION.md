@@ -43,3 +43,11 @@ These show hosted navigation using an explicitly mocked session environment flag
 ## Release
 
 Review and merge through the practice branch before deployment. Coordinate the UI files with any concurrent scientific integration; preserve the rubric and example content from its separately approved source. Do not infer approval of pending scientific gates from this UI change.
+
+## Presentation follow-up — 2026-10-24
+
+Reason identifiers now display in sentence case (preserving the spelling MeSH), with the existing definition below the selector. Saved-answer summaries, human answers on the adjudicator screen, and worked-example illustrations use the same presentation. Option values and submitted/stored/exported codes remain canonical; the browser regression verifies the saved code directly through the authenticated API.
+
+The synthetic notices use plain, muted text instead of yellow badges. The mapping summary uses a heading, secondary MeSH context and a thin separator instead of a tinted box and accent bar. This changes presentation only: the packet object and its hashes are untouched, and the exclusion notice remains visible. Source registry text is not reformatted.
+
+Rechecked the production build, nine browser scenarios, keyboard/reflow and axe checks, changed-file formatting and whitespace. Updated synthetic desktop and mobile screenshots are in the same ignored paths listed above.

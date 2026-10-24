@@ -45,6 +45,17 @@ const readable = (value: string) =>
     .replaceAll('_', ' ')
     .replace(/^./, (c) => c.toUpperCase());
 const answerLabel = (a: Mu7Answer | null) => (a ? MU7_ANSWER_TEXT[a].label : 'Not answered');
+// Presentation only: retain canonical codes in option values, submissions and exports.
+const reasonLabel = (code: string) => readable(code).replace(/\bmesh\b/gi, 'MeSH');
+const exampleSummary = (text: string) =>
+  text.replace(/\b[A-Z][A-Z0-9_]*\b/g, (code) =>
+    Object.hasOwn(MU7_REASON_MEANING, code)
+      ? reasonLabel(code)
+      : MU7_ANSWERS.includes(code as Mu7Answer)
+        ? answerLabel(code as Mu7Answer)
+        : code,
+  );
+
 const when = (iso: string) => (iso ? iso.replace('T', ' ').slice(0, 16) + ' UTC' : '');
 
 export function Mu7Panel({ user }: { user: Actor }) {
@@ -122,6 +133,9 @@ function Banner() {
 function Packet({ packet, ids = false }: { packet: Mu7Packet; ids?: boolean }) {
   const u = packet.unit;
   const t = packet.trial;
+  const contextStart = u.mapping_label.indexOf(' (parent MeSH category ');
+  const mappingTitle = contextStart < 0 ? u.mapping_label : u.mapping_label.slice(0, contextStart);
+  const mappingContext = contextStart < 0 ? null : u.mapping_label.slice(contextStart + 1);
   const tid = (name: string) => (ids ? name : undefined);
   return (
     <section className="panel" aria-label="Unit under review">
@@ -135,14 +149,19 @@ function Packet({ packet, ids = false }: { packet: Mu7Packet; ids?: boolean }) {
       </div>
       <div className="panel-body">
         {packet.notices.map((n) => (
-          <p key={n} className="badge amber" data-testid={tid('mu7-notice')}>
-            {n}
+          <p key={n} className={styles.packetNotice} data-testid={tid('mu7-notice')}>
+            {n
+              .replace(/^SYNTHETIC UNIT:/, 'Synthetic unit ·')
+              .replace(
+                /^SYNTHETIC TRAINING EXAMPLE, READ ONLY:/,
+                'Synthetic training example · Read only ·',
+              )}
           </p>
         ))}
-        <div className="evidence-box">
-          <div className="eyebrow">Mapping</div>
-          <p data-testid={tid('mu7-mapping-label')}>
-            <strong>{u.mapping_label}</strong>
+        <div className={styles.assignmentSummary}>
+          <p className={styles.assignmentTitle} data-testid={tid('mu7-mapping-label')}>
+            <strong>{mappingTitle}</strong>
+            {mappingContext && <span className={styles.mappingContext}> {mappingContext}</span>}
           </p>
           {u.parent_row_label && (
             <p>
@@ -261,14 +280,14 @@ export function Training({
             <span className="section-label">Illustrative answers</span>
           </div>
           <div className="panel-body">
-            <p className="muted">{selected.workedExample.outcome_summary}</p>
+            <p className="muted">{exampleSummary(selected.workedExample.outcome_summary)}</p>
             <div className="response-grid">
               {selected.workedExample.worked_answers.map((a) => (
                 <div className="human-response" key={a.reviewer_slot}>
                   <h3>Reviewer {a.reviewer_slot}</h3>
                   <p>
                     <strong>{answerLabel(a.answer)}</strong>
-                    {a.reason_code ? `, ${a.reason_code}` : ''}
+                    {a.reason_code ? `, ${reasonLabel(a.reason_code)}` : ''}
                     {a.uncertain ? ' (uncertain)' : ''}
                   </p>
                   {a.note && <p className="muted">{a.note}</p>}
@@ -494,7 +513,7 @@ function Reviewer({
                   {last && (
                     <p className="notice" data-testid="mu7-own-answer">
                       <strong>Your answer on record:</strong> {answerLabel(last.answer)}
-                      {last.reasonCode ? `, ${last.reasonCode}` : ''}
+                      {last.reasonCode ? `, ${reasonLabel(last.reasonCode)}` : ''}
                       {last.uncertain ? ' (uncertain)' : ''}, saved {when(last.submittedAt)}.
                       {shown.ownAnswers.length > 1
                         ? ` Revision ${last.revisionNumber}; your first answer (${answerLabel(shown.ownAnswers[0].answer)}) is kept as well.`
@@ -524,15 +543,22 @@ function Reviewer({
                   </div>
                   {answer === 'DISAGREE' && (
                     <label className="field">
-                      <span className="form-label">Reason code (required)</span>
-                      <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}>
+                      <span className="form-label">Reason (required)</span>
+                      <select
+                        aria-describedby="mu7-reviewer-reason-help"
+                        value={reasonCode}
+                        onChange={(e) => setReasonCode(e.target.value)}
+                      >
                         <option value="">Choose the reason that fits best</option>
                         {shown.reasonCodes.map((r) => (
                           <option key={r.code} value={r.code}>
-                            {r.code}: {r.meaning}
+                            {reasonLabel(r.code)}
                           </option>
                         ))}
                       </select>
+                      <span className="form-hint" id="mu7-reviewer-reason-help">
+                        {shown.reasonCodes.find((r) => r.code === reasonCode)?.meaning}
+                      </span>
                     </label>
                   )}
                   <label className="field">
@@ -722,7 +748,7 @@ function Adjudicator({
                         <h3>Reviewer {a.reviewerSlot}</h3>
                         <p>
                           <strong>{answerLabel(a.answer)}</strong>
-                          {a.reasonCode ? `, ${a.reasonCode}` : ''}
+                          {a.reasonCode ? `, ${reasonLabel(a.reasonCode)}` : ''}
                           {a.uncertain ? ' (uncertain)' : ''}
                         </p>
                         {a.note && <p className="muted">{a.note}</p>}
@@ -805,8 +831,9 @@ function Adjudicator({
                           </label>
                           {form.decision === 'DISAGREE' && (
                             <label className="field">
-                              <span className="form-label">Reason code</span>
+                              <span className="form-label">Reason</span>
                               <select
+                                aria-describedby="mu7-adjudicator-reason-help"
                                 value={form.reasonCode ?? ''}
                                 onChange={(e) =>
                                   setForm({ ...form, reasonCode: e.target.value || null })
@@ -815,10 +842,13 @@ function Adjudicator({
                                 <option value="">Choose the reason that fits best</option>
                                 {shown.reasonCodes.map((r) => (
                                   <option key={r.code} value={r.code}>
-                                    {r.code}: {MU7_REASON_MEANING[r.code] ?? r.meaning}
+                                    {reasonLabel(r.code)}
                                   </option>
                                 ))}
                               </select>
+                              <span className="form-hint" id="mu7-adjudicator-reason-help">
+                                {shown.reasonCodes.find((r) => r.code === form.reasonCode)?.meaning}
+                              </span>
                             </label>
                           )}
                           <label className="field">

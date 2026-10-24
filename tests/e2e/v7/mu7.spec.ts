@@ -134,6 +134,12 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await aPage.getByRole('tab', { name: 'Worked examples' }).click();
     await aPage.getByRole('button', { name: /Example 3/ }).click();
     await expect(
+      aPage.getByRole('region', { name: 'Illustrative answers and outcome' }),
+    ).not.toContainText('ORGAN_OF_ORIGIN_ONLY');
+    await expect(
+      aPage.getByRole('region', { name: 'Illustrative answers and outcome' }),
+    ).toContainText('Organ of origin only');
+    await expect(
       aPage.getByText('the adjudicator adopts Reviewer 2', { exact: false }),
     ).toBeVisible();
     // A failed acknowledgment stays visible on the examples tab and is safe to retry.
@@ -169,11 +175,15 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await aPage.getByRole('button', { name: new RegExp(`^Unit ${pos}:`) }).click();
     await expect(aPage.getByTestId('mu7-unit-id')).toHaveText(disagreeUnit.unitId);
     await expect(aPage.getByTestId('mu7-notice')).toContainText(
-      'SYNTHETIC UNIT: excluded from every statistic',
+      'Synthetic unit · excluded from every statistic',
     );
     const p = planted(disagreeUnit.unitId, 1);
     await aPage.getByRole('radio', { name: 'Disagree', exact: true }).check();
-    await aPage.getByLabel(/Reason code/).selectOption(p.reason_code!);
+    await aPage.getByLabel(/^Reason \(required\)/).selectOption(p.reason_code!);
+    await expect(aPage.getByLabel(/^Reason \(required\)/).locator('option:checked')).not.toHaveText(
+      /_/,
+    );
+    await expect(aPage.locator('#mu7-reviewer-reason-help')).not.toBeEmpty();
     await aPage.getByRole('button', { name: 'Save answer' }).click();
     await expect(aPage.locator('.notice.error')).toContainText(
       'MU7-G36: a DISAGREE answer needs a note',
@@ -212,7 +222,7 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await aPage.keyboard.press('Home');
     await expect(aPage.getByRole('tab', { name: 'Practice cases', exact: true })).toBeFocused();
     await expect(aPage.getByRole('radio', { name: 'Disagree', exact: true })).toBeChecked();
-    await expect(aPage.getByLabel(/Reason code/)).toHaveValue(p.reason_code!);
+    await expect(aPage.getByLabel(/^Reason \(required\)/)).toHaveValue(p.reason_code!);
     await expect(aPage.getByLabel(/Note/)).toHaveValue(p.note!);
     await expect(aPage.getByLabel(/not sure/)).toBeChecked();
     expect(writes).toEqual([]);
@@ -238,6 +248,14 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await expect(aPage.getByTestId('mu7-own-answer')).toContainText(
       'Your answer on record: Disagree',
     );
+    await expect(aPage.getByTestId('mu7-own-answer')).toContainText('MeSH placement misleading');
+    expect(
+      (
+        await a.request
+          .get(`/api/mu7/assignments/${disagreeUnit.assignmentId}`)
+          .then((r) => r.json())
+      ).ownAnswers.at(-1).reasonCode,
+    ).toBe(p.reason_code);
     expect(await aPage.content()).not.toMatch(hidden);
     const axe = await new AxeBuilder({ page: aPage }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(axe.violations).toEqual([]);

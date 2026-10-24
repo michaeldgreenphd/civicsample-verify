@@ -132,10 +132,32 @@
   max-width: 85ch;
   overflow-wrap: anywhere;
 }
-.workspace :global(.evidence-box) {
-  background: #eef5f0;
-  border-color: #d7e6dd;
-  border-left: 3px solid var(--teal);
+/* Present provenance as a quiet note, rather than a warning badge. */
+.packetNotice {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+.assignmentSummary {
+  padding-bottom: 24px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--practice-line);
+}
+.assignmentTitle {
+  font-size: 18px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.mappingContext {
+  display: block;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.assignmentSummary > p + p {
+  margin-top: 10px;
 }
 .workspace :global(.decision-option) {
   min-height: 60px;
