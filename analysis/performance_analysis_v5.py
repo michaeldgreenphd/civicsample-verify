@@ -194,7 +194,8 @@ def _ts(x: Any, what: str) -> pd.Timestamp:
 
 
 def _ts_col(s: pd.Series, name: str) -> pd.Series:
-    t = pd.to_datetime(s, utc=True, errors="coerce")
+    # Database exports may mix whole seconds and fractional seconds in one column.
+    t = pd.to_datetime(s, utc=True, errors="coerce", format="ISO8601")
     if t.isna().any():
         raise ExportError(f"{name} has missing or unreadable timestamps")
     return t

@@ -89,6 +89,20 @@ def test_end_to_end_counts_and_labels(bundle):
     assert any("Tier 1 additions" in s for s in res["not_estimable_by_design"])
 
 
+def test_valid_bundle_accepts_equivalent_mixed_timestamp_precision(bundle):
+    data, man = _copy(bundle)
+    original = _results(data, man)
+    judgments = data["independent_judgments"]
+    # PostgreSQL can emit .000 seconds as whole seconds while neighboring rows
+    # retain fractions. Change representation only, never the recorded instant.
+    for index in judgments.index[::2]:
+        instant = pd.Timestamp(judgments.loc[index, "first_submitted_at"])
+        judgments.loc[index, "first_submitted_at"] = instant.isoformat(timespec="microseconds")
+    actual = _results(data, man)
+    # JSON preserves the matching non-estimable NaN placeholders for comparison.
+    assert json.dumps(actual, sort_keys=True) == json.dumps(original, sort_keys=True)
+
+
 def test_removal_only_labels_do_not_change_paired_values_or_denominators(bundle):
     data, man = _copy(bundle)
     merged, passed = _validate(data, man)
