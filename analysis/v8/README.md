@@ -26,3 +26,8 @@ keep/remove counts are separate as well. The fixture is not either private sampl
 
 See [the intake review](../../docs/V8_INTEGRATION_REVIEW.md) for reproduced input-validation
 problems, adaptations, remaining export-verification work and pending scientific decisions.
+
+The application-written synthetic database round trip is exercised by
+`tests/mu8-roundtrip.test.ts` (see `docs/V8_SYNTHETIC_ROUNDTRIP.md`). It tests
+both overlap alternatives without choosing either for the study. Real-design
+analysis remains disabled pending the documented scientific and integrity gates.

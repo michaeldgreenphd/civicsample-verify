@@ -57,6 +57,9 @@ export type ChainOptions = {
   without?: string[];
   /** Synthetic design version override for v8 compatibility tests; never operational data. */
   designVersion?: string;
+  plannedPrimary?: number;
+  plannedSubgroup?: number;
+  overlap?: 'ALLOW' | 'ONE_PER_TRIAL';
   existing?: FixtureDb;
   /** Stop the pilot after the adjudications, before the pilot lock and sign-off. */
   stopAfterPilotAdjudication?: boolean;
@@ -78,6 +81,7 @@ export type ChainOptions = {
 };
 /** Migrations that build on another: leaving one out leaves its dependents out too. */
 const DEPENDENTS: Record<string, string[]> = {
+  'migrations/0033_v8_design_foundation.sql': ['migrations/0034_v8_synthetic_identifiers.sql'],
   'migrations/0032_v7_freeze_gates_v8_4.sql': ['migrations/0033_v8_design_foundation.sql'],
   'migrations/0025_v7_review_fixes.sql': ['migrations/0026_v7_lifecycle_and_gates.sql'],
   'migrations/0026_v7_lifecycle_and_gates.sql': [
@@ -144,7 +148,7 @@ export const rows = async <T = Record<string, unknown>>(
 ) => as(db, who, async () => (await db.query<T>(sql, params)).rows);
 
 // ---- synthetic FORMAL units (same shape as the supplied suite's FX list) ----------------------
-type Unit = {
+export type Unit = {
   uid: string;
   fam: 'AREA' | 'ROW' | 'SG';
   cat: string;
@@ -315,7 +319,7 @@ const designText = (u: Unit) => {
     d.prn_key,
   ].join('|');
 };
-const importObj = (u: Unit) => ({
+export const importObj = (u: Unit) => ({
   unit_id: u.uid,
   mode: 'FORMAL',
   record_category: 'MAPPING_UNIT_FORMAL',
@@ -430,14 +434,14 @@ export const submitSql = (assignmentId: string, answer: Record<string, unknown>)
   `select public.rpc_mu7_submit('${assignmentId}', ${lit(answer)}) as j`;
 export const adjudicateSql = (o: Record<string, unknown>) =>
   `select public.rpc_mu7_record_adjudication(${lit(o)}) as a`;
-const pidOf = (db: FixtureDb, who: Who) =>
+export const pidOf = (db: FixtureDb, who: Who) =>
   one(
     db,
     'owner',
     'select r.reviewer_pseudo_id from public.reviewers r join public.users u using (user_id) where u.email=$1 and r.withdrawn_at is null',
     [P[who as Exclude<Who, 'owner'>].email],
   ) as Promise<string>;
-const uidOf = (db: FixtureDb, who: Who) =>
+export const uidOf = (db: FixtureDb, who: Who) =>
   one(db, 'owner', 'select user_id from public.users where email=$1', [
     P[who as Exclude<Who, 'owner'>].email,
   ]) as Promise<string>;
@@ -507,7 +511,7 @@ export async function signedOffPilot(
   await must(
     db,
     'inv',
-    `select public.rpc_mu7_record_design(${lit({ design_version: options.designVersion ?? DESIGN_VERSION, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })})`,
+    `select public.rpc_mu7_record_design(${lit({ design_version: options.designVersion ?? DESIGN_VERSION, assignment_set_id: SET, overlap_setting: options.overlap ?? 'ALLOW', n_primary_planned: options.plannedPrimary ?? 6, n_subgroup_planned: options.plannedSubgroup ?? 2, attestation: ATT })})`,
     'record design',
   );
   if (options.stopAfter === 'design') return { db, PT1, PT2 };

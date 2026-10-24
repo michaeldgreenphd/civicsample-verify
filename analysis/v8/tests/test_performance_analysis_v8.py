@@ -368,7 +368,20 @@ def test_database_written_bundle_end_to_end(tmp_path):
         pytest.fail("the database-written v8 bundle is missing: run the application's v8 database suite with a bundle folder")
     work = tmp_path / "dbb"
     shutil.copytree(b, work)
-    rc, out = run(tmp_path, work, "--allow-synthetic")
+    probabilities = os.environ.get("MU8_DB_PROBABILITIES")
+    extra = ["--probabilities", probabilities] if probabilities else []
+    rc, out = run(tmp_path, work, "--allow-synthetic", *extra)
     assert rc == 0
     fam = pd.read_csv(out / "family_estimates_v8.csv")
     assert set(fam.domain) == set(PA.FAMILY_DOMAINS)
+    units = pd.read_csv(work / "units.csv")
+    judgments = pd.read_csv(work / "independent_judgments.csv")
+    assert len(units) == 100 and len(judgments) == 200
+    assert units.groupby("family").size().to_dict() == {"AREA": 56, "ROW": 40, "SG": 4}
+    assert set(judgments.judgment_status) == {"ANSWERED"}
+    # Planted outcomes in the database scenario, independently checked against the report.
+    by_family = fam.set_index(["domain", "rule"])
+    assert by_family.loc[("AREA", "R0"), "n_determinate"] == 54
+    assert by_family.loc[("AREA", "R2"), "n_determinate"] == 56
+    assert by_family.loc[("AREA", "R0"), "n_confirmed"] == 53
+    assert by_family.loc[("ROW", "R0"), "n_determinate"] == 40

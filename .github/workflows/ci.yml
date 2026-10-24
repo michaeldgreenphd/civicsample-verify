@@ -51,14 +51,14 @@ jobs:
       - run: python -m pytest -q analysis
         env:
           MU7_ALLOW_NO_DB_BUNDLE: '1'
-          # v8 database integration is pending; this explicit skip is not a passed gate.
+          # The subsequent Node step writes both v7 and v8 database bundles and runs their integration checks without skips.
           MU8_ALLOW_NO_DB_BUNDLE: '1'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/formal-export.test.ts tests/tlv5.test.ts tests/mu7-analysis.test.ts
+      - run: node --import tsx --test tests/formal-export.test.ts tests/tlv5.test.ts tests/mu7-analysis.test.ts tests/mu8-roundtrip.test.ts
         env:
           VERIFY_ANALYSIS_PYTHON: python3
   postgres:
@@ -89,8 +89,8 @@ jobs:
         env:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
-      - name: Current v5 database boundaries and concurrency
-        run: node --import tsx --test tests/tlv5-postgres.test.ts tests/mapconf-postgres.test.ts tests/mu7-postgres.test.ts tests/mu7-gates-upgrade.test.ts tests/mu8-foundation.test.ts
+      - name: Database role boundaries and concurrency
+        run: node --import tsx --test tests/tlv5-postgres.test.ts tests/mapconf-postgres.test.ts tests/mu7-postgres.test.ts tests/mu7-gates-upgrade.test.ts tests/mu8-foundation.test.ts tests/mu8-roundtrip.test.ts
         env:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test

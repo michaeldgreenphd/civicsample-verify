@@ -83,3 +83,7 @@ is not a release of a v8 clinician workflow.
 - Live Supabase: NOT TESTED; no remote schema, account or data changes were made.
 - Migration SHA-256:
   `bc10e48718b1e0674720fc1cc4df8b1aed5e1ae26f9b6b281b4683ff64e787ad`.
+
+Follow-on implementation: [V8 synthetic round trip](V8_SYNTHETIC_ROUNDTRIP.md) adds
+the 100-unit database/export/analysis scenario; the results above describe the
+foundation commit before that increment.
