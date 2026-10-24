@@ -239,7 +239,12 @@ async function adjudicatorWorkspace(ctx: Mu7Context): Promise<Mu7AdjudicatorWork
         };
       })
       .sort((a, b) => (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
-    return { kind: 'adjudicator', designRecorded: design.length > 0, queue };
+    return {
+      kind: 'adjudicator',
+      designRecorded: design.length > 0,
+      queue,
+      training: await readTraining(d),
+    };
   });
 }
 
@@ -315,6 +320,7 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
     );
     return {
       kind: 'investigator',
+      training: await readTraining(d),
       design: design
         ? {
             designVersion: String(design.design_version),

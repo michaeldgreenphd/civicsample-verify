@@ -23,6 +23,8 @@ import {
 } from '@/lib/mu7-types';
 import type { Actor } from '@/lib/types';
 import { Icon } from '@/components/icons';
+import { PracticeSections } from './practice-sections';
+import styles from './practice-sections.module.css';
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -43,6 +45,17 @@ const readable = (value: string) =>
     .replaceAll('_', ' ')
     .replace(/^./, (c) => c.toUpperCase());
 const answerLabel = (a: Mu7Answer | null) => (a ? MU7_ANSWER_TEXT[a].label : 'Not answered');
+// Presentation only: retain canonical codes in option values, submissions and exports.
+const reasonLabel = (code: string) => readable(code).replace(/\bmesh\b/gi, 'MeSH');
+const exampleSummary = (text: string) =>
+  text.replace(/\b[A-Z][A-Z0-9_]*\b/g, (code) =>
+    Object.hasOwn(MU7_REASON_MEANING, code)
+      ? reasonLabel(code)
+      : MU7_ANSWERS.includes(code as Mu7Answer)
+        ? answerLabel(code as Mu7Answer)
+        : code,
+  );
+
 const when = (iso: string) => (iso ? iso.replace('T', ' ').slice(0, 16) + ' UTC' : '');
 
 export function Mu7Panel({ user }: { user: Actor }) {
@@ -73,7 +86,16 @@ export function Mu7Panel({ user }: { user: Actor }) {
       </div>
     );
   if (workspace.kind === 'investigator')
-    return <Investigator workspace={workspace} onRefresh={refresh} />;
+    return (
+      <PracticeSections
+        workLabel="Practice setup"
+        description="Manage the synthetic practice and return to the worked examples at any time."
+        exampleCount={workspace.training.length}
+        examples={<Training training={workspace.training} />}
+      >
+        <Investigator workspace={workspace} onRefresh={refresh} />
+      </PracticeSections>
+    );
   if (workspace.kind === 'adjudicator')
     return (
       <Adjudicator
@@ -111,6 +133,9 @@ function Banner() {
 function Packet({ packet, ids = false }: { packet: Mu7Packet; ids?: boolean }) {
   const u = packet.unit;
   const t = packet.trial;
+  const contextStart = u.mapping_label.indexOf(' (parent MeSH category ');
+  const mappingTitle = contextStart < 0 ? u.mapping_label : u.mapping_label.slice(0, contextStart);
+  const mappingContext = contextStart < 0 ? null : u.mapping_label.slice(contextStart + 1);
   const tid = (name: string) => (ids ? name : undefined);
   return (
     <section className="panel" aria-label="Unit under review">
@@ -124,14 +149,19 @@ function Packet({ packet, ids = false }: { packet: Mu7Packet; ids?: boolean }) {
       </div>
       <div className="panel-body">
         {packet.notices.map((n) => (
-          <p key={n} className="badge amber" data-testid={tid('mu7-notice')}>
-            {n}
+          <p key={n} className={styles.packetNotice} data-testid={tid('mu7-notice')}>
+            {n
+              .replace(/^SYNTHETIC UNIT:/, 'Synthetic unit ·')
+              .replace(
+                /^SYNTHETIC TRAINING EXAMPLE, READ ONLY:/,
+                'Synthetic training example · Read only ·',
+              )}
           </p>
         ))}
-        <div className="evidence-box">
-          <div className="eyebrow">Mapping</div>
-          <p data-testid={tid('mu7-mapping-label')}>
-            <strong>{u.mapping_label}</strong>
+        <div className={styles.assignmentSummary}>
+          <p className={styles.assignmentTitle} data-testid={tid('mu7-mapping-label')}>
+            <strong>{mappingTitle}</strong>
+            {mappingContext && <span className={styles.mappingContext}> {mappingContext}</span>}
           </p>
           {u.parent_row_label && (
             <p>
@@ -224,56 +254,73 @@ export function Training({
   acknowledgedAt?: string | null;
   onAcknowledge?: () => void;
 }) {
-  if (!training.length) return null;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = training.find((t) => t.trainingUnitId === selectedId) ?? training[0];
+  if (!selected) return null;
   return (
-    <section className="panel" aria-label="Worked examples">
-      <div className="panel-header">
-        <span className="section-label">Worked examples (read only, outside every total)</span>
-        {acknowledgedAt !== undefined && (
-          <span className="muted" data-testid="mu7-training-ack">
-            {acknowledgedAt ? `Read ${when(acknowledgedAt)}` : 'Not yet marked as read'}
-          </span>
-        )}
+    <section className={styles.examples} aria-label="Worked examples">
+      <div className={styles.exampleChoices} role="group" aria-label="Choose a worked example">
+        {training.map((t, index) => (
+          <button
+            key={t.trainingUnitId}
+            type="button"
+            aria-pressed={selected.trainingUnitId === t.trainingUnitId}
+            onClick={() => setSelectedId(t.trainingUnitId)}
+          >
+            <span className={styles.exampleNumber}>Example {index + 1}</span>
+            <strong>{t.packet.unit.mapping_label.replace(/ \(.*/, '')}</strong>
+            <span className={styles.exampleId}>{t.trainingUnitId} · Read only</span>
+          </button>
+        ))}
       </div>
-      <div className="panel-body">
-        {training.map((t) => (
-          <details key={t.trainingUnitId}>
-            <summary>
-              {t.trainingUnitId}: {t.packet.unit.mapping_label.replace(/ \(.*/, '')},{' '}
-              {t.workedExample.outcome_summary}
-            </summary>
-            <Packet packet={t.packet} />
+      <div className={styles.exampleBody}>
+        <Packet packet={selected.packet} />
+        <section className="panel" aria-label="Illustrative answers and outcome">
+          <div className="panel-header">
+            <span className="section-label">Illustrative answers</span>
+          </div>
+          <div className="panel-body">
+            <p className="muted">{exampleSummary(selected.workedExample.outcome_summary)}</p>
             <div className="response-grid">
-              {t.workedExample.worked_answers.map((a) => (
+              {selected.workedExample.worked_answers.map((a) => (
                 <div className="human-response" key={a.reviewer_slot}>
                   <h3>Reviewer {a.reviewer_slot}</h3>
                   <p>
-                    {answerLabel(a.answer)}
-                    {a.reason_code ? `, ${a.reason_code}` : ''}
+                    <strong>{answerLabel(a.answer)}</strong>
+                    {a.reason_code ? `, ${reasonLabel(a.reason_code)}` : ''}
                     {a.uncertain ? ' (uncertain)' : ''}
                   </p>
                   {a.note && <p className="muted">{a.note}</p>}
                 </div>
               ))}
             </div>
-            <p>
-              <strong>Reference:</strong> {answerLabel(t.workedExample.reference.final_answer)} (
-              {readable(t.workedExample.reference.status)})
-              {t.workedExample.reference.rationale
-                ? `. ${t.workedExample.reference.rationale}`
-                : ''}
-            </p>
-            <p className="muted">{t.workedExample.teaching_point}</p>
-          </details>
-        ))}
-        {onAcknowledge && !acknowledgedAt && (
-          <div className="button-row">
+            <div className={styles.outcome}>
+              <h3>Recorded outcome in this example</h3>
+              <p>
+                <strong>Reference:</strong>{' '}
+                {answerLabel(selected.workedExample.reference.final_answer)} (
+                {readable(selected.workedExample.reference.status)})
+              </p>
+              {selected.workedExample.reference.rationale && (
+                <p>{selected.workedExample.reference.rationale}</p>
+              )}
+              <p className="muted">{selected.workedExample.teaching_point}</p>
+            </div>
+          </div>
+        </section>
+      </div>
+      {acknowledgedAt !== undefined && (
+        <div className={styles.acknowledgement}>
+          <p data-testid="mu7-training-ack">
+            {acknowledgedAt ? `Read ${when(acknowledgedAt)}` : 'Not yet marked as read'}
+          </p>
+          {onAcknowledge && !acknowledgedAt && (
             <button className="button secondary" onClick={onAcknowledge}>
               Mark the worked examples as read
             </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -301,6 +348,7 @@ function Reviewer({
   const [uncertain, setUncertain] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState('');
+  const [trainingError, setTrainingError] = useState('');
   const [busy, setBusy] = useState(false);
   const [started, setStarted] = useState(0);
   const load = useCallback((next: Mu7ReviewerUnit) => {
@@ -355,166 +403,204 @@ function Reviewer({
     }
   }
   async function acknowledge() {
+    setTrainingError('');
     try {
       await api('/api/mu7/training/acknowledge', { method: 'POST', body: '{}' });
       await onRefresh();
     } catch (e) {
-      setError((e as Error).message);
+      setTrainingError((e as Error).message);
     }
   }
   const last = shown?.ownAnswers.at(-1);
   return (
-    <div className="workspace-grid">
-      <aside className="panel" aria-label="Unit queue">
-        <div className="panel-header">
-          <span className="section-label">Your units</span>
-          <span className="muted">{user.displayName}</span>
-        </div>
-        <ul className="queue-list">
-          {workspace.queue.map((q) => (
-            <li key={q.assignmentId}>
-              <button
-                className={`queue-item${selected === q.assignmentId ? ' selected' : ''}`}
-                aria-current={selected === q.assignmentId ? 'true' : undefined}
-                onClick={() => onSelect(q.assignmentId)}
-                disabled={!q.available}
-                aria-label={`Unit ${q.queuePosition}: ${q.unitId}`}
-              >
-                <span className="queue-icon">
-                  <Icon name={q.answered ? 'check' : q.available ? 'file' : 'lock'} size={13} />
-                </span>
-                <span className="queue-copy">
-                  <strong className="mono">
-                    {q.queuePosition}. {q.unitId}
-                  </strong>
-                  <span className="queue-meta">
-                    <span>{q.unitRole === 'SUBGROUP' ? 'Subgroup unit' : 'Primary unit'}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className={`status ${q.answered ? 'complete' : ''}`}>
-                      {q.answered ? 'Answered' : q.available ? 'Open' : 'Opens later'}
+    <PracticeSections
+      workLabel="Practice cases"
+      description="Read the trial evidence, choose an answer, then save it. Consult the worked examples whenever you need them."
+      exampleCount={workspace.training.length}
+      progress={{
+        answered: workspace.queue.filter((q) => q.answered).length,
+        total: workspace.queue.length,
+      }}
+      examples={
+        <>
+          {trainingError && (
+            <div className="notice error" role="alert">
+              {trainingError}
+            </div>
+          )}
+          <Training
+            training={workspace.training}
+            acknowledgedAt={workspace.trainingAcknowledgedAt}
+            onAcknowledge={workspace.enrolled ? acknowledge : undefined}
+          />
+        </>
+      }
+    >
+      <div className="workspace-grid">
+        <aside className={`panel ${styles.reviewQueue}`} aria-label="Unit queue">
+          <div className="panel-header">
+            <span className="section-label">Your units</span>
+            <span className="muted">{user.displayName}</span>
+          </div>
+          <label className={styles.mobilePicker}>
+            Choose a practice case
+            <select value={selected ?? ''} onChange={(e) => onSelect(e.target.value || null)}>
+              <option value="">Select a case</option>
+              {workspace.queue.map((q) => (
+                <option key={q.assignmentId} value={q.assignmentId} disabled={!q.available}>
+                  {q.queuePosition}. {q.unitId} ·{' '}
+                  {q.answered ? 'Answered' : q.available ? 'Open' : 'Opens later'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <ul className="queue-list">
+            {workspace.queue.map((q) => (
+              <li key={q.assignmentId}>
+                <button
+                  className={`queue-item${selected === q.assignmentId ? ' selected' : ''}`}
+                  aria-current={selected === q.assignmentId ? 'true' : undefined}
+                  onClick={() => onSelect(q.assignmentId)}
+                  disabled={!q.available}
+                  aria-label={`Unit ${q.queuePosition}: ${q.unitId}`}
+                >
+                  <span className="queue-icon">
+                    <Icon name={q.answered ? 'check' : q.available ? 'file' : 'lock'} size={13} />
+                  </span>
+                  <span className="queue-copy">
+                    <strong className="mono">
+                      {q.queuePosition}. {q.unitId}
+                    </strong>
+                    <span className="queue-meta">
+                      <span>{q.unitRole === 'SUBGROUP' ? 'Subgroup unit' : 'Primary unit'}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className={`status ${q.answered ? 'complete' : ''}`}>
+                        {q.answered ? 'Answered' : q.available ? 'Open' : 'Opens later'}
+                      </span>
                     </span>
                   </span>
-                </span>
-              </button>
-            </li>
-          ))}
-          {!workspace.queue.length && <li className="muted">No units are assigned to you.</li>}
-        </ul>
-        <p className="privacy-note">
-          {primaryLeft > 0
-            ? `Subgroup units open after your ${primaryLeft} remaining primary units.`
-            : 'Every primary unit is answered; subgroup units are open.'}{' '}
-          You never see another reviewer’s answer.
-        </p>
-      </aside>
-      <div>
-        <Banner />
-        {error && (
-          <div className="notice error" role="alert">
-            {error}
-          </div>
-        )}
-        {shown ? (
-          <>
-            <Packet packet={shown.packet} ids />
-            <section className="panel" aria-label="Your answer">
-              <div className="panel-header">
-                <span className="section-label">Is our assignment right for this trial?</span>
-                {saved && (
-                  <span className="save-status" role="status">
-                    {saved}
-                  </span>
-                )}
-              </div>
-              <div className="panel-body">
-                {last && (
-                  <p className="notice" data-testid="mu7-own-answer">
-                    <strong>Your answer on record:</strong> {answerLabel(last.answer)}
-                    {last.reasonCode ? `, ${last.reasonCode}` : ''}
-                    {last.uncertain ? ' (uncertain)' : ''}, saved {when(last.submittedAt)}.
-                    {shown.ownAnswers.length > 1
-                      ? ` Revision ${last.revisionNumber}; your first answer (${answerLabel(shown.ownAnswers[0].answer)}) is kept as well.`
-                      : ' You can revise it until the review closes.'}
-                  </p>
-                )}
-                <div className="decision-list" role="radiogroup" aria-label="Answer">
-                  {MU7_ANSWERS.map((a) => (
-                    <label
-                      key={a}
-                      aria-label={MU7_ANSWER_TEXT[a].label}
-                      className={`decision-option${answer === a ? ' chosen' : ''}`}
-                    >
-                      <input
-                        type="radio"
-                        name="mu7-answer"
-                        value={a}
-                        checked={answer === a}
-                        onChange={() => setAnswer(a)}
-                      />
-                      <span>
-                        <strong>{MU7_ANSWER_TEXT[a].label}</strong>
-                        <small>{MU7_ANSWER_TEXT[a].meaning}</small>
+                </button>
+              </li>
+            ))}
+            {!workspace.queue.length && <li className="muted">No units are assigned to you.</li>}
+          </ul>
+          <p className="privacy-note">
+            {primaryLeft > 0
+              ? `Subgroup units open after your ${primaryLeft} remaining primary units.`
+              : 'Every primary unit is answered; subgroup units are open.'}{' '}
+            You never see another reviewer’s answer.
+          </p>
+        </aside>
+        <div>
+          {error && (
+            <div className="notice error" role="alert">
+              {error}
+            </div>
+          )}
+          {shown ? (
+            <>
+              <Packet packet={shown.packet} ids />
+              <section className="panel" aria-label="Your answer">
+                <div className="panel-header">
+                  <span className="section-label">Is our assignment right for this trial?</span>
+                  {saved && (
+                    <span className="save-status" role="status">
+                      {saved}
+                    </span>
+                  )}
+                </div>
+                <div className="panel-body">
+                  {last && (
+                    <p className="notice" data-testid="mu7-own-answer">
+                      <strong>Your answer on record:</strong> {answerLabel(last.answer)}
+                      {last.reasonCode ? `, ${reasonLabel(last.reasonCode)}` : ''}
+                      {last.uncertain ? ' (uncertain)' : ''}, saved {when(last.submittedAt)}.
+                      {shown.ownAnswers.length > 1
+                        ? ` Revision ${last.revisionNumber}; your first answer (${answerLabel(shown.ownAnswers[0].answer)}) is kept as well.`
+                        : ' You can revise it until the review closes.'}
+                    </p>
+                  )}
+                  <div className="decision-list" role="radiogroup" aria-label="Answer">
+                    {MU7_ANSWERS.map((a) => (
+                      <label
+                        key={a}
+                        aria-label={MU7_ANSWER_TEXT[a].label}
+                        className={`decision-option${answer === a ? ' chosen' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name="mu7-answer"
+                          value={a}
+                          checked={answer === a}
+                          onChange={() => setAnswer(a)}
+                        />
+                        <span>
+                          <strong>{MU7_ANSWER_TEXT[a].label}</strong>
+                          <small>{MU7_ANSWER_TEXT[a].meaning}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  {answer === 'DISAGREE' && (
+                    <label className="field">
+                      <span className="form-label">Reason (required)</span>
+                      <select
+                        aria-describedby="mu7-reviewer-reason-help"
+                        value={reasonCode}
+                        onChange={(e) => setReasonCode(e.target.value)}
+                      >
+                        <option value="">Choose the reason that fits best</option>
+                        {shown.reasonCodes.map((r) => (
+                          <option key={r.code} value={r.code}>
+                            {reasonLabel(r.code)}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="form-hint" id="mu7-reviewer-reason-help">
+                        {shown.reasonCodes.find((r) => r.code === reasonCode)?.meaning}
                       </span>
                     </label>
-                  ))}
-                </div>
-                {answer === 'DISAGREE' && (
+                  )}
                   <label className="field">
-                    <span className="form-label">Reason code (required)</span>
-                    <select value={reasonCode} onChange={(e) => setReasonCode(e.target.value)}>
-                      <option value="">Choose the reason that fits best</option>
-                      {shown.reasonCodes.map((r) => (
-                        <option key={r.code} value={r.code}>
-                          {r.code}: {r.meaning}
-                        </option>
-                      ))}
-                    </select>
+                    <span className="form-label">
+                      Note {answer === 'DISAGREE' ? '(required)' : '(optional)'}
+                    </span>
+                    <textarea
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      rows={3}
+                      maxLength={2000}
+                    />
+                    <span className="form-hint">
+                      A short note helps the adjudicator when the two answers differ.
+                    </span>
                   </label>
-                )}
-                <label className="field">
-                  <span className="form-label">
-                    Note {answer === 'DISAGREE' ? '(required)' : '(optional)'}
-                  </span>
-                  <textarea
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    rows={3}
-                    maxLength={2000}
-                  />
-                  <span className="form-hint">
-                    A short note helps the adjudicator when the two answers differ.
-                  </span>
-                </label>
-                <label className="checkbox-row">
-                  <input
-                    type="checkbox"
-                    checked={uncertain}
-                    onChange={(e) => setUncertain(e.target.checked)}
-                  />
-                  <span>I am answering, but I am not sure.</span>
-                </label>
-                <div className="button-row">
-                  <button className="button" disabled={!answer || busy} onClick={submit}>
-                    {last ? 'Save revision' : 'Save answer'}
-                  </button>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={uncertain}
+                      onChange={(e) => setUncertain(e.target.checked)}
+                    />
+                    <span>I am answering, but I am not sure.</span>
+                  </label>
+                  <div className="button-row">
+                    <button className="button" disabled={!answer || busy} onClick={submit}>
+                      {last ? 'Save revision' : 'Save answer'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            </section>
-          </>
-        ) : (
-          <div className="panel empty-state">
-            {workspace.queue.length
-              ? 'Select a unit from your queue.'
-              : 'Nothing is assigned to you yet.'}
-          </div>
-        )}
-        <Training
-          training={workspace.training}
-          acknowledgedAt={workspace.trainingAcknowledgedAt}
-          onAcknowledge={workspace.enrolled ? acknowledge : undefined}
-        />
+              </section>
+            </>
+          ) : (
+            <div className="panel empty-state">
+              {workspace.queue.length
+                ? 'Select a unit from your queue.'
+                : 'Nothing is assigned to you yet.'}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </PracticeSections>
   );
 }
 
@@ -594,225 +680,237 @@ function Adjudicator({
     }
   }
   return (
-    <div className="workspace-grid">
-      <aside className="panel" aria-label="Adjudication queue">
-        <div className="panel-header">
-          <span className="section-label">Routed units</span>
-          <span className="muted">Tie-breaker only</span>
-        </div>
-        <ul className="queue-list">
-          {workspace.queue.map((q) => (
-            <li key={q.unitId}>
-              <button
-                className={`queue-item${selected === q.unitId ? ' selected' : ''}`}
-                aria-current={selected === q.unitId ? 'true' : undefined}
-                onClick={() => onSelect(q.unitId)}
-              >
-                <span className="queue-icon">
-                  <Icon name={q.adjudicated ? 'check' : 'file'} size={13} />
-                </span>
-                <span className="queue-copy">
-                  <strong className="mono">{q.unitId}</strong>
-                  <span className="queue-meta">
-                    <span>{q.mappingLabel.replace(/ \(.*/, '')}</span>
-                    <span aria-hidden="true">·</span>
-                    <span className={`status ${q.adjudicated ? 'complete' : 'draft'}`}>
-                      {q.adjudicated ? 'Decided' : 'Needs a decision'}
+    <PracticeSections
+      workLabel="Adjudication"
+      description="Resolve the cases routed to you. The worked examples explain how illustrative disagreements are recorded."
+      exampleCount={workspace.training.length}
+      examples={<Training training={workspace.training} />}
+    >
+      <div className="workspace-grid">
+        <aside className="panel" aria-label="Adjudication queue">
+          <div className="panel-header">
+            <span className="section-label">Routed units</span>
+            <span className="muted">Tie-breaker only</span>
+          </div>
+          <ul className="queue-list">
+            {workspace.queue.map((q) => (
+              <li key={q.unitId}>
+                <button
+                  className={`queue-item${selected === q.unitId ? ' selected' : ''}`}
+                  aria-current={selected === q.unitId ? 'true' : undefined}
+                  onClick={() => onSelect(q.unitId)}
+                >
+                  <span className="queue-icon">
+                    <Icon name={q.adjudicated ? 'check' : 'file'} size={13} />
+                  </span>
+                  <span className="queue-copy">
+                    <strong className="mono">{q.unitId}</strong>
+                    <span className="queue-meta">
+                      <span>{q.mappingLabel.replace(/ \(.*/, '')}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className={`status ${q.adjudicated ? 'complete' : 'draft'}`}>
+                        {q.adjudicated ? 'Decided' : 'Needs a decision'}
+                      </span>
                     </span>
                   </span>
-                </span>
-              </button>
-            </li>
-          ))}
-          {!workspace.queue.length && (
-            <li className="muted">
-              Nothing to decide. A unit arrives here when one reviewer agrees and the other
-              disagrees, or exactly one cannot tell.
-            </li>
+                </button>
+              </li>
+            ))}
+            {!workspace.queue.length && (
+              <li className="muted">
+                Nothing to decide. A unit arrives here when one reviewer agrees and the other
+                disagrees, or exactly one cannot tell.
+              </li>
+            )}
+          </ul>
+        </aside>
+        <div>
+          {error && (
+            <div className="notice error" role="alert">
+              {error}
+            </div>
           )}
-        </ul>
-      </aside>
-      <div>
-        <Banner />
-        {error && (
-          <div className="notice error" role="alert">
-            {error}
-          </div>
-        )}
-        {shown ? (
-          <>
-            <Packet packet={shown.packet} ids />
-            <section className="panel" aria-label="Reviewer answers">
-              <div className="panel-header">
-                <span className="section-label">Both effective answers</span>
-              </div>
-              <div className="panel-body">
-                <div className="response-grid">
-                  {shown.answers.map((a) => (
-                    <div
-                      className="human-response"
-                      key={a.reviewerSlot}
-                      data-testid={`mu7-slot-${a.reviewerSlot}`}
-                    >
-                      <h3>Reviewer {a.reviewerSlot}</h3>
-                      <p>
-                        <strong>{answerLabel(a.answer)}</strong>
-                        {a.reasonCode ? `, ${a.reasonCode}` : ''}
-                        {a.uncertain ? ' (uncertain)' : ''}
-                      </p>
-                      {a.note && <p className="muted">{a.note}</p>}
-                    </div>
-                  ))}
+          {shown ? (
+            <>
+              <Packet packet={shown.packet} ids />
+              <section className="panel" aria-label="Reviewer answers">
+                <div className="panel-header">
+                  <span className="section-label">Both effective answers</span>
                 </div>
-                {shown.adjudication ? (
-                  <div className="notice" data-testid="mu7-adjudication">
-                    <strong>
-                      {shown.adjudication.status === 'UNRESOLVED_ESCALATED'
-                        ? 'Marked unresolved'
-                        : `Resolved: ${answerLabel(shown.adjudication.decision)}, ${
-                            shown.adjudication.basis === 'NEITHER'
-                              ? 'adopting neither answer'
-                              : `adopting ${readable(shown.adjudication.basis)}`
-                          }`}
-                    </strong>
-                    {shown.adjudication.rationale}
+                <div className="panel-body">
+                  <div className="response-grid">
+                    {shown.answers.map((a) => (
+                      <div
+                        className="human-response"
+                        key={a.reviewerSlot}
+                        data-testid={`mu7-slot-${a.reviewerSlot}`}
+                      >
+                        <h3>Reviewer {a.reviewerSlot}</h3>
+                        <p>
+                          <strong>{answerLabel(a.answer)}</strong>
+                          {a.reasonCode ? `, ${reasonLabel(a.reasonCode)}` : ''}
+                          {a.uncertain ? ' (uncertain)' : ''}
+                        </p>
+                        {a.note && <p className="muted">{a.note}</p>}
+                      </div>
+                    ))}
                   </div>
-                ) : shown.referenceLocked ? (
-                  <p className="muted">The reference is locked.</p>
-                ) : (
-                  <>
-                    <div className="decision-list" role="radiogroup" aria-label="Outcome">
-                      <label
-                        aria-label="Resolve"
-                        className={`decision-option${form.status === 'DISCORDANT_RESOLVED' ? ' chosen' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="mu7-status"
-                          checked={form.status === 'DISCORDANT_RESOLVED'}
-                          onChange={() =>
-                            setForm({
-                              ...form,
-                              status: 'DISCORDANT_RESOLVED',
-                              basis: suggestedBasis(form.decision ?? 'AGREE'),
-                            })
-                          }
-                        />
-                        <span>
-                          <strong>Resolve</strong>
-                          <small>
-                            Record Agree or Disagree and the reviewer whose answer you adopt.
-                          </small>
-                        </span>
-                      </label>
-                      <label
-                        aria-label="Mark unresolved"
-                        className={`decision-option${form.status === 'UNRESOLVED_ESCALATED' ? ' chosen' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="mu7-status"
-                          checked={form.status === 'UNRESOLVED_ESCALATED'}
-                          onChange={() => setForm({ ...form, status: 'UNRESOLVED_ESCALATED' })}
-                        />
-                        <span>
-                          <strong>Mark unresolved</strong>
-                          <small>The registry does not settle it; no decision is recorded.</small>
-                        </span>
-                      </label>
+                  {shown.adjudication ? (
+                    <div className="notice" data-testid="mu7-adjudication">
+                      <strong>
+                        {shown.adjudication.status === 'UNRESOLVED_ESCALATED'
+                          ? 'Marked unresolved'
+                          : `Resolved: ${answerLabel(shown.adjudication.decision)}, ${
+                              shown.adjudication.basis === 'NEITHER'
+                                ? 'adopting neither answer'
+                                : `adopting ${readable(shown.adjudication.basis)}`
+                            }`}
+                      </strong>
+                      {shown.adjudication.rationale}
                     </div>
-                    {form.status === 'DISCORDANT_RESOLVED' && (
-                      <>
-                        <label className="field">
-                          <span className="form-label">Decision</span>
-                          <select
-                            value={form.decision ?? 'AGREE'}
-                            onChange={(e) => {
-                              const decision = e.target.value as 'AGREE' | 'DISAGREE';
-                              setForm({ ...form, decision, basis: suggestedBasis(decision) });
-                            }}
-                          >
-                            <option value="AGREE">Agree: our assignment is right</option>
-                            <option value="DISAGREE">Disagree: our assignment is not right</option>
-                          </select>
+                  ) : shown.referenceLocked ? (
+                    <p className="muted">The reference is locked.</p>
+                  ) : (
+                    <>
+                      <div className="decision-list" role="radiogroup" aria-label="Outcome">
+                        <label
+                          aria-label="Resolve"
+                          className={`decision-option${form.status === 'DISCORDANT_RESOLVED' ? ' chosen' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="mu7-status"
+                            checked={form.status === 'DISCORDANT_RESOLVED'}
+                            onChange={() =>
+                              setForm({
+                                ...form,
+                                status: 'DISCORDANT_RESOLVED',
+                                basis: suggestedBasis(form.decision ?? 'AGREE'),
+                              })
+                            }
+                          />
+                          <span>
+                            <strong>Resolve</strong>
+                            <small>
+                              Record Agree or Disagree and the reviewer whose answer you adopt.
+                            </small>
+                          </span>
                         </label>
-                        {form.decision === 'DISAGREE' && (
+                        <label
+                          aria-label="Mark unresolved"
+                          className={`decision-option${form.status === 'UNRESOLVED_ESCALATED' ? ' chosen' : ''}`}
+                        >
+                          <input
+                            type="radio"
+                            name="mu7-status"
+                            checked={form.status === 'UNRESOLVED_ESCALATED'}
+                            onChange={() => setForm({ ...form, status: 'UNRESOLVED_ESCALATED' })}
+                          />
+                          <span>
+                            <strong>Mark unresolved</strong>
+                            <small>The registry does not settle it; no decision is recorded.</small>
+                          </span>
+                        </label>
+                      </div>
+                      {form.status === 'DISCORDANT_RESOLVED' && (
+                        <>
                           <label className="field">
-                            <span className="form-label">Reason code</span>
+                            <span className="form-label">Decision</span>
                             <select
-                              value={form.reasonCode ?? ''}
-                              onChange={(e) =>
-                                setForm({ ...form, reasonCode: e.target.value || null })
-                              }
+                              value={form.decision ?? 'AGREE'}
+                              onChange={(e) => {
+                                const decision = e.target.value as 'AGREE' | 'DISAGREE';
+                                setForm({ ...form, decision, basis: suggestedBasis(decision) });
+                              }}
                             >
-                              <option value="">Choose the reason that fits best</option>
-                              {shown.reasonCodes.map((r) => (
-                                <option key={r.code} value={r.code}>
-                                  {r.code}: {MU7_REASON_MEANING[r.code] ?? r.meaning}
-                                </option>
-                              ))}
+                              <option value="AGREE">Agree: our assignment is right</option>
+                              <option value="DISAGREE">
+                                Disagree: our assignment is not right
+                              </option>
                             </select>
                           </label>
-                        )}
-                        <label className="field">
-                          <span className="form-label">Basis</span>
-                          <select
-                            value={form.basis}
-                            onChange={(e) =>
-                              setForm({ ...form, basis: e.target.value as AdjForm['basis'] })
-                            }
-                          >
-                            <option value="REVIEWER_1">Reviewer 1</option>
-                            <option value="REVIEWER_2">Reviewer 2</option>
-                            <option value="NEITHER">Neither</option>
-                          </select>
-                        </label>
-                      </>
-                    )}
-                    <label className="field">
-                      <span className="form-label">Why the reviewers differed (optional)</span>
-                      <select
-                        value={form.disagreementReasonCode ?? ''}
-                        onChange={(e) =>
-                          setForm({ ...form, disagreementReasonCode: e.target.value || null })
-                        }
-                      >
-                        <option value="">Not recorded</option>
-                        {shown.disagreementReasons.map((r) => (
-                          <option key={r} value={r}>
-                            {readable(r)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="field">
-                      <span className="form-label">Rationale</span>
-                      <textarea
-                        value={form.rationale}
-                        onChange={(e) => setForm({ ...form, rationale: e.target.value })}
-                        rows={3}
-                        maxLength={4000}
-                      />
-                    </label>
-                    <div className="button-row">
-                      <button
-                        className="button"
-                        disabled={busy || form.rationale.trim().length < 3}
-                        onClick={decide}
-                      >
-                        Record the tie-break
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </section>
-          </>
-        ) : (
-          <div className="panel empty-state">Select a routed unit.</div>
-        )}
+                          {form.decision === 'DISAGREE' && (
+                            <label className="field">
+                              <span className="form-label">Reason</span>
+                              <select
+                                aria-describedby="mu7-adjudicator-reason-help"
+                                value={form.reasonCode ?? ''}
+                                onChange={(e) =>
+                                  setForm({ ...form, reasonCode: e.target.value || null })
+                                }
+                              >
+                                <option value="">Choose the reason that fits best</option>
+                                {shown.reasonCodes.map((r) => (
+                                  <option key={r.code} value={r.code}>
+                                    {reasonLabel(r.code)}
+                                  </option>
+                                ))}
+                              </select>
+                              <span className="form-hint" id="mu7-adjudicator-reason-help">
+                                {shown.reasonCodes.find((r) => r.code === form.reasonCode)?.meaning}
+                              </span>
+                            </label>
+                          )}
+                          <label className="field">
+                            <span className="form-label">Basis</span>
+                            <select
+                              value={form.basis}
+                              onChange={(e) =>
+                                setForm({ ...form, basis: e.target.value as AdjForm['basis'] })
+                              }
+                            >
+                              <option value="REVIEWER_1">Reviewer 1</option>
+                              <option value="REVIEWER_2">Reviewer 2</option>
+                              <option value="NEITHER">Neither</option>
+                            </select>
+                          </label>
+                        </>
+                      )}
+                      <label className="field">
+                        <span className="form-label">Why the reviewers differed (optional)</span>
+                        <select
+                          value={form.disagreementReasonCode ?? ''}
+                          onChange={(e) =>
+                            setForm({ ...form, disagreementReasonCode: e.target.value || null })
+                          }
+                        >
+                          <option value="">Not recorded</option>
+                          {shown.disagreementReasons.map((r) => (
+                            <option key={r} value={r}>
+                              {readable(r)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="field">
+                        <span className="form-label">Rationale</span>
+                        <textarea
+                          value={form.rationale}
+                          onChange={(e) => setForm({ ...form, rationale: e.target.value })}
+                          rows={3}
+                          maxLength={4000}
+                        />
+                      </label>
+                      <div className="button-row">
+                        <button
+                          className="button"
+                          disabled={busy || form.rationale.trim().length < 3}
+                          onClick={decide}
+                        >
+                          Record the tie-break
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </section>
+            </>
+          ) : (
+            <div className="panel empty-state">Select a routed unit.</div>
+          )}
+        </div>
       </div>
-    </div>
+    </PracticeSections>
   );
 }
 

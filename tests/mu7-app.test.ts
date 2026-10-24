@@ -86,6 +86,11 @@ test('v7 synthetic pilot through the application service, end to end', async () 
   );
   inv = await mu7AdminAction(investigator, { action: 'import-training' });
   assert.equal(inv.counts.trainingUnits, 3);
+  assert.equal(inv.training.length, 3);
+  const trainingAdj = await ws<Mu7AdjudicatorWorkspace>(adjudicator);
+  assert.equal(trainingAdj.training.length, 3);
+  assert.equal(trainingAdj.queue.length, 0, 'examples do not expose actual answers before routing');
+  assert.doesNotMatch(JSON.stringify(trainingAdj), hiddenFromReviewers);
   inv = await mu7AdminAction(investigator, { action: 'assign-pilot' });
   assert.equal(inv.counts.pilotQueue, 24);
   assert.equal(inv.pilotReviewers.length, 2);

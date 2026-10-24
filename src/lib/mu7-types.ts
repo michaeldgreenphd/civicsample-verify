@@ -200,6 +200,7 @@ export interface Mu7AdjudicationQueueItem {
 }
 export interface Mu7AdjudicatorWorkspace {
   kind: 'adjudicator';
+  training: Mu7TrainingView[];
   designRecorded: boolean;
   queue: Mu7AdjudicationQueueItem[];
 }
@@ -247,6 +248,7 @@ export interface Mu7RoutingCheck {
 }
 export interface Mu7InvestigatorWorkspace {
   kind: 'investigator';
+  training: Mu7TrainingView[];
   design: {
     designVersion: string;
     assignmentSetId: string;
