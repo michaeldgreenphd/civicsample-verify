@@ -49,7 +49,9 @@ text (OQ-04) are pending (gates G-OQ-03 and G-OQ-04); the investigator adds them
 - COVID-19
 - Schizophrenia
 - Hypertension
-- Pain (descriptive row)
+- Pain
+
+Pain: the row holds trials with the MeSH heading Pain. Agree when the trial studies pain of any kind (for example acute, postoperative, procedural or chronic pain), in any population; judge whether pain is the condition studied, not how long it lasts.
 
 ## 4. Reason codes
 
