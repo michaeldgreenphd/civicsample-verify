@@ -15,7 +15,7 @@
     "test:e2e": "playwright test",
     "check:fixtures": "node scripts/check-fixtures.mjs",
     "check": "npm run typecheck && npm run lint && npm test && npm run check:fixtures && npm run check:leakage:v4 && npm run check:leakage:v5 && npm run check:leakage:v7",
-    "test:analysis": "MU7_ALLOW_NO_DB_BUNDLE=1 python3 -m pytest -q analysis && VERIFY_ANALYSIS_PYTHON=${VERIFY_ANALYSIS_PYTHON:-python3} node --import tsx --test tests/mu7-analysis.test.ts",
+    "test:analysis": "MU7_ALLOW_NO_DB_BUNDLE=1 MU8_ALLOW_NO_DB_BUNDLE=1 python3 -m pytest -q analysis && VERIFY_ANALYSIS_PYTHON=${VERIFY_ANALYSIS_PYTHON:-python3} node --import tsx --test tests/mu7-analysis.test.ts",
     "prepare": "git config core.hooksPath .githooks",
     "test:handoff": "node scripts/test-handoff.mjs",
     "test:postgres": "node --import tsx --test tests/postgres-native.test.ts",

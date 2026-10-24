@@ -1,0 +1,40 @@
+{
+  "area_categories_in_cohort_rank_order": [
+    "PATHOLOGICAL",
+    "ONCOLOGY",
+    "NEUROLOGICAL",
+    "IMMUNE",
+    "MENTAL_HEALTH",
+    "RESPIRATORY",
+    "INFECTIOUS",
+    "METABOLIC",
+    "UROGENITAL",
+    "CARDIOVASCULAR"
+  ],
+  "mapping_labels": {
+    "AREA|PATHOLOGICAL": "Therapeutic area: Pathological conditions, signs and symptoms (parent MeSH category C23 Pathological Conditions, Signs and Symptoms)",
+    "AREA|ONCOLOGY": "Therapeutic area: Oncology (parent MeSH category C04 Neoplasms)",
+    "AREA|NEUROLOGICAL": "Therapeutic area: Neurological (parent MeSH category C10 Nervous System Diseases)",
+    "AREA|IMMUNE": "Therapeutic area: Immune (parent MeSH category C20 Immune System Diseases)",
+    "AREA|MENTAL_HEALTH": "Therapeutic area: Mental health (MeSH F03 Mental Disorders, and the heading Depression (D003863) by the study rule)",
+    "AREA|RESPIRATORY": "Therapeutic area: Respiratory (parent MeSH category C08 Respiratory Tract Diseases)",
+    "AREA|INFECTIOUS": "Therapeutic area: Infectious (parent MeSH category C01 Infections)",
+    "AREA|METABOLIC": "Therapeutic area: Metabolic (parent MeSH category C18 Nutritional and Metabolic Diseases)",
+    "AREA|UROGENITAL": "Therapeutic area: Urogenital (parent MeSH category C12 Urogenital Diseases)",
+    "AREA|CARDIOVASCULAR": "Therapeutic area: Cardiovascular (parent MeSH category C14 Cardiovascular Diseases)",
+    "ROW|CAN_ALL": "Figure 2 condition row: Neoplasms",
+    "ROW|DIAB": "Figure 2 condition row: Diabetes Mellitus",
+    "ROW|DEP": "Figure 2 condition row: Depression",
+    "ROW|OBE": "Figure 2 condition row: Obesity",
+    "ROW|AST": "Figure 2 condition row: Asthma",
+    "ROW|COPD": "Figure 2 condition row: Pulmonary Disease, Chronic Obstructive",
+    "ROW|COV": "Figure 2 condition row: COVID-19",
+    "ROW|SCZ": "Figure 2 condition row: Schizophrenia",
+    "ROW|HTN": "Figure 2 condition row: Hypertension",
+    "ROW|PAIN": "Figure 2 condition row: Pain",
+    "SG|RULE_D_KEPT": "Rule D, diabetes type",
+    "SG|RULE_D_REMOVED": "Rule D, diabetes type",
+    "SG|RULE_K_KEPT": "Rule K, malignancy",
+    "SG|RULE_K_REMOVED": "Rule K, malignancy"
+  }
+}
