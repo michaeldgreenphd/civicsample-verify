@@ -264,7 +264,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
-  assert.equal(plan.schema.expectedFinalVersion, '7.0.7-v7-freeze-gates-v8-4');
+  assert.equal(plan.schema.expectedFinalVersion, '8.0.0-v8-design-foundation');
   assert.equal(plan.database, null);
   const withDb = config({
     databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,

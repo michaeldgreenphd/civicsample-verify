@@ -55,6 +55,8 @@ export const syntheticNct = (n: number) => `NCT${'99000'}${String(n).padStart(3,
 export type ChainOptions = {
   /** Hosted-chain files to leave out (to reproduce a defect before its fix migration). */
   without?: string[];
+  /** Synthetic design version override for v8 compatibility tests; never operational data. */
+  designVersion?: string;
   existing?: FixtureDb;
   /** Stop the pilot after the adjudications, before the pilot lock and sign-off. */
   stopAfterPilotAdjudication?: boolean;
@@ -76,6 +78,7 @@ export type ChainOptions = {
 };
 /** Migrations that build on another: leaving one out leaves its dependents out too. */
 const DEPENDENTS: Record<string, string[]> = {
+  'migrations/0032_v7_freeze_gates_v8_4.sql': ['migrations/0033_v8_design_foundation.sql'],
   'migrations/0025_v7_review_fixes.sql': ['migrations/0026_v7_lifecycle_and_gates.sql'],
   'migrations/0026_v7_lifecycle_and_gates.sql': [
     'migrations/0028_v7_gate_specifications_v8_1.sql',
@@ -412,8 +415,8 @@ export async function specifyAndApproveGates(db: FixtureDb, gates: 'all' | strin
   }
 }
 /** The design record call of the fixture (for tests that record it themselves). */
-export const recordDesignSql = () =>
-  `select public.rpc_mu7_record_design(${lit({ design_version: DESIGN_VERSION, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })}) as d`;
+export const recordDesignSql = (designVersion = DESIGN_VERSION) =>
+  `select public.rpc_mu7_record_design(${lit({ design_version: designVersion, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })}) as d`;
 export const phase = (t: string, o: Record<string, unknown> = {}) =>
   `select public.rpc_mu7_phase('${t}', ${lit({ attestation: ATT, ...o })}) as e`;
 export const assignmentOf = (db: FixtureDb, pseudo: string, unit: string) =>
@@ -504,7 +507,7 @@ export async function signedOffPilot(
   await must(
     db,
     'inv',
-    `select public.rpc_mu7_record_design(${lit({ design_version: DESIGN_VERSION, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })})`,
+    `select public.rpc_mu7_record_design(${lit({ design_version: options.designVersion ?? DESIGN_VERSION, assignment_set_id: SET, overlap_setting: 'ALLOW', n_primary_planned: 6, n_subgroup_planned: 2, attestation: ATT })})`,
     'record design',
   );
   if (options.stopAfter === 'design') return { db, PT1, PT2 };
@@ -638,7 +641,7 @@ export async function formalOpen(options: ChainOptions = {}): Promise<FormalOpen
     await must(
       db,
       'inv',
-      `select public.rpc_mu7_import_unit(${lit(importObj(u))})`,
+      `select public.rpc_mu7_import_unit(${lit({ ...importObj(u), design: { ...designRow(u), design_version: options.designVersion ?? DESIGN_VERSION } })})`,
       `import ${u.uid}`,
     );
   if (await hasGateRequirements(db)) await specifyAndApproveGates(db, options.gates ?? 'all');
