@@ -116,7 +116,8 @@ try {
     const m30 = join(root, 'migrations/0030_v7_current_unit_freeze_gates.sql');
     const m32 = join(root, 'migrations/0032_v7_freeze_gates_v8_4.sql');
     const m33 = join(root, 'migrations/0033_v8_design_foundation.sql');
-    const m24to28 = await concat('nnnn_0024_to_0033.sql', [
+    const m34 = join(root, 'migrations/0034_v8_synthetic_identifiers.sql');
+    const m24to28 = await concat('nnnn_0024_to_0034.sql', [
       m24,
       m25,
       m26,
@@ -126,6 +127,7 @@ try {
       m30,
       m32,
       m33,
+      m34,
       gateShim,
     ]);
     const chainApp0004to0011 = await concat('chain_app_0004_to_0011.sql', [...app, m11]);
@@ -150,6 +152,7 @@ try {
       ['0030', m30],
       ['0032', m32],
       ['0033', m33],
+      ['0034', m34],
     ]) {
       report.schema_sha256[label] = createHash('sha256')
         .update(await readFile(file))
@@ -225,7 +228,7 @@ try {
           ['MU7-SCHEMA-01', 'MU7-ADD-01'],
         ],
         [
-          'v7-on-app-chain-through-0033',
+          'v7-on-app-chain-through-0034',
           'v7',
           [
             shim,
