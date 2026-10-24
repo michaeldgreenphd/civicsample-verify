@@ -24,6 +24,7 @@ import {
 import type { Actor } from '@/lib/types';
 import { Icon } from '@/components/icons';
 import { PracticeSections } from './practice-sections';
+import { MAPPING_FAMILY_LABELS, Mu7ReviewGuide } from './mu7-review-guide';
 import styles from './practice-sections.module.css';
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
@@ -89,6 +90,7 @@ export function Mu7Panel({ user }: { user: Actor }) {
     return (
       <PracticeSections
         workLabel="Practice setup"
+        guide={<Mu7ReviewGuide audience="investigator" />}
         description="Manage the synthetic practice and return to the worked examples at any time."
         exampleCount={workspace.training.length}
         examples={<Training training={workspace.training} />}
@@ -140,8 +142,8 @@ function Packet({ packet, ids = false }: { packet: Mu7Packet; ids?: boolean }) {
   return (
     <section className="panel" aria-label="Unit under review">
       <div className="panel-header">
-        <span className="section-label">
-          {u.unit_role === 'SUBGROUP' ? 'Subgroup unit' : 'Our assignment'}
+        <span className="section-label" data-testid={tid('mu7-family-label')}>
+          {MAPPING_FAMILY_LABELS[u.family]}
         </span>
         <span className="muted mono" data-testid={tid('mu7-unit-id')}>
           {u.unit_id}
@@ -415,6 +417,7 @@ function Reviewer({
   return (
     <PracticeSections
       workLabel="Practice cases"
+      guide={<Mu7ReviewGuide audience="reviewer" />}
       description="Read the trial evidence, choose an answer, then save it. Consult the worked examples whenever you need them."
       exampleCount={workspace.training.length}
       progress={{
@@ -682,6 +685,7 @@ function Adjudicator({
   return (
     <PracticeSections
       workLabel="Adjudication"
+      guide={<Mu7ReviewGuide audience="adjudicator" />}
       description="Resolve the cases routed to you. The worked examples explain how illustrative disagreements are recorded."
       exampleCount={workspace.training.length}
       examples={<Training training={workspace.training} />}

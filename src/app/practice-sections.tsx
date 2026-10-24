@@ -3,7 +3,7 @@
 import { useId, useRef, useState, type ReactNode } from 'react';
 import styles from './practice-sections.module.css';
 
-/** Keep both panels mounted: consulting an example must not erase an unfinished answer. */
+/** Keep panels mounted: consulting guidance must not erase an unfinished answer. */
 export function PracticeSections({
   workLabel,
   description,
@@ -11,6 +11,7 @@ export function PracticeSections({
   progress,
   children,
   examples,
+  guide,
 }: {
   workLabel: string;
   description: string;
@@ -18,11 +19,12 @@ export function PracticeSections({
   progress?: { answered: number; total: number };
   children: ReactNode;
   examples: ReactNode;
+  guide?: ReactNode;
 }) {
   const id = useId();
   const [active, setActive] = useState(0);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
-  const labels = [workLabel, 'Worked examples'];
+  const labels = [workLabel, 'Worked examples', ...(guide ? ['Review guide'] : [])];
   function activate(index: number) {
     setActive(index);
     tabs.current[index]?.focus();
@@ -67,10 +69,12 @@ export function PracticeSections({
                 event.key === 'Home'
                   ? 0
                   : event.key === 'End'
-                    ? 1
-                    : event.key === 'ArrowRight' || event.key === 'ArrowLeft'
-                      ? 1 - i
-                      : null;
+                    ? labels.length - 1
+                    : event.key === 'ArrowRight'
+                      ? (i + 1) % labels.length
+                      : event.key === 'ArrowLeft'
+                        ? (i - 1 + labels.length) % labels.length
+                        : null;
               if (next !== null) {
                 event.preventDefault();
                 activate(next);
@@ -123,6 +127,20 @@ export function PracticeSections({
           </div>
         )}
       </div>
+      {guide && (
+        <div
+          role="tabpanel"
+          id={`${id}-panel-2`}
+          aria-labelledby={`${id}-tab-2`}
+          tabIndex={0}
+          hidden={active !== 2}
+        >
+          {guide}
+          <button type="button" className="button secondary" onClick={() => activate(0)}>
+            Back to {workLabel.toLowerCase()}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

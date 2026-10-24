@@ -166,6 +166,11 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await adjPage.getByRole('tab', { name: 'Worked examples' }).click();
     await expect(adjPage.getByRole('group', { name: 'Choose a worked example' })).toBeVisible();
     await expect(adjPage.getByTestId('mu7-slot-1')).toHaveCount(0);
+    await adjPage.getByRole('tab', { name: 'Review guide' }).click();
+    await expect(adjPage.getByRole('article')).toContainText(
+      'You do not enter a third independent reviewer answer.',
+    );
+    await expect(adjPage.getByTestId('mu7-slot-1')).toHaveCount(0);
     await adjPage.getByRole('tab', { name: 'Adjudication', exact: true }).click();
     const aQueue = await queueOf(a);
     const disagreeUnit = aQueue.find(
@@ -174,6 +179,9 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     const pos = aQueue.indexOf(disagreeUnit) + 1;
     await aPage.getByRole('button', { name: new RegExp(`^Unit ${pos}:`) }).click();
     await expect(aPage.getByTestId('mu7-unit-id')).toHaveText(disagreeUnit.unitId);
+    await expect(aPage.getByTestId('mu7-family-label')).toHaveText(
+      /Therapeutic area|Condition row/,
+    );
     await expect(aPage.getByTestId('mu7-notice')).toContainText(
       'Synthetic unit · excluded from every statistic',
     );
@@ -217,8 +225,48 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
         await aPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBe(true);
     }
-    await aPage.setViewportSize({ width: 390, height: 844 });
+    // The guide is a third read-only panel, with full keyboard wrapping and preserved input.
+    await aPage.setViewportSize({ width: 1280, height: 900 });
     await aPage.getByRole('tab', { name: 'Worked examples' }).focus();
+    await aPage.keyboard.press('ArrowRight');
+    const guideTab = aPage.getByRole('tab', { name: 'Review guide', exact: true });
+    await expect(guideTab).toBeFocused();
+    const guide = aPage.getByRole('article', { name: 'Synthetic practice review guide' });
+    await expect(guide).toContainText('practice-guide-1.0');
+    await expect(guide.getByRole('heading', { level: 3 })).toHaveText(
+      'Save an answer, then move to the next unit',
+    );
+    for (const label of ['Therapeutic area', 'Condition row', 'Subgroup decision'])
+      await expect(guide.getByText(label, { exact: true })).toBeVisible();
+    expect(
+      (await new AxeBuilder({ page: aPage }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations,
+    ).toEqual([]);
+    await aPage.screenshot({ path: 'test-results/mu7-guide-desktop.png', fullPage: true });
+    for (const width of [320, 390, 640]) {
+      await aPage.setViewportSize({ width, height: 844 });
+      expect(
+        await aPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      const box = await guideTab.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+      if (width === 390) {
+        await aPage.screenshot({ path: 'test-results/mu7-guide-mobile.png', fullPage: true });
+        expect(
+          (await new AxeBuilder({ page: aPage }).withTags(['wcag2a', 'wcag2aa']).analyze())
+            .violations,
+        ).toEqual([]);
+      }
+    }
+    await guideTab.focus();
+    await aPage.keyboard.press('ArrowRight');
+    await expect(aPage.getByRole('tab', { name: 'Practice cases', exact: true })).toBeFocused();
+    await aPage.keyboard.press('ArrowLeft');
+    await expect(guideTab).toBeFocused();
+    await aPage.keyboard.press('Home');
+    await aPage.keyboard.press('End');
+    await expect(guideTab).toBeFocused();
+    await aPage.setViewportSize({ width: 390, height: 844 });
+
     await aPage.keyboard.press('Home');
     await expect(aPage.getByRole('tab', { name: 'Practice cases', exact: true })).toBeFocused();
     await expect(aPage.getByRole('radio', { name: 'Disagree', exact: true })).toBeChecked();
