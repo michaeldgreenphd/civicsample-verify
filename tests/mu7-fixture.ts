@@ -80,10 +80,16 @@ const DEPENDENTS: Record<string, string[]> = {
   'migrations/0026_v7_lifecycle_and_gates.sql': [
     'migrations/0028_v7_gate_specifications_v8_1.sql',
     'migrations/0029_v7_versioned_gate_approvals.sql',
+    'migrations/0032_v7_freeze_gates_v8_4.sql',
   ],
+  // 0032 adds later requirement versions (G-PAIN-01 version 3 follows 0028's version 2) and relies on
+  // the versioned approvals of 0029 and the per-unit check of 0030.
+  'migrations/0028_v7_gate_specifications_v8_1.sql': ['migrations/0032_v7_freeze_gates_v8_4.sql'],
   'migrations/0029_v7_versioned_gate_approvals.sql': [
     'migrations/0030_v7_current_unit_freeze_gates.sql',
+    'migrations/0032_v7_freeze_gates_v8_4.sql',
   ],
+  'migrations/0030_v7_current_unit_freeze_gates.sql': ['migrations/0032_v7_freeze_gates_v8_4.sql'],
 };
 function withDependents(without: string[]): string[] {
   const out = new Set(without);

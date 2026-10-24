@@ -2061,7 +2061,8 @@ test('0010 loader upgrade preserves existing locked references and historical pi
       [j({ title: 'Preserved fictional packet' })],
     );
     // Every pre-existing audit row must be unchanged. The only rows a later migration may add are
-    // its own audited records (0028 specifies two study-decision gates); they are checked below.
+    // its own audited records (0028 specifies two study-decision gates; 0032 adds four requirement
+    // versions); they are checked below.
     const query = `select jsonb_build_object(
       'judgments',(select jsonb_agg(to_jsonb(a) order by adjudication_id) from public.adjudications a),
       'audit',(select jsonb_agg(to_jsonb(a) order by audit_id) from public.audit_log a where a.entity_table <> 'mu7_gate_requirements'),
@@ -2078,11 +2079,11 @@ test('0010 loader upgrade preserves existing locked references and historical pi
         { cwd: process.cwd(), env: { ...process.env, VERIFY_DB_DIR: dir } },
       );
       const after = JSON.parse(result.stdout.trim());
-      // The two requirement records 0028 writes are its only additions to the audit log.
+      // The requirement records of 0028 (two) and 0032 (four) are the only additions to the audit log.
       const expected = before.map((r) => ({
         state: {
           ...(r as { state: Record<string, unknown> }).state,
-          migrationAudit: ['G-MH-V53', 'G-PAIN-01'],
+          migrationAudit: ['G-EST-01', 'G-MH-V53', 'G-OQ-03', 'G-OQ-04', 'G-PAIN-01', 'G-PAIN-01'],
         },
       }));
       assert.deepEqual(after, { versions: 1, records: expected });

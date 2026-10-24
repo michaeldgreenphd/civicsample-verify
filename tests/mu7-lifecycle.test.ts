@@ -246,6 +246,10 @@ test('finding 3 reproduced without 0026: the formal phase opens with G-PAIN-01 a
 
 const FREEZE_GATES = ['G-MH-V53', 'G-OVERLAP-01', 'G-PROV-01', 'G-TEXT-01'];
 const OPEN_ONLY_GATES = ['G-EST-01', 'G-OQ-03', 'G-OQ-04', 'G-PAIN-01'];
+// 0026's matrix. Since 0032, G-EST-01, G-OQ-03 and G-OQ-04 also hold the freeze, so the tests that
+// reach the freeze with only 0026's freeze gates approved run on the chain before 0032 (PRE_0032);
+// tests/mu7-gates-v8-4.test.ts covers the chain with 0032.
+const PRE_0032 = ['migrations/0032_v7_freeze_gates_v8_4.sql'];
 
 test('finding 3 with 0026: every documented gate is recorded as pending (0028 later specifies two), with no approval and nothing satisfied', async () => {
   const { db } = await signedOffPilot({ stopAfter: 'design' });
@@ -359,7 +363,11 @@ test('finding 3 fixed with 0026: a pending gate cannot be approved and the FORMA
 });
 
 test('finding 3 fixed with 0026: the formal phase stays closed until every opening gate is specified and approved', async () => {
-  const f = await formalOpen({ gates: ['G-PAIN-01', ...FREEZE_GATES], stopAfter: 'freeze' });
+  const f = await formalOpen({
+    gates: ['G-PAIN-01', ...FREEZE_GATES],
+    stopAfter: 'freeze',
+    without: PRE_0032,
+  });
   try {
     const open = await attempt(f.db, phase('FORMAL_OPENED'));
     assert.ok(!open.ok);
@@ -387,7 +395,11 @@ test('finding 3 fixed with 0026: the formal phase stays closed until every openi
 });
 
 test('finding 3 fixed with 0026: an approval counts only for the specified decision record it names, recorded after it', async () => {
-  const f = await formalOpen({ gates: ['G-PAIN-01', ...FREEZE_GATES], stopAfter: 'freeze' });
+  const f = await formalOpen({
+    gates: ['G-PAIN-01', ...FREEZE_GATES],
+    stopAfter: 'freeze',
+    without: PRE_0032,
+  });
   try {
     // Specified, but the approval names another record: refused (an approval cannot be replaced).
     await f.db.query(
@@ -407,7 +419,7 @@ test('finding 3 fixed with 0026: an approval counts only for the specified decis
     const missing = await attempt(f.db, `select public.rpc_mu7_approve_gate('G-EST-01', '${ATT}')`);
     assert.ok(!missing.ok, 'an approval without evidence is refused once the gate is specified');
     // A later re-specification makes an earlier approval stale for that gate.
-    const reSpecified = await formalOpen({ stopAfter: 'freeze' });
+    const reSpecified = await formalOpen({ stopAfter: 'freeze', without: PRE_0032 });
     try {
       await reSpecified.db.query(
         `insert into public.mu7_gate_requirements (gate_id, requirement_version, blocks, requirement_status, question, decision_reference, source)
@@ -430,10 +442,11 @@ test('0026 gate requirements: investigator-readable, reviewer-invisible, append-
   try {
     const { db: pilotDb } = await signedOffPilot({ existing: undefined, stopAfter: 'design' });
     try {
-      // The ten requirements of 0026 and the two specified versions of 0028.
+      // The ten requirements of 0026, the two specified versions of 0028 and the four versions of
+      // 0032 (G-OQ-03, G-OQ-04 and G-EST-01 version 2; G-PAIN-01 version 3).
       assert.equal(
         (await rows(pilotDb, 'inv', 'select gate_id from public.mu7_gate_requirements')).length,
-        12,
+        16,
       );
       assert.equal(
         (await rows(pilotDb, 'r1', 'select gate_id from public.mu7_gate_requirements')).length,

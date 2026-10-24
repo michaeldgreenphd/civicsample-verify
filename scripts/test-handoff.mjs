@@ -63,6 +63,8 @@ const migrationFiles = {
   m28: 'migrations/0028_v7_gate_specifications_v8_1.sql',
   m29: 'migrations/0029_v7_versioned_gate_approvals.sql',
   m30: 'migrations/0030_v7_current_unit_freeze_gates.sql',
+  // Engineering messages v8.3 and v8.4: three gates hold the freeze; G-PAIN-01 version 3.
+  m32: 'migrations/0032_v7_freeze_gates_v8_4.sql',
   // Test-only: lets the supplied suite (which predates 0026) reach every supplied behaviour.
   gateShim: 'supabase_test_shim/mu7x_gates_specified_test_only.sql',
 };
@@ -273,9 +275,9 @@ try {
     362,
     ['MU7-SCHEMA-01', 'MU7-ADD-01'],
   );
-  // The final chain: 0024 to 0030 with the test-only gate shim (the shim records a synthetic
-  // version of every requirement, after 0028's two, that blocks nothing).
-  concat(join(v7dir, 'nnnn_0024_to_0030.sql'), [
+  // The final chain: 0024 to 0032 (0031 adds no v7 object) with the test-only gate shim (the shim
+  // records a synthetic version of every requirement, after the migrations' own, that blocks nothing).
+  concat(join(v7dir, 'nnnn_0024_to_0032.sql'), [
     migrationFiles.m24,
     migrationFiles.m25,
     migrationFiles.m26,
@@ -283,10 +285,11 @@ try {
     migrationFiles.m28,
     migrationFiles.m29,
     migrationFiles.m30,
+    migrationFiles.m32,
     migrationFiles.gateShim,
   ]);
   run(
-    'v7-on-app-chain-through-0030',
+    'v7-on-app-chain-through-0032',
     v7dir,
     'rls_tests_v7.mjs',
     [
@@ -296,7 +299,7 @@ try {
       'chain_app_0004_to_0011.sql',
       m12,
       'chain_app_0013_to_0023.sql',
-      'nnnn_0024_to_0030.sql',
+      'nnnn_0024_to_0032.sql',
       `../../tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json`,
       `../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json`,
     ],
