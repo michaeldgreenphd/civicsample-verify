@@ -1,5 +1,5 @@
 import { MU7_ANSWER_TEXT, type Mu7Answer, type Mu7UnitBlock } from './mu7-types';
-import { MU81_REVIEWER_PROFILE_ID } from './mu81-reviewer-profile';
+import { MU81_REVIEWER_PROFILE_ID, isMu81ReviewerProfileId } from './mu81-reviewer-profile';
 
 /** Presentation helpers never change the stored packet or the submitted vocabulary. */
 export const PLAIN_LANGUAGE_PROFILE = MU81_REVIEWER_PROFILE_ID;
@@ -32,9 +32,9 @@ const REASON_LABELS: Record<string, string> = {
 };
 
 export function reasonLabel(code: string, profileId?: string | null): string {
-  if (code === 'ORGAN_OF_ORIGIN_ONLY' && profileId === PLAIN_LANGUAGE_PROFILE)
+  if (code === 'ORGAN_OF_ORIGIN_ONLY' && isMu81ReviewerProfileId(profileId))
     return 'Cancer origin, spread or course only';
-  if (code === 'PRECANCEROUS' && profileId === PLAIN_LANGUAGE_PROFILE)
+  if (code === 'PRECANCEROUS' && isMu81ReviewerProfileId(profileId))
     return 'Cyst, hamartoma or precancerous condition only';
   return REASON_LABELS[code] ?? readableCode(code).replace(/\bmesh\b/gi, 'MeSH');
 }
@@ -57,14 +57,13 @@ export function unitDisplay(unit: Mu7UnitBlock, profileId?: string | null) {
   const group = unit.parent_row_label?.replace(/\bMellitus\b/g, 'mellitus');
   // The revised guide judges inclusion. Older packets can make a narrower assertion (for
   // example malignancy), so the legacy question must continue to ask about that assertion.
-  const action =
-    profileId === PLAIN_LANGUAGE_PROFILE
-      ? excluded
-        ? 'exclude'
-        : included
-          ? 'include'
-          : null
-      : null;
+  const action = isMu81ReviewerProfileId(profileId)
+    ? excluded
+      ? 'exclude'
+      : included
+        ? 'include'
+        : null
+    : null;
   const question = action
     ? `Was it appropriate to ${action} this trial ${excluded ? 'from' : 'in'} the ${group ?? 'displayed condition'} group?`
     : unit.family === 'AREA'
@@ -120,7 +119,7 @@ export function unitDisplay(unit: Mu7UnitBlock, profileId?: string | null) {
 }
 
 export function answerMeaning(answer: Mu7Answer, profileId?: string | null): string {
-  if (profileId === PLAIN_LANGUAGE_PROFILE) {
+  if (isMu81ReviewerProfileId(profileId)) {
     if (answer === 'CANNOT_TELL')
       return 'The registry information lacks something you need to decide. Add a note identifying what is missing.';
     if (answer === 'AGREE') return 'The displayed classification is appropriate for this trial.';

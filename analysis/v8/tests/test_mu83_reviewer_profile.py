@@ -15,20 +15,22 @@ import performance_analysis_v8 as P  # noqa: E402
 GUIDE = Path(__file__).resolve().parents[3] / "docs/reviewer/REVIEWER_GUIDE_v81_r3.md"
 
 
-@pytest.fixture
-def profile(tmp_path):
-    guide = GUIDE.read_bytes()
-    assert hashlib.sha256(guide).hexdigest() == V83.GUIDE_SHA256
+@pytest.fixture(params=list(V83.REVIEWER_PROFILES))
+def profile(tmp_path, request):
+    profile_id = request.param
+    guide_sha256 = V83.REVIEWER_PROFILES[profile_id]
+    guide = GUIDE.with_name(f"REVIEWER_GUIDE_v81_{profile_id.rsplit('-', 1)[1]}.md").read_bytes()
+    assert hashlib.sha256(guide).hexdigest() == guide_sha256
     (tmp_path / V83.GUIDE_FILE).write_bytes(guide)
     version = "SYN-8-1-PROFILE-TEST"
-    binding = hashlib.sha256("|".join(["mu81-reviewer-profile-1", version, V83.PROFILE_ID,
-                                      V83.GUIDE_SHA256]).encode()).hexdigest()
+    binding = hashlib.sha256("|".join(["mu81-reviewer-profile-1", version, profile_id,
+                                      guide_sha256]).encode()).hexdigest()
     manifest = {
         "bundle_format_version": "8.3", "design": {"design_version": version},
-        "reviewer_profile": {"profile_id": V83.PROFILE_ID, "rubric_sha256": V83.GUIDE_SHA256,
+        "reviewer_profile": {"profile_id": profile_id, "rubric_sha256": guide_sha256,
                              "design_version": version, "binding_sha256": binding},
         "freeze": {"reviewer_profile_sha256": binding},
-        "files": {V83.GUIDE_FILE: V83.GUIDE_SHA256}, "row_counts": {V83.GUIDE_FILE: 1},
+        "files": {V83.GUIDE_FILE: guide_sha256}, "row_counts": {V83.GUIDE_FILE: 1},
     }
     return tmp_path, manifest
 

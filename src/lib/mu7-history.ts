@@ -1,7 +1,7 @@
 // Reproduce the database's existing hashes, never a new serialization of stored judgments.
 import { createHash } from 'node:crypto';
 import { MU7_REASON_MEANING } from './mu7-types';
-import { MU81_REVIEWER_PROFILE_ID } from './mu81-reviewer-profile';
+import { isMu81ReviewerProfileId } from './mu81-reviewer-profile';
 export const HISTORY_COLUMNS = [
   'unit_id',
   'mode',
@@ -61,7 +61,7 @@ export function verifyJudgmentHistory(
     check(
       r.answer === 'DISAGREE'
         ? Object.hasOwn(MU7_REASON_MEANING, r.reason_code) ||
-            (reviewerProfileId === MU81_REVIEWER_PROFILE_ID &&
+            (isMu81ReviewerProfileId(reviewerProfileId) &&
               r.reason_code === 'NONMALIGNANT_NEOPLASM_STUDIED')
         : r.reason_code === '',
     );

@@ -70,6 +70,7 @@ const migrationFiles = {
   m35: 'migrations/0035_v81_subtype_probability.sql',
   m36: 'migrations/0036_v81_judgment_history.sql',
   m37: 'migrations/0037_v81_reviewer_profile.sql',
+  m38: 'migrations/0038_v81_reviewer_guide_r4.sql',
   // Test-only: lets the supplied suite (which predates 0026) reach every supplied behaviour.
   gateShim: 'supabase_test_shim/mu7x_gates_specified_test_only.sql',
 };
@@ -282,7 +283,7 @@ try {
   );
   // The final chain: 0024 to 0034 (0031 adds no v7 object) with the test-only gate shim (the shim
   // records a synthetic version of every requirement, after the migrations' own, that blocks nothing).
-  concat(join(v7dir, 'nnnn_0024_to_0037.sql'), [
+  concat(join(v7dir, 'nnnn_0024_to_0038.sql'), [
     migrationFiles.m24,
     migrationFiles.m25,
     migrationFiles.m26,
@@ -296,10 +297,11 @@ try {
     migrationFiles.m35,
     migrationFiles.m36,
     migrationFiles.m37,
+    migrationFiles.m38,
     migrationFiles.gateShim,
   ]);
   run(
-    'v7-on-app-chain-through-0037',
+    'v7-on-app-chain-through-0038',
     v7dir,
     'rls_tests_v7.mjs',
     [
@@ -309,7 +311,7 @@ try {
       'chain_app_0004_to_0011.sql',
       m12,
       'chain_app_0013_to_0023.sql',
-      'nnnn_0024_to_0037.sql',
+      'nnnn_0024_to_0038.sql',
       `../../tests/handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json`,
       `../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json`,
     ],

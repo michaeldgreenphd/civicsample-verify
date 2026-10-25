@@ -1,4 +1,5 @@
 import type { Mu7InvestigatorWorkspace } from './mu7-types';
+import { MU81_REVIEWER_PROFILES } from './mu81-reviewer-profile';
 
 export interface PreparationCheck {
   id: string;
@@ -28,7 +29,9 @@ export function formalPreparation(w: Mu7InvestigatorWorkspace) {
       id: 'guide',
       label: 'Reviewer guide',
       state: guide ? 'recorded' : 'pending',
-      status: guide ? 'Revision 3 recorded' : 'Earlier guide or no binding',
+      status: guide
+        ? `Revision ${MU81_REVIEWER_PROFILES[guide.profileId].revision} recorded`
+        : 'Earlier guide or no binding',
       detail: guide
         ? 'The exact guide is bound to this workspace. Its scientific approval is tracked below.'
         : 'The revised guide must be bound before importing into a new workspace. Existing answers retain the guide used when they were recorded.',

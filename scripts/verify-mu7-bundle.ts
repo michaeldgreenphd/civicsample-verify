@@ -16,10 +16,7 @@ import {
   type Mu7ExportRole,
 } from '../src/lib/mu7-export';
 import { isMu81Design, mu7ReasonCodes } from '../src/lib/mu7-types';
-import {
-  MU81_REVIEWER_PROFILE_ID,
-  MU81_REVIEWER_GUIDE_SHA256,
-} from '../src/lib/mu81-reviewer-profile';
+import { matchesMu81ReviewerProfile } from '../src/lib/mu81-reviewer-profile';
 
 /** LF-delimited exporter CSV. A bare CR is field data in legacy exports, not a row separator. */
 function csvRecords(text: string): string[][] {
@@ -215,9 +212,8 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       !object(p) ||
       !sameKeys(p, ['profile_id', 'rubric_sha256', 'binding_sha256', 'design_version']) ||
       !object(m.design) ||
-      p.profile_id !== MU81_REVIEWER_PROFILE_ID ||
+      !matchesMu81ReviewerProfile(p.profile_id, p.rubric_sha256) ||
       p.design_version !== m.design.design_version ||
-      p.rubric_sha256 !== MU81_REVIEWER_GUIDE_SHA256 ||
       hash(guide) !== p.rubric_sha256 ||
       m.files['reviewer_guide.md'] !== p.rubric_sha256 ||
       m.row_counts['reviewer_guide.md'] !== 1 ||
@@ -350,7 +346,9 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
         records('subtype_observations.csv'),
         mode,
         m.snapshot,
-        format === '8.3' ? MU81_REVIEWER_PROFILE_ID : undefined,
+        format === '8.3' && object(m.reviewer_profile)
+          ? String(m.reviewer_profile.profile_id)
+          : undefined,
       );
       if (format === '8.3') {
         const byId = new Map(records('units.csv').map((u) => [u.unit_id, u]));

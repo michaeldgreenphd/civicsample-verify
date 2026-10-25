@@ -8,6 +8,10 @@ import hashlib
 
 PROFILE_ID = "mu81-plain-language-r3"
 GUIDE_SHA256 = "1cd8584d68a313e60aab2f5e03f36fba66105c31b0050dec1be7d8f36ddba284"
+REVIEWER_PROFILES = {
+    PROFILE_ID: GUIDE_SHA256,
+    "mu81-plain-language-r4": "1eee3cdcae8f9c097a119255cbd410524f2d2ad08a24df3f02de38a1c096c88a",
+}
 GUIDE_FILE = "reviewer_guide.md"
 KEEP_CODES = {"K_KEEP_MALIGNANT_COMPATIBLE", "K_KEEP_HEURISTIC_NONMALIGNANT_CLASS"}
 REMOVE_CODE = "K_REMOVE_VERIFIED_NONMALIGNANT"
@@ -43,17 +47,21 @@ def verify_metadata(path, manifest, require):
     require(isinstance(profile, dict)
             and set(profile) == {"profile_id", "rubric_sha256", "binding_sha256", "design_version"},
             "reviewer profile metadata is missing or invalid")
-    require(profile["profile_id"] == PROFILE_ID and profile["rubric_sha256"] == GUIDE_SHA256,
+    profile_id = profile["profile_id"]
+    require(isinstance(profile_id, str) and profile_id in REVIEWER_PROFILES,
+            "unknown reviewer profile")
+    guide_sha256 = REVIEWER_PROFILES[profile_id]
+    require(profile["rubric_sha256"] == guide_sha256,
             "unknown reviewer profile or guide")
     version = (manifest.get("design") or {}).get("design_version")
     require(isinstance(version, str) and (version == "review-design-v8.1.0" or version.startswith("SYN-8-1-"))
             and profile["design_version"] == version, "reviewer profile design mismatch")
-    digest = hashlib.sha256("|".join(["mu81-reviewer-profile-1", version, PROFILE_ID, GUIDE_SHA256]).encode()).hexdigest()
+    digest = hashlib.sha256("|".join(["mu81-reviewer-profile-1", version, profile_id, guide_sha256]).encode()).hexdigest()
     require(profile["binding_sha256"] == digest == freeze.get("reviewer_profile_sha256"),
             "reviewer profile differs from freeze")
     require((path / GUIDE_FILE).is_file(), "missing bound reviewer guide")
-    require(hashlib.sha256((path / GUIDE_FILE).read_bytes()).hexdigest() == GUIDE_SHA256
-            and files.get(GUIDE_FILE) == GUIDE_SHA256 and type(counts.get(GUIDE_FILE)) is int
+    require(hashlib.sha256((path / GUIDE_FILE).read_bytes()).hexdigest() == guide_sha256
+            and files.get(GUIDE_FILE) == guide_sha256 and type(counts.get(GUIDE_FILE)) is int
             and counts[GUIDE_FILE] == 1, "reviewer guide checksum or count mismatch")
     return True
 
