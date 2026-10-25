@@ -43,9 +43,13 @@ const sqlInputs = new Set([
   'migrations/0035_v81_subtype_probability.sql',
   'migrations/0036_v81_judgment_history.sql',
   'migrations/0037_v81_reviewer_profile.sql',
+  'migrations/0038_v81_reviewer_guide_r4.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
-const guideInput = 'docs/reviewer/REVIEWER_GUIDE_v81_r3.md';
+const guideInputs = [
+  'docs/reviewer/REVIEWER_GUIDE_v81_r3.md',
+  'docs/reviewer/REVIEWER_GUIDE_v81_r4.md',
+];
 function traces(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
     const filename = path.join(directory, entry.name);
@@ -66,15 +70,17 @@ for (const manifest of manifests) {
     const parts = relative.split(path.sep);
     if (parts[0] === 'node_modules' || parts[0] === '.next') continue;
     assert.ok(
-      sqlInputs.has(relative) || relative === guideInput,
+      sqlInputs.has(relative) || guideInputs.includes(relative),
       'Unexpected application or runtime file in production trace; build rejected.',
     );
     if (sqlInputs.has(relative)) observedSql.add(relative);
   }
   if (manifest === apiTrace) {
     assert.ok(
-      JSON.parse(readFileSync(manifest, 'utf8')).files.some(
-        (name) => path.relative(root, path.resolve(path.dirname(manifest), name)) === guideInput,
+      guideInputs.every((guideInput) =>
+        JSON.parse(readFileSync(manifest, 'utf8')).files.some(
+          (name) => path.relative(root, path.resolve(path.dirname(manifest), name)) === guideInput,
+        ),
       ),
       'Reviewed guide is missing from the API deployment trace.',
     );

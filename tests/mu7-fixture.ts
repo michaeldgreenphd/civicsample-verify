@@ -10,7 +10,8 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { HOSTED_SCHEMA_FILES } from '../scripts/supabase-identity-tools.mjs';
 import {
   MU81_REVIEWER_PROFILE_ID,
-  MU81_REVIEWER_GUIDE_SHA256,
+  MU81_REVIEWER_PROFILES,
+  type Mu81ReviewerProfileId,
   mu81ProfileDisplayText,
 } from '../src/lib/mu81-reviewer-profile';
 
@@ -66,7 +67,7 @@ export type ChainOptions = {
   plannedSubgroup?: number;
   overlap?: 'ALLOW' | 'ONE_PER_TRIAL';
   /** Opt into the new reviewer guide before any disposable pilot activity. */
-  reviewerProfile?: boolean;
+  reviewerProfile?: boolean | Mu81ReviewerProfileId;
   existing?: FixtureDb;
   /** Stop the pilot after the adjudications, before the pilot lock and sign-off. */
   stopAfterPilotAdjudication?: boolean;
@@ -88,6 +89,7 @@ export type ChainOptions = {
 };
 /** Migrations that build on another: leaving one out leaves its dependents out too. */
 const DEPENDENTS: Record<string, string[]> = {
+  'migrations/0037_v81_reviewer_profile.sql': ['migrations/0038_v81_reviewer_guide_r4.sql'],
   'migrations/0034_v8_synthetic_identifiers.sql': ['migrations/0035_v81_subtype_probability.sql'],
   'migrations/0035_v81_subtype_probability.sql': ['migrations/0036_v81_judgment_history.sql'],
   'migrations/0036_v81_judgment_history.sql': ['migrations/0037_v81_reviewer_profile.sql'],
@@ -524,11 +526,15 @@ export async function signedOffPilot(
     `select public.rpc_mu7_record_design(${lit({ design_version: options.designVersion ?? DESIGN_VERSION, assignment_set_id: SET, overlap_setting: options.overlap ?? 'ALLOW', n_primary_planned: options.plannedPrimary ?? 6, n_subgroup_planned: options.plannedSubgroup ?? 2, attestation: ATT })})`,
     'record design',
   );
+  const profileId =
+    typeof options.reviewerProfile === 'string'
+      ? options.reviewerProfile
+      : MU81_REVIEWER_PROFILE_ID;
   if (options.reviewerProfile)
     await must(
       db,
       'inv',
-      `select public.rpc_mu81_bind_reviewer_profile(${lit({ profile_id: MU81_REVIEWER_PROFILE_ID, rubric_sha256: MU81_REVIEWER_GUIDE_SHA256, attestation: ATT })})`,
+      `select public.rpc_mu81_bind_reviewer_profile(${lit({ profile_id: profileId, rubric_sha256: MU81_REVIEWER_PROFILES[profileId].sha256, attestation: ATT })})`,
       'bind synthetic reviewer profile',
     );
   if (options.stopAfter === 'design') return { db, PT1, PT2 };

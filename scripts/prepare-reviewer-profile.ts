@@ -114,7 +114,7 @@ export function prepareProfileFiles(
     const manifest = JSON.parse(source.get(manifestName)!.toString('utf8'));
     check(manifest.import_sha256 === sha(raw!));
     out.set(
-      `CANDIDATE_MANIFEST_${alternative}_PROFILE_R3_PRIVATE.json`,
+      `CANDIDATE_MANIFEST_${alternative}_PROFILE_R4_PRIVATE.json`,
       Buffer.from(
         json({
           ...manifest,
@@ -126,10 +126,10 @@ export function prepareProfileFiles(
     );
   }
   out.set(
-    `MU7_IMPORT_UNITS_v8_1_${alternative}_PROFILE_R3_PROPOSED_PRIVATE.json`,
+    `MU7_IMPORT_UNITS_v8_1_${alternative}_PROFILE_R4_PROPOSED_PRIVATE.json`,
     Buffer.from(revised),
   );
-  out.set('INVARIANTS_v8_1_PROFILE_R3_PRIVATE.json', Buffer.from(json(nextInvariant)));
+  out.set('INVARIANTS_v8_1_PROFILE_R4_PRIVATE.json', Buffer.from(json(nextInvariant)));
   out.set(
     'REVIEWER_PROFILE_PREPARATION_PRIVATE.json',
     Buffer.from(
@@ -156,11 +156,11 @@ export function prepareProfileFiles(
       }),
     ),
   );
-  out.set('REVIEWER_GUIDE_v81_r3.md', Buffer.from(reviewerGuideText()));
+  out.set('REVIEWER_GUIDE_v81_r4.md', Buffer.from(reviewerGuideText()));
   out.set(
     'README_PREPARATION_PRIVATE.md',
     Buffer.from(
-      `# Private review preparation — revision 3\n\nThis is a new proposed package, not a frozen or remotely imported sample. The source package is unchanged.\n\nThe investigator instructed that all ten areas use their MeSH parent headings without the additional narrowed definitions for the three added areas. Separate cancer, Depression and smoking-cessation policies remain. The guide version is ${MU81_REVIEWER_PROFILE_ID}.\n\nThe 100 selected mappings, 200 planned review positions, nominal probabilities, separate probability artifact and sampling records are unchanged. Only two neoplasm subgroup display statements changed. The other 98 packets are unchanged. Historical development and training exclusions remain; technical preparation adds no new clinical exposure exclusion.\n\nThe investigator reports being the only person exposed beyond planned practice and training. This is a reported fact, not an independent access audit or a completed rule-book overlap recount.\n\nRemaining release work includes scientific gate records, estimator approval, unresolved semantic-overlap checks, a reviewed deployment plan, and explicit authorization for real-data import and formal opening. None is approved by this preparation.\n`,
+      `# Private review preparation — revision 4\n\nThis is a new proposed package, not a frozen or remotely imported sample. The source package is unchanged.\n\nThe investigator instructed that all ten areas use their MeSH parent headings without the additional narrowed definitions for the three added areas. Separate cancer, Depression and smoking-cessation policies remain. The guide version is ${MU81_REVIEWER_PROFILE_ID}.\n\nThe 100 selected mappings, 200 planned review positions, nominal probabilities, separate probability artifact and sampling records are unchanged. Only two neoplasm subgroup display statements changed. The other 98 packets are unchanged. Historical development and training exclusions remain; technical preparation adds no new clinical exposure exclusion.\n\nThe investigator reports being the only person exposed beyond planned practice and training. This is a reported fact, not an independent access audit or a completed rule-book overlap recount.\n\nRemaining release work includes scientific gate records, estimator approval, unresolved semantic-overlap checks, a reviewed deployment plan, and explicit authorization for real-data import and formal opening. None is approved by this preparation.\n`,
     ),
   );
   return out;

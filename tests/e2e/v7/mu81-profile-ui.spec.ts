@@ -16,9 +16,9 @@ test('revised guide, unsaved subtype answer and accessible mobile reference navi
 }) => {
   const context = await browser.newContext({ baseURL: 'http://127.0.0.1:3100' });
   const page = await context.newPage();
-  const guideText = readFileSync('docs/reviewer/REVIEWER_GUIDE_v81_r3.md', 'utf8');
+  const guideText = readFileSync('docs/reviewer/REVIEWER_GUIDE_v81_r4.md', 'utf8');
   const reviewerProfile = {
-    profileId: 'mu81-plain-language-r3' as const,
+    profileId: 'mu81-plain-language-r4' as const,
     rubricSha256: createHash('sha256').update(guideText).digest('hex'),
     bindingSha256: 'b'.repeat(64),
     designVersion: 'SYN-8-1-UI-PROFILE',
@@ -126,6 +126,9 @@ test('revised guide, unsaved subtype answer and accessible mobile reference navi
     await expect(page.getByRole('article', { name: 'Review instructions' })).toContainText(
       'same Depression definition',
     );
+    await expect(
+      page.getByRole('heading', { name: '2. Different things you are judging', exact: true }),
+    ).toBeVisible();
     expect(
       (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations,
     ).toEqual([]);

@@ -5,8 +5,9 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { newDatabase, one, P } from '../tests/mu7-fixture';
 import {
-  MU81_REVIEWER_PROFILE_ID,
-  MU81_REVIEWER_GUIDE_SHA256,
+  MU81_REVIEWER_PROFILES,
+  isMu81ReviewerProfileId,
+  matchesMu81ReviewerProfile,
   mu81ProfileDisplayText,
 } from '../src/lib/mu81-reviewer-profile';
 
@@ -103,8 +104,8 @@ export function verifyProfilePreparation(
   const profile = profileBytes
     ? z
         .object({
-          profile_id: z.literal(MU81_REVIEWER_PROFILE_ID),
-          rubric_sha256: z.literal(MU81_REVIEWER_GUIDE_SHA256),
+          profile_id: z.custom<keyof typeof MU81_REVIEWER_PROFILES>(isMu81ReviewerProfileId),
+          rubric_sha256: hex,
           alternative: z.enum(alternatives),
           changed_packet_count: z.literal(2),
           unchanged_packet_count: z.literal(98),
@@ -127,9 +128,13 @@ export function verifyProfilePreparation(
     : null;
   if (!profile) return null;
   requireCheck(profile.alternative === alternative);
-  const guide = files.get('REVIEWER_GUIDE_v81_r3.md');
-  requireCheck(guide && digest(guide) === MU81_REVIEWER_GUIDE_SHA256);
-  const raw = files.get(`MU7_IMPORT_UNITS_v8_1_${alternative}_PROFILE_R3_PROPOSED_PRIVATE.json`);
+  requireCheck(matchesMu81ReviewerProfile(profile.profile_id, profile.rubric_sha256));
+  const guideVersion = MU81_REVIEWER_PROFILES[profile.profile_id];
+  const guide = files.get(guideVersion.file);
+  requireCheck(guide && digest(guide) === profile.rubric_sha256);
+  const raw = files.get(
+    `MU7_IMPORT_UNITS_v8_1_${alternative}_PROFILE_R${guideVersion.revision}_PROPOSED_PRIVATE.json`,
+  );
   const source = files.get('SOURCE_IMPORT_BEFORE_PROFILE_PRIVATE.json');
   requireCheck(
     raw &&
@@ -168,7 +173,9 @@ export function verifyProfilePreparation(
   requireCheck(changes.length === 2 && canonical(changes) === canonical(profile.changes));
   if (expected.packet_sha256_canonical_json) expected.packet_sha256_canonical_json = packetHashes;
   requireCheck(canonical(expected) === canonical(JSON.parse(raw!.toString('utf8'))));
-  const manifest = files.get(`CANDIDATE_MANIFEST_${alternative}_PROFILE_R3_PRIVATE.json`);
+  const manifest = files.get(
+    `CANDIDATE_MANIFEST_${alternative}_PROFILE_R${guideVersion.revision}_PRIVATE.json`,
+  );
   if (manifest)
     requireCheck(
       JSON.parse(manifest.toString('utf8')).import_sha256 === profile.prepared_import_sha256,
@@ -180,7 +187,7 @@ export async function checkAlternative(
   alternative: (typeof alternatives)[number],
 ) {
   const profile = verifyProfilePreparation(files, alternative);
-  const suffix = profile ? '_PROFILE_R3' : '';
+  const suffix = profile ? `_PROFILE_R${MU81_REVIEWER_PROFILES[profile.profile_id].revision}` : '';
   const raw = files.get(`MU7_IMPORT_UNITS_v8_1_${alternative}${suffix}_PROPOSED_PRIVATE.json`);
   requireCheck(raw);
   const input = inputSchema.parse(JSON.parse(raw!.toString('utf8')));

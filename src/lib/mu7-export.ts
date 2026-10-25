@@ -7,11 +7,7 @@
 import { createHash } from 'node:crypto';
 import { HISTORY_COLUMNS } from './mu7-history';
 import { isMu81Design, type Mu7Bundle, type Mu7BundleFile, type Mu7Mode } from './mu7-types';
-import {
-  MU81_REVIEWER_PROFILE_ID,
-  MU81_REVIEWER_GUIDE_SHA256,
-  type Mu81ReviewerProfile,
-} from './mu81-reviewer-profile';
+import { matchesMu81ReviewerProfile, type Mu81ReviewerProfile } from './mu81-reviewer-profile';
 
 export const MU7_BUNDLE_FORMAT = '7.0';
 export const MU7_EXPORT_COLUMNS = {
@@ -231,9 +227,8 @@ export function buildMu7Bundle(s: Mu7BundleSources): Mu7Bundle {
     const p = s.reviewerProfile;
     if (
       !v82 ||
-      p.profileId !== MU81_REVIEWER_PROFILE_ID ||
+      !matchesMu81ReviewerProfile(p.profileId, p.rubricSha256) ||
       p.designVersion !== s.design?.design_version ||
-      p.rubricSha256 !== MU81_REVIEWER_GUIDE_SHA256 ||
       sha256(p.guideText) !== p.rubricSha256 ||
       p.bindingSha256 !==
         sha256(

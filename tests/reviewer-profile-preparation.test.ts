@@ -87,7 +87,7 @@ test('profile preparation changes exactly two packet statements and keeps all ot
     files.get('MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROPOSED_PRIVATE.json')!.toString(),
   );
   const prepared = JSON.parse(
-    next.get('MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROFILE_R3_PROPOSED_PRIVATE.json')!.toString(),
+    next.get('MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROFILE_R4_PROPOSED_PRIVATE.json')!.toString(),
   );
   assert.deepEqual(prepared.units.slice(0, 98), original.units.slice(0, 98));
   for (let i = 98; i < 100; i++) {
@@ -105,12 +105,12 @@ test('profile preparation changes exactly two packet statements and keeps all ot
   );
   assert.equal(next.has('MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROPOSED_PRIVATE.json'), false);
   const manifest = JSON.parse(
-    next.get('CANDIDATE_MANIFEST_ONE_PER_TRIAL_PROFILE_R3_PRIVATE.json')!.toString(),
+    next.get('CANDIDATE_MANIFEST_ONE_PER_TRIAL_PROFILE_R4_PRIVATE.json')!.toString(),
   );
   assert.equal(
     manifest.import_sha256,
     hash(
-      next.get('MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROFILE_R3_PROPOSED_PRIVATE.json')!.toString(),
+      next.get('MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROFILE_R4_PROPOSED_PRIVATE.json')!.toString(),
     ),
   );
   assert.equal(manifest.unit_list_sha256, 'a'.repeat(64));
@@ -118,7 +118,7 @@ test('profile preparation changes exactly two packet statements and keeps all ot
 });
 test('independent preparation verifier refuses a third edited packet even when revised inventories are rehashed', () => {
   const files = prepareProfileFiles(source(), 'ONE_PER_TRIAL');
-  const name = 'MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROFILE_R3_PROPOSED_PRIVATE.json';
+  const name = 'MU7_IMPORT_UNITS_v8_1_ONE_PER_TRIAL_PROFILE_R4_PROPOSED_PRIVATE.json';
   const changed = JSON.parse(files.get(name)!.toString());
   changed.units[0].packet.trial.brief_title = 'Changed fictional evidence';
   const bytes = Buffer.from(JSON.stringify(changed));

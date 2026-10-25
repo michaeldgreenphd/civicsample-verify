@@ -120,7 +120,8 @@ try {
     const m35 = join(root, 'migrations/0035_v81_subtype_probability.sql');
     const m36 = join(root, 'migrations/0036_v81_judgment_history.sql');
     const m37 = join(root, 'migrations/0037_v81_reviewer_profile.sql');
-    const m24to28 = await concat('nnnn_0024_to_0037.sql', [
+    const m38 = join(root, 'migrations/0038_v81_reviewer_guide_r4.sql');
+    const m24to28 = await concat('nnnn_0024_to_0038.sql', [
       m24,
       m25,
       m26,
@@ -134,6 +135,7 @@ try {
       m35,
       m36,
       m37,
+      m38,
       gateShim,
     ]);
     const chainApp0004to0011 = await concat('chain_app_0004_to_0011.sql', [...app, m11]);
@@ -162,6 +164,7 @@ try {
       ['0035', m35],
       ['0036', m36],
       ['0037', m37],
+      ['0038', m38],
     ]) {
       report.schema_sha256[label] = createHash('sha256')
         .update(await readFile(file))
@@ -237,7 +240,7 @@ try {
           ['MU7-SCHEMA-01', 'MU7-ADD-01'],
         ],
         [
-          'v7-on-app-chain-through-0037',
+          'v7-on-app-chain-through-0038',
           'v7',
           [
             shim,
