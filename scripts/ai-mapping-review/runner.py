@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ from typing import Callable
 
 FORMAT = "civicsample-ai-mapping-input-1.0"
 STATE_FORMAT = "civicsample-ai-mapping-ledger-1.0"
+RECOVERED_STATE_FORMAT = "civicsample-ai-mapping-ledger-1.1"
 MODELS = ("claude-sonnet-5", "claude-sonnet-5-5", "claude-opus-5-5")
 # Standard, uncached per-million-token USD prices verified 2026-10-25. No tools/batches.
 PRICES = {MODELS[0]: (2, 10), MODELS[1]: (2, 10), MODELS[2]: (4, 20)}
@@ -38,6 +40,7 @@ SUBTYPE_LABELS = {
     "CANNOT_TELL_FROM_PACKET": "Cannot tell from this packet",
 }
 SETTINGS = {"thinking": {"type": "adaptive"}, "effort": "medium", "max_tokens": MAX_OUTPUT_TOKENS}
+LEGACY_REASON_SCHEMA_ERROR = "output_config.format.schema: Invalid schema: Enum value None does not match declared type '['string', 'null']'"
 SYSTEM = (
     "Assess one trial-to-category mapping using the same evidence and review guide given "
     "to clinical reviewers. This is a separate AI comparison, not a clinical reference judgment. "
@@ -191,7 +194,9 @@ def response_schema(unit: dict) -> dict:
             "required": ["answer", "reason_code", "note", "uncertain", "diabetes_subtype"],
             "properties": {
                 "answer": {"type": "string", "enum": list(ANSWERS)},
-                "reason_code": {"type": ["string", "null"], "enum": [None] + [r["code"] for r in unit["reason_codes"]]},
+                # Keep null separate from the string enum: the provider rejects
+                # None in an enum whose declared type is a string/null array.
+                "reason_code": {"anyOf": [{"type": "string", "enum": [r["code"] for r in unit["reason_codes"]]}, {"type": "null"}]},
                 "note": {"type": "string"},
                 "uncertain": {"type": "boolean"},
                 "diabetes_subtype": {"type": "string", "enum": list(SUBTYPES)} if unit["subtype_required"] else {"type": "null"},
@@ -409,11 +414,89 @@ def new_state(bundle_sha: str, cap: int, approval_ref: str) -> dict:
             "price_checked_date": "2026-10-25", "created_at": now(), "records": []}
 
 
-def validate_state(state: dict, bundle_sha: str, cap: int, approval_ref: str) -> None:
+def validate_state_header(state: dict, bundle_sha: str, cap: int, approval_ref: str) -> None:
     require(type(cap) is int and 0 < cap <= MAX_CAP_MICRO_USD, "invalid_budget")
-    require(state.get("format") == STATE_FORMAT and state.get("input_sha256") == bundle_sha, "ledger_binding_mismatch")
+    require(state.get("format") in (STATE_FORMAT, RECOVERED_STATE_FORMAT) and state.get("input_sha256") == bundle_sha, "ledger_binding_mismatch")
+    require((state["format"] == RECOVERED_STATE_FORMAT) == ("schema_recovery" in state), "ledger_binding_mismatch")
     require(state.get("cap_micro_usd") == cap and state.get("approval_ref") == approval_ref and state.get("settings") == SETTINGS, "ledger_approval_mismatch")
     require(state.get("prices_usd_per_million") == {k: list(v) for k, v in PRICES.items()} or state.get("prices_usd_per_million") == PRICES, "ledger_price_mismatch")
+
+
+def retained_reservation(state: dict) -> int:
+    """One narrowly scoped recovery, retaining the complete original ledger."""
+    if "schema_recovery" not in state:
+        return 0
+    recovery = keys(state["schema_recovery"], {"kind", "previous_ledger", "previous_ledger_sha256", "preflight_report",
+                                             "preflight_report_sha256", "replacement_request_sha256", "source_commit", "recorded_at"})
+    require(recovery["kind"] == "NULLABLE_REASON_SCHEMA_RECOVERY", "invalid_recovery")
+    previous = recovery["previous_ledger"]
+    require(isinstance(previous, dict) and "schema_recovery" not in previous, "invalid_recovery")
+    require(previous.get("format") == STATE_FORMAT and state.get("format") == RECOVERED_STATE_FORMAT, "invalid_recovery")
+    require(set(previous) == set(state) - {"schema_recovery"}, "invalid_recovery")
+    require(all(value == state[field] for field, value in previous.items() if field not in ("records", "format")), "invalid_recovery")
+    require(sha(encode(previous)) == recovery["previous_ledger_sha256"], "invalid_recovery")
+    attempts = previous.get("records")
+    require(isinstance(attempts, list) and len(attempts) == 1, "invalid_recovery")
+    attempt = keys(attempts[0], {"model", "unit_id", "status", "request_sha256", "reserved_micro_usd", "reserved_at", "failure_category"})
+    require(attempt["status"] == "unreconciled" and attempt["failure_category"] == "provider_request_failed", "invalid_recovery")
+    require(attempt["model"] == MODELS[0] and isinstance(attempt["unit_id"], str), "invalid_recovery")
+    require(type(attempt["reserved_micro_usd"]) is int and 0 < attempt["reserved_micro_usd"] <= state["cap_micro_usd"], "invalid_recovery")
+    report = recovery["preflight_report"]
+    require(isinstance(report, dict) and sha(encode(report)) == recovery["preflight_report_sha256"], "invalid_recovery")
+    require(report.get("format") == "civicsample-ai-mapping-preflight-1.0" and report.get("input_sha256") == state["input_sha256"]
+            and report.get("settings") == state["settings"] and report.get("status") == "failed"
+            and report.get("failure_category") == "provider_http_400", "invalid_recovery")
+    diagnostic = report.get("provider_diagnostic", {})
+    require(isinstance(diagnostic, dict) and diagnostic.get("http_status") == 400
+            and diagnostic.get("error_type") == "invalid_request_error"
+            and diagnostic.get("message") == LEGACY_REASON_SCHEMA_ERROR, "invalid_recovery")
+    require(report.get("records") == [{field: attempt[field] for field in ("model", "unit_id", "request_sha256")}], "invalid_recovery")
+    require(COMMIT.fullmatch(str(recovery["source_commit"])) and HEX.fullmatch(str(recovery["replacement_request_sha256"])), "invalid_recovery")
+    text(recovery["recorded_at"], 100)
+    return attempt["reserved_micro_usd"]
+
+
+def validate_recovery_requests(bundle: dict, state: dict) -> None:
+    if "schema_recovery" not in state:
+        return
+    recovery = state["schema_recovery"]
+    attempt = recovery["previous_ledger"]["records"][0]
+    unit = bundle["units"][0]
+    require(attempt["unit_id"] == unit["unit_id"], "invalid_recovery")
+    replacement = request_for(bundle, unit, MODELS[0])
+    require(sha(encode(replacement)) == recovery["replacement_request_sha256"], "invalid_recovery")
+    # Reconstruct only the known rejected representation; never send it again.
+    legacy = copy.deepcopy(replacement)
+    legacy["output_config"]["format"]["schema"]["properties"]["reason_code"] = {
+        "type": ["string", "null"], "enum": [None] + [r["code"] for r in unit["reason_codes"]]}
+    require(sha(encode(legacy)) == attempt["request_sha256"] and reserve_cost(legacy) == attempt["reserved_micro_usd"], "invalid_recovery")
+
+
+def recover_legacy_schema(bundle: dict, bundle_sha: str, state: dict, report: dict,
+                          cap: int, approval_ref: str, source_commit: str) -> dict:
+    """Explicit offline recovery; no claim that the uncertain attempt was unbilled."""
+    validate_state_header(state, bundle_sha, cap, approval_ref)
+    require("schema_recovery" not in state, "recovery_already_recorded")
+    candidate = copy.deepcopy(state)
+    # Older workflow revisions must refuse rather than ignore the retained charge.
+    candidate["format"] = RECOVERED_STATE_FORMAT
+    candidate["records"] = []
+    candidate["schema_recovery"] = {
+        "kind": "NULLABLE_REASON_SCHEMA_RECOVERY", "previous_ledger": copy.deepcopy(state),
+        "previous_ledger_sha256": sha(encode(state)), "preflight_report": copy.deepcopy(report),
+        "preflight_report_sha256": sha(encode(report)), "source_commit": source_commit, "recorded_at": now(),
+        "replacement_request_sha256": sha(encode(request_for(bundle, bundle["units"][0], MODELS[0])))}
+    validate_state(candidate, bundle_sha, cap, approval_ref)
+    validate_recovery_requests(bundle, candidate)
+    return candidate
+
+
+def accounted_micro(state: dict) -> int:
+    return retained_reservation(state) + sum(r.get("charged_micro_usd", r["reserved_micro_usd"]) for r in state["records"])
+
+
+def validate_state(state: dict, bundle_sha: str, cap: int, approval_ref: str) -> None:
+    validate_state_header(state, bundle_sha, cap, approval_ref)
     records = state.get("records")
     require(isinstance(records, list) and len(records) <= 300, "invalid_ledger")
     seen = set()
@@ -424,12 +507,13 @@ def validate_state(state: dict, bundle_sha: str, cap: int, approval_ref: str) ->
         seen.add(key)
         require(item.get("status") == "complete", "unreconciled_request")
         require(type(item.get("charged_micro_usd")) is int and item["charged_micro_usd"] >= 0, "invalid_ledger")
-    require(sum(r["charged_micro_usd"] for r in records) <= cap, "budget_exhausted")
+    require(accounted_micro(state) <= cap, "budget_exhausted")
 
 
 def run(bundle: dict, bundle_sha: str, state: dict, cap: int, approval_ref: str,
         provider: Provider, persist: Callable[[dict], None]) -> dict:
     validate_state(state, bundle_sha, cap, approval_ref)
+    validate_recovery_requests(bundle, state)
     # A changed input, pricing table or request builder cannot silently reuse completions.
     by_key = {(r["model"], r["unit_id"]): r for r in state["records"]}
     all_units = {u["unit_id"]: u for u in bundle["units"]}
@@ -447,7 +531,7 @@ def run(bundle: dict, bundle_sha: str, state: dict, cap: int, approval_ref: str,
                 continue
             request = request_for(bundle, unit, model)
             reserved = reserve_cost(request)
-            spent = sum(r.get("charged_micro_usd", r["reserved_micro_usd"]) for r in state["records"])
+            spent = accounted_micro(state)
             require(spent + reserved <= cap, "budget_exhausted")
             record = {"model": model, "unit_id": unit["unit_id"], "status": "reserved",
                       "request_sha256": sha(encode(request)), "reserved_micro_usd": reserved,
@@ -480,7 +564,8 @@ def summary(state: dict) -> dict:
     records = state["records"]
     return {"status": "complete" if len(records) == 300 and all(r["status"] == "complete" for r in records) else "incomplete",
             "units": 100, "models": 3, "completed_requests": sum(r["status"] == "complete" for r in records),
-            "accounted_usd": round(sum(r.get("charged_micro_usd", r["reserved_micro_usd"]) for r in records) / 1_000_000, 6),
+            "accounted_usd": round(accounted_micro(state) / 1_000_000, 6),
+            "held_reservation_usd": retained_reservation(state) / 1_000_000,
             "budget_usd": state["cap_micro_usd"] / 1_000_000}
 
 
@@ -547,6 +632,13 @@ class PrivateStore:
         require(isinstance(value, dict), "invalid_ledger")
         return value
 
+    def load_preflight(self) -> dict:
+        path = self.root / "state/mapping-review-preflight.json"
+        require(path.is_file() and not path.is_symlink(), "preflight_report_missing")
+        value = decode(path.read_bytes())
+        require(isinstance(value, dict), "invalid_input")
+        return value
+
     def persist(self, state: dict) -> None:
         self.persist_document("mapping-review-ledger.json", state)
 
@@ -570,18 +662,20 @@ class QuietParser(argparse.ArgumentParser):
 
 def main() -> None:
     parser = QuietParser(description="Private mapping comparison; no packets or answers are printed.")
-    parser.add_argument("command", choices=("dry-run", "models", "preflight", "run"))
+    parser.add_argument("command", choices=("dry-run", "models", "preflight", "recover-schema", "run"))
     parser.add_argument("--input")
     parser.add_argument("--input-sha256")
     parser.add_argument("--private-store", action="store_true")
     parser.add_argument("--usd-cap")
     parser.add_argument("--approval-ref")
     parser.add_argument("--execute-paid", action="store_true")
+    parser.add_argument("--retain-uncertain-charge", action="store_true")
     args = parser.parse_args()
     require(not args.execute_paid or args.command == "run", "invalid_command")
     require(args.command != "run" or args.execute_paid, "paid_authorization_missing")
-    cap = cap_micro(args.usd_cap) if args.command == "run" and args.usd_cap else None
-    require(args.command != "run" or (cap and args.approval_ref), "paid_authorization_missing")
+    require(args.retain_uncertain_charge == (args.command == "recover-schema"), "invalid_command")
+    cap = cap_micro(args.usd_cap) if args.command in ("run", "recover-schema") and args.usd_cap else None
+    require(args.command not in ("run", "recover-schema") or (cap and args.approval_ref), "paid_authorization_missing")
     if args.command == "models":
         require(not args.private_store and not args.input and not args.execute_paid, "invalid_command")
         Provider(os.environ.get("ANTHROPIC_API_KEY", "")).check_models()
@@ -613,6 +707,15 @@ def main() -> None:
             print(json.dumps(result, sort_keys=True))
             return
         require(store and cap is not None and args.approval_ref, "private_store_required")
+        if args.command == "recover-schema":
+            state = store.load()
+            require(state is not None, "invalid_recovery")
+            candidate = recover_legacy_schema(bundle, expected, state, store.load_preflight(), cap, args.approval_ref,
+                                              os.environ.get("GITHUB_SHA", ""))
+            store.persist(candidate)
+            print(json.dumps({"status": "reservation_retained", "held_reservation_usd": retained_reservation(candidate) / 1_000_000,
+                              "budget_usd": cap / 1_000_000, "paid_requests": 0}))
+            return
         state = store.load() or new_state(expected, cap, args.approval_ref)
         result = run(bundle, expected, state, cap, args.approval_ref,
                      Provider(os.environ.get("ANTHROPIC_API_KEY", "")), store.persist)
