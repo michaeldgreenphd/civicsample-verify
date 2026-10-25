@@ -26,6 +26,7 @@ import {
 import type { Actor } from '@/lib/types';
 import { Icon } from '@/components/icons';
 import { PracticeSections, ReviewGuide } from './practice-sections';
+import { FormalPreparation } from './formal-preparation';
 import {
   answerMeaning,
   reasonLabel,
@@ -1070,6 +1071,7 @@ function Investigator({
         </div>
       )}
       <Banner />
+      <FormalPreparation workspace={w} />
       <section className="panel" aria-label="Synthetic pilot">
         <div className="panel-header">
           <span className="section-label">Synthetic pilot</span>
@@ -1186,7 +1188,7 @@ function Investigator({
           )}
           {w.pilotLock && (
             <div className="step">
-              <h3>Export bundle 7.0</h3>
+              <h3>Export the locked pilot</h3>
               <p>
                 Build the locked pilot bundle, check its manifest, then register its hashes. The
                 bundle is marked synthetic; the analysis reads formal bundles only.
