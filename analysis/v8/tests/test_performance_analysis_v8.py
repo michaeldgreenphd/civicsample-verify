@@ -116,10 +116,26 @@ def test_area_estimate_does_not_move_when_a_row_answer_changes(tmp_path):
     R = pd.read_csv(b / "final_reference.csv", dtype=str, keep_default_na=False)
     i = R.index[R.unit_id == "SYN-MU8-ROW-COPD-801"][0]
     R.loc[i, "final_answer"] = "DISAGREE" if R.loc[i, "final_answer"] == "AGREE" else "AGREE"
+    # Change the complete synthetic response history, not just the derived reference.
+    answer = R.loc[i, "final_answer"]
     R.loc[i, "final_status"] = "CONCORDANT"
+    R.loc[i, "routing"] = f"CONCORDANT_{answer}"
+    for stage in ("initial", "effective"):
+        for slot in (1, 2):
+            R.loc[i, f"answer_{stage}_slot{slot}"] = answer
+    for column in ("adjudication_reason_code", "adjudication_status", "adjudication_basis",
+                   "adjudication_disagreement_reason_code"):
+        R.loc[i, column] = ""
+    J = pd.read_csv(b / "independent_judgments.csv", dtype=str, keep_default_na=False)
+    which = J.unit_id.eq(R.loc[i, "unit_id"])
+    for stage in ("initial", "effective"):
+        J.loc[which, f"answer_{stage}"] = answer
+        J.loc[which, f"reason_{stage}"] = "NOT_THE_CONDITION_STUDIED" if answer == "DISAGREE" else ""
     R.to_csv(b / "final_reference.csv", index=False, lineterminator="\n")
+    J.to_csv(b / "independent_judgments.csv", index=False, lineterminator="\n")
     man = json.loads((b / "manifest.json").read_text())
-    man["files"]["final_reference.csv"] = B.sha256_file(b / "final_reference.csv")
+    for name in ("final_reference.csv", "independent_judgments.csv"):
+        man["files"][name] = B.sha256_file(b / name)
     (b / "manifest.json").write_text(json.dumps(man))
     rc, out2 = run(tmp_path, b, "--allow-synthetic", name="after")
     f1 = pd.read_csv(out1 / "family_estimates_v8.csv").set_index(["domain", "rule"])

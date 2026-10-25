@@ -120,3 +120,142 @@ def test_nonformal_record_refused_inside_formal_bundle(tmp_path, name):
     rewrite_csv(p, name, lambda r: r.__setitem__("mode", "PILOT"))
     with pytest.raises(PA.Refused, match="non-FORMAL"):
         PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("column,value", [
+    ("final_answer", "DISAGREE"), ("final_status", "UNRESOLVED"),
+    ("routing", "ROUTED"), ("answer_initial_slot1", "DISAGREE"),
+    ("answer_effective_slot2", "CANNOT_TELL"), ("adjudication_basis", "REVIEWER_1"),
+])
+def test_concordant_reference_cannot_override_judgments(tmp_path, column, value):
+    p = bundle(tmp_path)
+    def edit(r):
+        i = r.index[r.routing == "CONCORDANT_AGREE"][0]
+        r.loc[i, column] = value
+    rewrite_csv(p, "final_reference.csv", edit)
+    with pytest.raises(PA.Refused, match="reference|adjudication"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("column,value", [
+    ("judgment_status", "NOT_ANSWERED"), ("judgment_status", "DRAFT"),
+    ("uncertain_initial", ""), ("uncertain_effective", "yes"),
+    ("answer_effective", "INVALID"), ("reason_initial", ""),
+    ("n_revisions", "-1"), ("n_revisions", "0.5"),
+    ("first_submitted_at", "yesterday"), ("last_submitted_at", "2000-01-01T00:00:00Z"),
+    ("first_submitted_at", "2026-11-01T00:00:00"),
+])
+def test_invalid_judgment_cannot_enter_agreement(tmp_path, column, value):
+    p = bundle(tmp_path)
+    def edit(j):
+        i = j.index[j.answer_initial == "DISAGREE"][0]
+        j.loc[i, column] = value
+    rewrite_csv(p, "independent_judgments.csv", edit)
+    with pytest.raises(PA.Refused):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("column,value", [("answer_initial", "AGREE"), ("uncertain_effective", "false"),
+                                         ("n_revisions", "1"), ("note_effective", "synthetic content")])
+def test_unanswered_assignment_remains_absent(tmp_path, column, value):
+    p = bundle(tmp_path)
+    def edit(j):
+        j.loc[j.judgment_status == "NOT_ANSWERED", column] = value
+    rewrite_csv(p, "independent_judgments.csv", edit)
+    with pytest.raises(PA.Refused, match="unanswered assignments"):
+        PA.load_bundle(p, True, None)
+
+
+def test_changed_endpoint_requires_a_revision(tmp_path):
+    p = bundle(tmp_path)
+    def edit(j):
+        i = j.index[(j.judgment_status == "ANSWERED") & (j.n_revisions == "0")][0]
+        j.loc[i, "note_effective"] = "synthetic amendment without history"
+    rewrite_csv(p, "independent_judgments.csv", edit)
+    with pytest.raises(PA.Refused, match="without a revision"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("column,value", [("adjudication_basis", "NEITHER"),
+                                         ("final_status", "CONCORDANT"),
+                                         ("adjudication_status", ""),
+                                         ("adjudication_disagreement_reason_code", "INVALID")])
+def test_adjudication_must_match_its_basis_and_route(tmp_path, column, value):
+    p = bundle(tmp_path)
+    def edit(r):
+        i = r.index[(r.final_status == "ADJUDICATED") & r.adjudication_basis.isin(["REVIEWER_1", "REVIEWER_2"])][0]
+        r.loc[i, column] = value
+    rewrite_csv(p, "final_reference.csv", edit)
+    with pytest.raises(PA.Refused, match="adjudication|adjudicated"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("column,value", [("final_answer", "AGREE"), ("adjudication_basis", "REVIEWER_1"),
+                                         ("adjudication_reason_code", "OTHER_SPECIFIED")])
+def test_unresolved_reference_cannot_be_counted_as_confirmed(tmp_path, column, value):
+    p = bundle(tmp_path)
+    def edit(r):
+        r.loc[r.final_status == "UNRESOLVED", column] = value
+    rewrite_csv(p, "final_reference.csv", edit)
+    with pytest.raises(PA.Refused, match="reference|adjudication"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("field", ["answer_effective", "uncertain_initial", "n_revisions"])
+def test_missing_judgment_columns_refused(tmp_path, field):
+    p = bundle(tmp_path)
+    rewrite_csv(p, "independent_judgments.csv", lambda j: j.drop(columns=[field]))
+    with pytest.raises(PA.Refused, match="required columns"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("field", ["row_counts", "n_units", "assignment_set_id", "overlap_setting"])
+def test_manifest_cannot_misstate_export_counts_or_design(tmp_path, field):
+    p = bundle(tmp_path)
+    m = json.loads((p / "manifest.json").read_text())
+    if field == "row_counts":
+        m[field]["independent_judgments.csv"] = 199
+    elif field == "n_units":
+        m["freeze"][field] = 99
+    else:
+        m["design"][field] = "SYN-CHANGED"
+    (p / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(PA.Refused, match="count|manifest"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("column,value", [("frame_stratum_size", "9999"), ("n_sampled_in_stratum", "7")])
+def test_stratum_sizes_cannot_vary_between_units_with_recomputed_hashes(tmp_path, column, value):
+    p = bundle(tmp_path)
+    d = pd.read_csv(p / "unit_design.csv", dtype=str, keep_default_na=False)
+    d.loc[0, column] = value
+    fields = ["unit_id", "nct_id", "frame_id", "stratum", "frame_stratum_size",
+              "n_sampled_in_stratum", "allocation_option", "overlap_setting", "sampling_seed", "prn_key"]
+    d["design_row_sha256"] = [B.sha256_text(B.design_row_text(*row)) for row in d[fields].itertuples(index=False, name=None)]
+    d.to_csv(p / "unit_design.csv", index=False, lineterminator="\n")
+    m = json.loads((p / "manifest.json").read_text())
+    m["files"]["unit_design.csv"] = B.sha256_file(p / "unit_design.csv")
+    m["freeze"]["design_rows_sha256"] = B.sha256_text("\n".join(d.sort_values("unit_id").design_row_sha256))
+    (p / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(PA.Refused, match="consistent within each stratum"):
+        PA.load_bundle(p, True, None)
+
+
+def test_design_version_cannot_change_in_one_row(tmp_path):
+    p = bundle(tmp_path)
+    def edit(d):
+        d.loc[0, "design_version"] = "SYN-8-OTHER-FIXTURE"
+    rewrite_csv(p, "unit_design.csv", edit)
+    with pytest.raises(PA.Refused, match="manifest design"):
+        PA.load_bundle(p, True, None)
+
+
+def test_cli_refuses_contradiction_without_writing_results(tmp_path, capsys):
+    p = bundle(tmp_path)
+    def edit(r):
+        r.loc[r.routing == "BOTH_CANNOT_TELL", "final_answer"] = "AGREE"
+    rewrite_csv(p, "final_reference.csv", edit)
+    out = tmp_path / "results"
+    assert PA.main(["--bundle", str(p), "--out", str(out), "--allow-synthetic"]) == 3
+    assert not out.exists()
+    assert "REFUSED: final reference" in capsys.readouterr().err
