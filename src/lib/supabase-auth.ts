@@ -6,7 +6,9 @@ import type { SupabaseWebConfig } from './supabase-config';
 import { HttpError } from './auth';
 
 export const ACCESS_COOKIE = 'verify_sb_access';
-export const REFRESH_COOKIE = 'verify_sb_refresh';
+// A distinct name avoids ambiguous duplicate cookies during the move from /api/session to /api.
+export const REFRESH_COOKIE = 'verify_sb_refresh_v2';
+export const LEGACY_REFRESH_COOKIE = 'verify_sb_refresh';
 export const REFRESH_MAX_AGE = 7 * 24 * 60 * 60;
 export const USERNAME = /^[a-z][a-z0-9._-]{2,31}$/;
 
@@ -95,6 +97,7 @@ function decodeClaims(token: string): Record<string, unknown> {
 
 export class SupabaseAuth {
   private readonly cache = new Map<string, { user: VerifiedUser; until: number }>();
+  private readonly refreshing = new Map<string, Promise<SupabaseSession>>();
   constructor(
     private readonly config: SupabaseWebConfig,
     private readonly fetchImpl: typeof fetch = fetch,
@@ -113,15 +116,21 @@ export class SupabaseAuth {
     };
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
     if (init.token) headers.Authorization = `Bearer ${init.token}`;
-    const response = await this.fetchImpl(url.href, {
-      method: init.method,
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      redirect: 'error',
-      cache: 'no-store',
-      signal: AbortSignal.timeout(15000),
-    });
-    const text = await response.text();
+    let response: Response;
+    let text: string;
+    try {
+      response = await this.fetchImpl(url.href, {
+        method: init.method,
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        redirect: 'error',
+        cache: 'no-store',
+        signal: AbortSignal.timeout(15000),
+      });
+      text = await response.text();
+    } catch {
+      throw new HttpError(502, 'The identity service is unavailable. Try again.');
+    }
     let body: T | null = null;
     if (text) {
       try {
@@ -169,6 +178,20 @@ export class SupabaseAuth {
   }
 
   async refresh(refreshToken: string): Promise<SupabaseSession> {
+    // Several protected requests can reach expiry together. Share the in-flight exchange so
+    // this process does not rotate the same one-use token separately for each request.
+    const pending = this.refreshing.get(refreshToken);
+    if (pending) return pending;
+    const next = this.exchangeRefresh(refreshToken);
+    this.refreshing.set(refreshToken, next);
+    try {
+      return await next;
+    } finally {
+      this.refreshing.delete(refreshToken);
+    }
+  }
+
+  private async exchangeRefresh(refreshToken: string): Promise<SupabaseSession> {
     const result = await this.call<{
       access_token?: string;
       refresh_token?: string;
@@ -178,7 +201,9 @@ export class SupabaseAuth {
       method: 'POST',
       body: { refresh_token: refreshToken },
     });
-    if (result.status !== 200) throw new HttpError(401, 'Sign in to continue.');
+    if ([400, 401, 403].includes(result.status)) throw new HttpError(401, 'Sign in to continue.');
+    if (result.status !== 200)
+      throw new HttpError(502, 'The identity service is unavailable. Try again.');
     return this.toSession(result.body);
   }
 
@@ -191,7 +216,9 @@ export class SupabaseAuth {
       email?: string;
       factors?: { id: string; status: string; friendly_name?: string | null }[];
     }>('/auth/v1/user', { method: 'GET', token: accessToken });
-    if (result.status !== 200 || !result.body?.id) throw new HttpError(401, 'Sign in to continue.');
+    if ([401, 403].includes(result.status)) throw new HttpError(401, 'Sign in to continue.');
+    if (result.status !== 200 || !result.body?.id)
+      throw new HttpError(502, 'The identity service is unavailable. Try again.');
     const claims = decodeClaims(accessToken);
     if (claims.sub !== result.body.id) throw new HttpError(401, 'Sign in to continue.');
     const factors = result.body.factors ?? [];
@@ -215,7 +242,14 @@ export class SupabaseAuth {
 
   async signOut(accessToken: string, scope: 'local' | 'global' = 'global'): Promise<void> {
     this.cache.delete(accessToken);
-    await this.call(`/auth/v1/logout?scope=${scope}`, { method: 'POST', token: accessToken });
+    const result = await this.call(`/auth/v1/logout?scope=${scope}`, {
+      method: 'POST',
+      token: accessToken,
+    });
+    if ([401, 403].includes(result.status))
+      throw new HttpError(401, 'Sign-out could not be confirmed. Sign in again and retry.');
+    if (![200, 204].includes(result.status))
+      throw new HttpError(502, 'Sign-out could not be confirmed. Please try again.');
   }
 
   // ---- TOTP multi-factor authentication ----
@@ -289,14 +323,21 @@ export class SupabaseAuth {
 }
 
 // ---- cookies ----
-export function readSessionCookies(request: Request): { access?: string; refresh?: string } {
+export function readSessionCookies(request: Request): {
+  access?: string;
+  refresh?: string;
+  legacyRefresh?: boolean;
+} {
   const out: { access?: string; refresh?: string } = {};
+  let legacy: string | undefined;
   for (const part of request.headers.get('cookie')?.split(';') ?? []) {
     const [name, ...rest] = part.trim().split('=');
     const value = rest.join('=');
     if (name === ACCESS_COOKIE && /^[A-Za-z0-9._-]{20,4096}$/.test(value)) out.access = value;
     if (name === REFRESH_COOKIE && /^[A-Za-z0-9._-]{10,4096}$/.test(value)) out.refresh = value;
+    if (name === LEGACY_REFRESH_COOKIE && /^[A-Za-z0-9._-]{10,4096}$/.test(value)) legacy = value;
   }
+  if (!out.refresh && legacy) return { ...out, refresh: legacy, legacyRefresh: true };
   return out;
 }
 export function sessionCookieHeaders(session: SupabaseSession, secure: boolean): string[] {
@@ -304,13 +345,15 @@ export function sessionCookieHeaders(session: SupabaseSession, secure: boolean):
   const maxAge = Math.max(60, session.expiresAt - Math.floor(Date.now() / 1000));
   return [
     `${ACCESS_COOKIE}=${session.accessToken}; ${flags}; Max-Age=${maxAge}`,
-    `${REFRESH_COOKIE}=${session.refreshToken}; HttpOnly; Path=/api/session; SameSite=Strict${secure ? '; Secure' : ''}; Max-Age=${REFRESH_MAX_AGE}`,
+    `${REFRESH_COOKIE}=${session.refreshToken}; HttpOnly; Path=/api; SameSite=Strict${secure ? '; Secure' : ''}; Max-Age=${REFRESH_MAX_AGE}`,
+    `${LEGACY_REFRESH_COOKIE}=; HttpOnly; Path=/api/session; SameSite=Strict${secure ? '; Secure' : ''}; Max-Age=0`,
   ];
 }
 export function clearedSessionCookieHeaders(secure: boolean): string[] {
   const s = secure ? '; Secure' : '';
   return [
     `${ACCESS_COOKIE}=; HttpOnly; Path=/; SameSite=Lax${s}; Max-Age=0`,
-    `${REFRESH_COOKIE}=; HttpOnly; Path=/api/session; SameSite=Strict${s}; Max-Age=0`,
+    `${REFRESH_COOKIE}=; HttpOnly; Path=/api; SameSite=Strict${s}; Max-Age=0`,
+    `${LEGACY_REFRESH_COOKIE}=; HttpOnly; Path=/api/session; SameSite=Strict${s}; Max-Age=0`,
   ];
 }

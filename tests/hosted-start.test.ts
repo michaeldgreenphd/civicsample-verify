@@ -3,11 +3,12 @@ import test from 'node:test';
 import { checkHostedAuth, hostedSettings } from '../scripts/hosted-start.mjs';
 import { proxy } from '../src/proxy';
 import { NextRequest } from 'next/server';
+import { APPROVED_STAGING_PROJECT_REFS } from '../scripts/supabase-identity-tools.mjs';
 
 const commit = 'a'.repeat(40);
 const env = {
   VERIFY_DATA_BACKEND: 'supabase',
-  VERIFY_SUPABASE_URL: 'https://abcdefghijklmnopqrst.supabase.co',
+  VERIFY_SUPABASE_URL: `https://${APPROVED_STAGING_PROJECT_REFS[0]}.supabase.co`,
   VERIFY_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_synthetic_000000000',
   RENDER_EXTERNAL_URL: 'https://synthetic-practice.onrender.com',
   RENDER_GIT_COMMIT: commit,
@@ -25,6 +26,7 @@ test('public startup fails closed on local auth, insecure origin, privileged con
     { VERIFY_SITE_ORIGIN: 'https://name:password@synthetic.invalid' },
     { VERIFY_SITE_ORIGIN: 'https://localhost' },
     { VERIFY_SUPABASE_PUBLISHABLE_KEY: 'sb_secret_synthetic_only' },
+    { VERIFY_SUPABASE_URL: 'https://abcdefghijklmnopqrst.supabase.co' },
     {
       VERIFY_SUPABASE_PUBLISHABLE_KEY: `h.${Buffer.from('{"role":"service_role"}').toString('base64url')}.s`,
     },

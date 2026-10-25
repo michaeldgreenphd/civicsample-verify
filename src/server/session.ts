@@ -68,7 +68,10 @@ async function identityFor(
   };
 }
 
-export async function resolveSession(request: Request): Promise<ResolvedSession> {
+export async function resolveSession(
+  request: Request,
+  onCookies: (cookies: string[]) => void = () => undefined,
+): Promise<ResolvedSession> {
   if (dataBackend() === 'local') {
     const local = getLocalActor(request);
     return {
@@ -83,42 +86,55 @@ export async function resolveSession(request: Request): Promise<ResolvedSession>
     return { actor: null, setCookies: [], backend: 'supabase' };
   let access = cookies.access;
   let setCookies: string[] = [];
+  const updateCookies = (cookies: string[]) => {
+    setCookies = cookies;
+    // A later data-service or authorization error must still return a rotated refresh token.
+    onCookies(cookies);
+  };
   let user: VerifiedUser | null = null;
   if (access) {
     try {
       user = await auth.verify(access);
-      // Refresh ahead of expiry so a working session does not drop mid-form.
-      if (user.exp && user.exp - Math.floor(Date.now() / 1000) < 120 && cookies.refresh) {
-        const next = await auth.refresh(cookies.refresh);
-        access = next.accessToken;
-        user = await auth.verify(access);
-        setCookies = sessionCookieHeaders(next, secureCookies(config));
-      }
     } catch (error) {
       if (!(error instanceof HttpError && error.status === 401)) throw error;
       user = null;
     }
   }
-  if (!user && cookies.refresh) {
+  // Refresh ahead of expiry, on every protected API route, so an active review does not lose its
+  // session mid-form. Definite Auth refusals clear cookies; a temporary outage keeps them usable.
+  if (cookies.refresh && (!user || user.exp - Math.floor(Date.now() / 1000) < 120)) {
     try {
       const next = await auth.refresh(cookies.refresh);
       access = next.accessToken;
+      updateCookies(sessionCookieHeaders(next, secureCookies(config)));
       user = await auth.verify(access);
-      setCookies = sessionCookieHeaders(next, secureCookies(config));
-    } catch {
+    } catch (error) {
+      if (!(error instanceof HttpError && error.status === 401)) throw error;
+      updateCookies(clearedSessionCookieHeaders(secureCookies(config)));
       return {
         actor: null,
-        setCookies: clearedSessionCookieHeaders(secureCookies(config)),
+        setCookies,
         backend: 'supabase',
       };
     }
   }
-  if (!user || !access)
+  if (!user || !access) {
+    updateCookies(clearedSessionCookieHeaders(secureCookies(config)));
     return {
       actor: null,
-      setCookies: clearedSessionCookieHeaders(secureCookies(config)),
+      setCookies,
       backend: 'supabase',
     };
+  }
+  // The startup session request receives the legacy /api/session cookie. Migrate it without
+  // forcing returning users to sign in again; new and legacy names cannot shadow one another.
+  if (cookies.legacyRefresh && cookies.refresh && setCookies.length === 0)
+    updateCookies(
+      sessionCookieHeaders(
+        { accessToken: access, refreshToken: cookies.refresh, expiresAt: user.exp },
+        secureCookies(config),
+      ),
+    );
   const actor = await identityFor(config, user, access);
   return { actor, setCookies, backend: 'supabase' };
 }

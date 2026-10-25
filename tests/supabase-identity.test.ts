@@ -264,6 +264,15 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
   const renamed = config();
   renamed.accounts[0].displayName = 'Another name';
   assert.notEqual(planSha256(buildBootstrapPlan(renamed, root)), planSha256(plan));
+  const compatibilityName = config();
+  compatibilityName.accounts[0].displayName = 'Synthetic investigator\u00a0';
+  const spaceName = config();
+  spaceName.accounts[0].displayName = 'Synthetic investigator ';
+  assert.notEqual(
+    planSha256(buildBootstrapPlan(compatibilityName, root)),
+    planSha256(buildBootstrapPlan(spaceName, root)),
+    'the exact applied name is bound even when Unicode compatibility normalization matches',
+  );
   assert.equal(plan.schema.expectedFinalVersion, '8.1.2-reviewer-profile');
   assert.equal(plan.database, null);
   const withDb = config({
@@ -441,7 +450,13 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
     } else if (url.pathname === '/rest/v1/account_locks' && options?.method === 'GET')
       body = openLocks.map(() => ({ lock_id: '00000000-0000-4000-8000-000000000301' }));
     else if (url.pathname === '/rest/v1/users')
-      body = [{ user_id: '00000000-0000-4000-8000-000000000201' }];
+      body = [
+        {
+          user_id: '00000000-0000-4000-8000-000000000201',
+          is_active: true,
+          ...JSON.parse(String(options?.body))[0],
+        },
+      ];
     else if (url.pathname === '/rest/v1/app_schema_version') body = [{ version: 'x' }];
     return new Response(JSON.stringify(body), {
       status: 200,
@@ -473,7 +488,8 @@ test('admin client: confirmed accounts with generated passwords, linked app rows
     'REVIEWER',
   );
   assert.equal(linked.userId, '00000000-0000-4000-8000-000000000201');
-  const row = calls.find((x) => x.path.startsWith('/rest/v1/users'))!.body as {
+  const row = calls.find((x) => x.method === 'POST' && x.path.startsWith('/rest/v1/users'))!
+    .body as {
     auth_uid: string;
     is_pilot_test_account: boolean;
   }[];

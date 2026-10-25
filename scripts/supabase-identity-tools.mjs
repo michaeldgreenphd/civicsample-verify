@@ -390,14 +390,14 @@ export function buildBootstrapPlan(
       role: a.role,
       // Every field the apply provisions is bound into the reviewed hash; the display name as a
       // digest so the plan discloses no name.
-      displayNameSha256: sha256(a.displayName.normalize('NFKC')),
+      displayNameSha256: sha256(a.displayName),
       // A pilot test account (REVIEWER only) is enrolled with PILOT scope and takes synthetic
       // pilot mappings; the flag is immutable in public.users, so it is bound into the plan.
       isPilotTestAccount: a.isPilotTestAccount === true,
       authUser:
         'created with email_confirm: true and a generated password written only to the private credentials file',
       applicationUser:
-        'public.users row with auth_uid linked by the service role; no invitation e-mail',
+        'link public.users by auth_uid; reconcile only display_name on matching active identities; refuse role or pilot-status conflicts; no invitation e-mail',
     })),
     // The exact destination (non-secret identity) is bound into the reviewed hash; apply-schema
     // refuses a configuration whose destination differs from the plan.
@@ -417,6 +417,47 @@ export const planSha256 = (plan) => sha256(JSON.stringify(plan));
 // ---------------------------------------------------------------------------------------------
 export function adminClient(config, fetchImpl = fetch) {
   const origin = config.project.projectUrl;
+  const appUserColumns = 'user_id,auth_uid,email,display_name,role,is_pilot_test_account,is_active';
+  function requireAppIdentity(row, authUid, email, role, pilot, allowUnlinked = false) {
+    if (!row || typeof row.user_id !== 'string' || typeof row.display_name !== 'string')
+      refuse('APP_USER', 'The application identity was not returned completely.');
+    if (row.role !== role)
+      refuse('ROLE_CONFLICT', 'The existing application role differs from the reviewed plan.');
+    if (row.is_pilot_test_account !== pilot)
+      refuse(
+        'PILOT_STATUS_CONFLICT',
+        'The existing immutable pilot status differs from the reviewed plan.',
+      );
+    if (row.is_active !== true)
+      refuse('INACTIVE_APP_USER', 'The application account is inactive; it cannot be reactivated.');
+    if (
+      typeof row.email !== 'string' ||
+      row.email.toLowerCase() !== email.toLowerCase() ||
+      (row.auth_uid !== authUid && !(allowUnlinked && row.auth_uid === null))
+    )
+      refuse(
+        'IDENTITY_CONFLICT',
+        'The existing application identity differs from the reviewed plan.',
+      );
+  }
+  function oneAppUser(rows, allowMissing = false) {
+    if (!Array.isArray(rows) || rows.length > 1 || (!allowMissing && rows.length !== 1))
+      refuse('APP_USER', 'Exactly one application user row must be confirmed.');
+    return rows[0] ?? null;
+  }
+  async function updateAppUser(row, body) {
+    // Inactive rows and concurrently linked identities are never overwritten. Role and pilot
+    // status cannot change under the preserved users_update_check database trigger.
+    const authFilter = row.auth_uid === null ? 'is.null' : `eq.${encodeURIComponent(row.auth_uid)}`;
+    return oneAppUser(
+      await call(
+        'PATCH',
+        `/rest/v1/users?user_id=eq.${encodeURIComponent(row.user_id)}&auth_uid=${authFilter}&is_active=eq.true`,
+        body,
+        { Prefer: 'return=representation' },
+      ),
+    );
+  }
   async function call(method, path, body, headers = {}) {
     const url = new URL(path, origin);
     if (url.origin !== origin) refuse('ORIGIN', 'Requests go to the declared staging origin only.');
@@ -568,12 +609,53 @@ export function adminClient(config, fetchImpl = fetch) {
     async findAppUserByAuthUid(id) {
       const rows = await call(
         'GET',
-        `/rest/v1/users?auth_uid=eq.${encodeURIComponent(id)}&select=user_id,email,role,is_active`,
+        `/rest/v1/users?auth_uid=eq.${encodeURIComponent(id)}&select=${appUserColumns}`,
       );
-      return Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+      return oneAppUser(rows, true);
+    },
+    /** Existing users keep their identity, role, pilot status, locks and password. The account
+     *  apply command may reconcile only the display name that its reviewed plan hashes. */
+    async reconcileLinkedAppUser(
+      row,
+      authUid,
+      email,
+      displayName,
+      role,
+      isPilotTestAccount = false,
+    ) {
+      const pilot = isPilotTestAccount === true;
+      requireAppIdentity(row, authUid, email, role, pilot);
+      if (row.display_name === displayName)
+        return { userId: row.user_id, displayNameUpdated: false };
+      const updated = await updateAppUser(row, { display_name: displayName });
+      requireAppIdentity(updated, authUid, email, role, pilot);
+      if (updated.display_name !== displayName)
+        refuse('APP_USER', 'The reviewed display name was not confirmed.');
+      return { userId: updated.user_id, displayNameUpdated: true };
     },
     /** Application roster row, linked by auth_uid so no claim-by-e-mail step is needed. */
     async upsertAppUser(authUid, email, displayName, role, isPilotTestAccount = false) {
+      const pilot = isPilotTestAccount === true;
+      const existing = oneAppUser(
+        await call(
+          'GET',
+          `/rest/v1/users?email=eq.${encodeURIComponent(email.toLowerCase())}&select=${appUserColumns}`,
+        ),
+        true,
+      );
+      if (existing) {
+        requireAppIdentity(existing, authUid, email, role, pilot, true);
+        if (existing.auth_uid === authUid)
+          return this.reconcileLinkedAppUser(existing, authUid, email, displayName, role, pilot);
+        const linked = await updateAppUser(existing, {
+          auth_uid: authUid,
+          display_name: displayName,
+        });
+        requireAppIdentity(linked, authUid, email, role, pilot);
+        if (linked.display_name !== displayName)
+          refuse('APP_USER', 'The reviewed display name was not confirmed.');
+        return { userId: linked.user_id };
+      }
       const rows = await call(
         'POST',
         '/rest/v1/users?on_conflict=email',
@@ -583,14 +665,18 @@ export function adminClient(config, fetchImpl = fetch) {
             email: email.toLowerCase(),
             display_name: displayName,
             role,
-            is_pilot_test_account: isPilotTestAccount === true,
+            is_pilot_test_account: pilot,
           },
         ],
-        { Prefer: 'resolution=merge-duplicates,return=representation' },
+        // A concurrent account insertion is not authority to overwrite that identity. Refuse
+        // the empty return and let a subsequent authorized run reconcile it explicitly.
+        { Prefer: 'resolution=ignore-duplicates,return=representation' },
       );
-      if (!Array.isArray(rows) || rows.length !== 1)
-        refuse('APP_USER', 'The application user row was not confirmed.');
-      return { userId: rows[0].user_id };
+      const inserted = oneAppUser(rows);
+      requireAppIdentity(inserted, authUid, email, role, pilot);
+      if (inserted.display_name !== displayName)
+        refuse('APP_USER', 'The reviewed display name was not confirmed.');
+      return { userId: inserted.user_id };
     },
     async schemaVersions() {
       const rows = await call(

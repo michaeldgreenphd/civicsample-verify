@@ -171,6 +171,10 @@ async function mu7Route(
 }
 
 async function handle(request: Request) {
+  let pendingCookies: string[] = [];
+  const rememberCookies = (cookies: string[]) => {
+    pendingCookies = cookies;
+  };
   try {
     const mutation = request.method !== 'GET';
     assertRequestOrigin(request, mutation);
@@ -190,7 +194,7 @@ async function handle(request: Request) {
         });
         const resolved = await resolveSession(probe);
         if (!resolved.actor) {
-          await auth.signOut(session.accessToken).catch(() => undefined);
+          await auth.signOut(session.accessToken, 'local').catch(() => undefined);
           throw new HttpError(403, 'This account has no active application role.');
         }
         return json(
@@ -202,10 +206,24 @@ async function handle(request: Request) {
       }
       if (path === '/api/session' && request.method === 'DELETE') {
         const cookies = readSessionCookies(request);
-        if (cookies.access) await auth.signOut(cookies.access).catch(() => undefined);
+        let access = cookies.access;
+        if (access) {
+          try {
+            await auth.signOut(access);
+          } catch (error) {
+            if (!(error instanceof HttpError && error.status === 401) || !cookies.refresh)
+              throw error;
+            access = undefined; // An expired access token can still revoke via its refresh token.
+          }
+        }
+        if (!access && cookies.refresh) {
+          const renewed = await auth.refresh(cookies.refresh);
+          rememberCookies(sessionCookieHeaders(renewed, secure));
+          await auth.signOut(renewed.accessToken);
+        }
         return json({ ok: true }, 200, {}, clearedSessionCookieHeaders(secure));
       }
-      const resolved = await resolveSession(request);
+      const resolved = await resolveSession(request, rememberCookies);
       if (path === '/api/session' && request.method === 'GET')
         return json(
           {
@@ -219,7 +237,18 @@ async function handle(request: Request) {
         );
       if (!resolved.actor) throw new HttpError(401, 'Sign in to continue.');
       // Awaited inside the try block so a thrown HttpError or ServiceError is mapped below.
-      return await withSupabaseActor(request, path, resolved.actor, resolved.setCookies);
+      const response = await withSupabaseActor(
+        request,
+        path,
+        resolved.actor,
+        resolved.setCookies,
+        rememberCookies,
+      );
+      // Download responses need refreshed cookies too; MFA responses already carry their newer
+      // session, which must not be overwritten with a pre-verification token.
+      if (!response.headers.has('Set-Cookie'))
+        for (const cookie of pendingCookies) response.headers.append('Set-Cookie', cookie);
+      return response;
     }
     if (path === '/api/session') {
       if (request.method === 'GET') {
@@ -383,10 +412,12 @@ async function handle(request: Request) {
     throw new HttpError(404, 'Resource not available.');
   } catch (error) {
     if (error instanceof z.ZodError)
-      return json({ error: 'Check the required fields and try again.' }, 400);
-    if (error instanceof HttpError) return json({ error: error.message }, error.status);
+      return json({ error: 'Check the required fields and try again.' }, 400, {}, pendingCookies);
+    if (error instanceof HttpError)
+      return json({ error: error.message }, error.status, {}, pendingCookies);
     // Only the service's intentional safe errors may cross this boundary. Never expose SQL/messages.
-    if (error instanceof service.ServiceError) return json({ error: error.message }, error.status);
+    if (error instanceof service.ServiceError)
+      return json({ error: error.message }, error.status, {}, pendingCookies);
     console.error('verify_request_failed');
     return json(
       {
@@ -394,6 +425,8 @@ async function handle(request: Request) {
           'The request could not be completed. Your submitted records are unchanged. Try again or contact the investigator.',
       },
       500,
+      {},
+      pendingCookies,
     );
   }
 }
@@ -405,6 +438,7 @@ async function withSupabaseActor(
   path: string,
   actor: SessionActor,
   setCookies: string[],
+  rememberCookies: (cookies: string[]) => void,
 ) {
   const { config, auth } = supabaseRuntime();
   const secure = config.siteOrigin.startsWith('https://');
@@ -447,6 +481,7 @@ async function withSupabaseActor(
     }
     const session = await auth.verifyTotp(actor.accessToken, factorId, input.code);
     const cookies = sessionCookieHeaders(session, secure);
+    rememberCookies(cookies);
     const probe = new Request(request.url, {
       headers: { cookie: cookies.map((c) => c.split(';')[0]).join('; ') },
     });

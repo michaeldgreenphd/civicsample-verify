@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readPrivateJson } from './staging-account-tools.mjs';
+import { APPROVED_STAGING_PROJECT_REFS } from './supabase-identity-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REF = /^[a-z][a-z0-9]{15,39}$/;
@@ -23,6 +24,8 @@ export function validateWebConfig(config) {
   if (p.environment !== 'staging') problems.push('project.environment must be "staging"');
   if (!REF.test(p.stagingProjectRef ?? ''))
     problems.push('project.stagingProjectRef is not a project reference');
+  else if (!APPROVED_STAGING_PROJECT_REFS.includes(p.stagingProjectRef))
+    problems.push('project.stagingProjectRef is not independently approved for staging');
   if (p.projectUrl !== `https://${p.stagingProjectRef}.supabase.co`)
     problems.push('project.projectUrl must be https://<ref>.supabase.co');
   const key = config?.publishableKey ?? '';
@@ -45,6 +48,9 @@ export function validateWebConfig(config) {
   try {
     const o = new URL(config?.siteOrigin ?? '');
     if (o.origin !== config.siteOrigin) problems.push('siteOrigin must be a bare origin');
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(o.hostname);
+    if (o.protocol !== 'https:' && !(loopback && o.protocol === 'http:'))
+      problems.push('siteOrigin requires HTTPS outside explicit loopback hosts');
   } catch {
     problems.push('siteOrigin is not a URL');
   }
