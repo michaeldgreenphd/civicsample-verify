@@ -58,6 +58,14 @@ class Refused(Exception):
     """Only a fixed, non-sensitive category may leave the process."""
 
 
+class ProviderFailure(Refused):
+    """Safe public category; diagnostic details belong in the private store only."""
+
+    def __init__(self, category: str, diagnostic: dict):
+        super().__init__(category)
+        self.diagnostic = diagnostic
+
+
 def require(condition: object, code: str = "invalid_input") -> None:
     if not condition:
         raise Refused(code)
@@ -250,7 +258,7 @@ class Provider:
         self.opener = urllib.request.build_opener(NoRedirect)
 
     def call(self, path: str, body: dict | None = None) -> dict:
-        require(path == "/v1/messages" or path in tuple("/v1/models/" + m for m in MODELS), "invalid_endpoint")
+        require(path in ("/v1/messages", "/v1/messages/count_tokens") or path in tuple("/v1/models/" + m for m in MODELS), "invalid_endpoint")
         request = urllib.request.Request("https://api.anthropic.com" + path,
                                          data=encode(body) if body is not None else None,
                                          headers={"Authorization": "Bearer " + self.key, "anthropic-version": "2026-10-21", "Content-Type": "application/json"})
@@ -261,8 +269,44 @@ class Provider:
             result = decode(raw)
             require(isinstance(result, dict), "invalid_provider_response")
             return result
+        except urllib.error.HTTPError as error:
+            # Error messages can echo evidence. Never put them in an exception's
+            # args, stdout or stderr; retain bounded details in the private report.
+            diagnostic = {"kind": "http"}
+            status = error.code
+            category = "provider_http_error"
+            if type(status) is int and 400 <= status <= 599:
+                diagnostic["http_status"] = status
+                category = "provider_http_" + str(status)
+            try:
+                raw = error.read(65_537)
+                diagnostic["body_truncated"] = len(raw) > 65_536
+                if not diagnostic["body_truncated"]:
+                    parsed = decode(raw)
+                    detail = parsed.get("error", {}) if isinstance(parsed, dict) else {}
+                    if isinstance(detail, dict):
+                        if detail.get("type") in ("invalid_request_error", "authentication_error", "permission_error",
+                                                  "not_found_error", "request_too_large", "rate_limit_error",
+                                                  "api_error", "overloaded_error", "timeout_error"):
+                            diagnostic["error_type"] = detail["type"]
+                        if isinstance(detail.get("message"), str):
+                            diagnostic["message"] = detail["message"].replace(self.key, "[redacted]")[:12_000]
+                request_id = error.headers.get("request-id") if error.headers else None
+                if isinstance(request_id, str) and re.fullmatch(r"req_[A-Za-z0-9_-]{1,160}", request_id):
+                    diagnostic["request_id"] = request_id.replace(self.key, "[redacted]")
+            except Exception:
+                # The HTTP status is still useful when its body cannot be parsed.
+                diagnostic["body_unreadable"] = True
+            finally:
+                error.close()
+            raise ProviderFailure(category, diagnostic) from None
         except Refused:
             raise
+        except TimeoutError:
+            raise ProviderFailure("provider_timeout", {"kind": "timeout"}) from None
+        except urllib.error.URLError:
+            # A URL/reason may contain credentials or source text. Keep neither.
+            raise ProviderFailure("provider_connection_failed", {"kind": "transport"}) from None
         except Exception:
             # Never include provider exception bodies or request URLs in the public log.
             raise Refused("provider_request_failed") from None
@@ -275,6 +319,44 @@ class Provider:
 
     def message(self, request: dict) -> dict:
         return self.call("/v1/messages", request)
+
+
+    def count_tokens(self, request: dict) -> int:
+        # Token counting accepts the prompt/schema/thinking settings, not the
+        # generation-only max_tokens, stream or service_tier parameters.
+        body = {field: request[field] for field in ("model", "system", "messages", "thinking", "output_config")}
+        result = self.call("/v1/messages/count_tokens", body)
+        count = result.get("input_tokens")
+        require(type(count) is int and count >= 0, "invalid_token_count")
+        return count
+
+
+def preflight(bundle: dict, bundle_sha: str, provider: Provider, persist: Callable[[dict], None]) -> dict:
+    """Free token-count requests only; never read or mutate the paid-run ledger."""
+    report = {"format": "civicsample-ai-mapping-preflight-1.0", "input_sha256": bundle_sha,
+              "settings": SETTINGS, "started_at": now(), "status": "running", "records": []}
+    try:
+        provider.check_models()
+        for unit in bundle["units"]:
+            for model in MODELS:
+                request = request_for(bundle, unit, model)
+                record = {"model": model, "unit_id": unit["unit_id"], "request_sha256": sha(encode(request))}
+                report["records"].append(record)
+                record["input_tokens"] = provider.count_tokens(request)
+    except Exception as error:
+        report["status"] = "failed"
+        report["failure_category"] = str(error) if isinstance(error, Refused) else "preflight_failed"
+        if isinstance(error, ProviderFailure):
+            report["provider_diagnostic"] = error.diagnostic
+        report["finished_at"] = now()
+        persist(report)
+        raise Refused(report["failure_category"]) from None
+    report["status"] = "passed"
+    report["finished_at"] = now()
+    persist(report)
+    return {"status": "preflight_passed", "units": 100, "models": 3,
+            "counted_requests": len(report["records"]), "paid_requests": 0,
+            "model_input_tokens": {model: sum(r["input_tokens"] for r in report["records"] if r["model"] == model) for model in MODELS}}
 
 
 def usage_cost(response: dict, model: str) -> tuple[int, dict]:
@@ -384,6 +466,8 @@ def run(bundle: dict, bundle_sha: str, state: dict, cap: int, approval_ref: str,
             except Exception as error:
                 record["status"] = "unreconciled"
                 record["failure_category"] = str(error) if isinstance(error, Refused) else "request_failed"
+                if isinstance(error, ProviderFailure):
+                    record["provider_diagnostic"] = error.diagnostic
                 persist(state)
                 raise Refused("unreconciled_request") from None
             persist(state)
@@ -462,9 +546,17 @@ class PrivateStore:
         return value
 
     def persist(self, state: dict) -> None:
-        atomic_private(self.ledger, state)
-        self.git(["add", "--", "state/mapping-review-ledger.json"])
-        self.git(["-c", "user.name=CivicSample AI runner", "-c", "user.email=runner@users.noreply.github.com", "commit", "--quiet", "-m", "Checkpoint private mapping comparison", "--", "state/mapping-review-ledger.json"])
+        self.persist_document("mapping-review-ledger.json", state)
+
+    def persist_preflight(self, report: dict) -> None:
+        self.persist_document("mapping-review-preflight.json", report)
+
+    def persist_document(self, name: str, value: dict) -> None:
+        require(name in ("mapping-review-ledger.json", "mapping-review-preflight.json"), "unsafe_output")
+        relative = "state/" + name
+        atomic_private(self.root / relative, value)
+        self.git(["add", "--", relative])
+        self.git(["-c", "user.name=CivicSample AI runner", "-c", "user.email=runner@users.noreply.github.com", "commit", "--quiet", "-m", "Checkpoint private mapping comparison", "--", relative])
         # Ordinary push only; a competing writer causes a refusal before the next call.
         self.git(["push", "--quiet", "origin", "HEAD"])
 
@@ -476,7 +568,7 @@ class QuietParser(argparse.ArgumentParser):
 
 def main() -> None:
     parser = QuietParser(description="Private mapping comparison; no packets or answers are printed.")
-    parser.add_argument("command", choices=("dry-run", "models", "run"))
+    parser.add_argument("command", choices=("dry-run", "models", "preflight", "run"))
     parser.add_argument("--input")
     parser.add_argument("--input-sha256")
     parser.add_argument("--private-store", action="store_true")
@@ -512,6 +604,11 @@ def main() -> None:
         bundle = validate_bundle(raw, expected)
         if args.command == "dry-run":
             print(json.dumps(dry_run(bundle), sort_keys=True))
+            return
+        if args.command == "preflight":
+            require(store, "private_store_required")
+            result = preflight(bundle, expected, Provider(os.environ.get("ANTHROPIC_API_KEY", "")), store.persist_preflight)
+            print(json.dumps(result, sort_keys=True))
             return
         require(store and cap is not None and args.approval_ref, "private_store_required")
         state = store.load() or new_state(expected, cap, args.approval_ref)

@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
+import urllib.error
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -158,6 +161,159 @@ class MappingRunnerTests(unittest.TestCase):
         self.assertEqual(seen[0].get_header("Anthropic-version"), "2026-10-21")
         with self.assertRaisesRegex(runner.Refused, "redirect_refused"):
             runner.NoRedirect().redirect_request(None, None, 302, None, None, "https://example.invalid/")
+
+    def test_http_error_has_private_diagnostics_and_safe_public_exception(self):
+        key = "SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY"
+        provider = runner.Provider(key)
+        body = runner.encode({"type": "error", "error": {"type": "invalid_request_error",
+                              "message": "PRIVATE_EVIDENCE " + key}, "unexpected": "PRIVATE_EXTRA"})
+        error = urllib.error.HTTPError("https://api.anthropic.com/v1/messages", 400,
+                                       "PRIVATE_HTTP_REASON", {"request-id": "req_synthetic"}, io.BytesIO(body))
+        output = io.StringIO()
+        with patch.object(provider.opener, "open", side_effect=error), redirect_stdout(output), redirect_stderr(output):
+            with self.assertRaises(runner.ProviderFailure) as caught:
+                provider.message({})
+        failure = caught.exception
+        self.assertEqual(str(failure), "provider_http_400")
+        self.assertEqual(failure.args, ("provider_http_400",))
+        self.assertEqual(failure.diagnostic["http_status"], 400)
+        self.assertEqual(failure.diagnostic["error_type"], "invalid_request_error")
+        self.assertEqual(failure.diagnostic["request_id"], "req_synthetic")
+        self.assertEqual(failure.diagnostic["message"], "PRIVATE_EVIDENCE [redacted]")
+        self.assertNotIn(key, json.dumps(failure.diagnostic))
+        self.assertNotIn("PRIVATE_EXTRA", json.dumps(failure.diagnostic))
+        self.assertNotIn("PRIVATE", repr(failure))
+        self.assertEqual(output.getvalue(), "")
+
+    def test_http_failure_parsing_is_bounded_and_unknown_values_stay_private(self):
+        provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
+        cases = [(b"SECRET_NOT_JSON", 400), (b"x" * 70_000, 503),
+                 (runner.encode({"error": {"type": "PRIVATE_TYPE", "message": "x" * 20_000}}), 429)]
+        for body, status in cases:
+            error = urllib.error.HTTPError("https://api.anthropic.com/v1/messages", status,
+                                           "PRIVATE_REASON", {"request-id": "\nPRIVATE_HEADER"}, io.BytesIO(body))
+            with self.subTest(status=status), patch.object(provider.opener, "open", side_effect=error):
+                with self.assertRaises(runner.ProviderFailure) as caught:
+                    provider.message({})
+            failure = caught.exception
+            self.assertEqual(str(failure), "provider_http_" + str(status))
+            self.assertNotIn("request_id", failure.diagnostic)
+            self.assertNotIn("PRIVATE", json.dumps(failure.diagnostic))
+            if len(body) > 65_536:
+                self.assertTrue(failure.diagnostic["body_truncated"])
+                self.assertNotIn("message", failure.diagnostic)
+            if "message" in failure.diagnostic:
+                self.assertEqual(len(failure.diagnostic["message"]), 12_000)
+
+    def test_transport_errors_do_not_disclose_url_reason_or_retry(self):
+        provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
+        for error, category in [(TimeoutError("PRIVATE_TIMEOUT"), "provider_timeout"),
+                                (urllib.error.URLError("https://PRIVATE_URL/"), "provider_connection_failed")]:
+            with patch.object(provider.opener, "open", side_effect=error) as opened:
+                with self.assertRaises(runner.ProviderFailure) as caught:
+                    provider.message({})
+            self.assertEqual(str(caught.exception), category)
+            self.assertNotIn("PRIVATE", repr(caught.exception) + json.dumps(caught.exception.diagnostic))
+            self.assertEqual(opened.call_count, 1)
+
+    def test_http_failure_stops_run_with_diagnostics_and_reservation_retained(self):
+        failure = runner.ProviderFailure("provider_http_400", {"http_status": 400, "message": "PRIVATE_ERROR_DETAIL"})
+        provider = FakeProvider(lambda _: (_ for _ in ()).throw(failure))
+        saved = []
+        with self.assertRaisesRegex(runner.Refused, "^unreconciled_request$"):
+            self.run_fake(provider, lambda state: saved.append(copy.deepcopy(state)))
+        record = saved[-1]["records"][0]
+        self.assertEqual(record["provider_diagnostic"]["message"], "PRIVATE_ERROR_DETAIL")
+        self.assertEqual(record["status"], "unreconciled")
+        self.assertGreater(record["reserved_micro_usd"], 0)
+        self.assertNotIn("charged_micro_usd", record)
+        self.assertEqual(len(provider.calls), 1)
+        self.assertNotIn("PRIVATE_ERROR_DETAIL", json.dumps(runner.summary(self.state)))
+        with self.assertRaisesRegex(runner.Refused, "^unreconciled_request$"):
+            self.run_fake()
+
+    def test_count_tokens_sends_same_prompt_schema_thinking_but_no_generation_fields(self):
+        provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
+        request = runner.request_for(self.bundle, self.bundle["units"][0], runner.MODELS[0])
+        with patch.object(provider, "call", return_value={"input_tokens": 123}) as called:
+            self.assertEqual(provider.count_tokens(request), 123)
+        path, body = called.call_args.args
+        self.assertEqual(path, "/v1/messages/count_tokens")
+        self.assertEqual(body, {key: request[key] for key in ("model", "system", "messages", "thinking", "output_config")})
+        for bad in (None, -1, True, "123"):
+            with patch.object(provider, "call", return_value={"input_tokens": bad}), self.assertRaisesRegex(runner.Refused, "invalid_token_count"):
+                provider.count_tokens(request)
+
+    def test_preflight_counts_all_300_without_generation_or_ledger_changes(self):
+        provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
+        original = copy.deepcopy(self.state)
+        reports = []
+        output = io.StringIO()
+        with patch.object(provider, "check_models"), patch.object(provider, "count_tokens", return_value=123) as count, \
+                patch.object(provider, "message", side_effect=AssertionError("generation prohibited")), redirect_stdout(output):
+            result = runner.preflight(self.bundle, self.digest, provider, lambda report: reports.append(copy.deepcopy(report)))
+        self.assertEqual(count.call_count, 300)
+        self.assertEqual(self.state, original)
+        self.assertEqual(result["paid_requests"], 0)
+        self.assertEqual(result["model_input_tokens"], {model: 12_300 for model in runner.MODELS})
+        self.assertEqual(reports[0]["status"], "passed")
+        self.assertEqual(len(reports[0]["records"]), 300)
+        self.assertEqual(output.getvalue(), "")
+        self.assertNotIn("SYN-AI", json.dumps(result))
+        self.assertNotIn(self.digest, json.dumps(result))
+
+    def test_preflight_failure_saves_private_error_and_never_generates(self):
+        provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
+        failure = runner.ProviderFailure("provider_http_400", {"http_status": 400, "message": "PRIVATE_ERROR_DETAIL"})
+        reports = []
+        with patch.object(provider, "check_models"), patch.object(provider, "count_tokens", side_effect=failure) as count, \
+                patch.object(provider, "message", side_effect=AssertionError("generation prohibited")):
+            with self.assertRaisesRegex(runner.Refused, "^provider_http_400$"):
+                runner.preflight(self.bundle, self.digest, provider, lambda report: reports.append(copy.deepcopy(report)))
+        self.assertEqual(count.call_count, 1)
+        self.assertEqual(reports[0]["status"], "failed")
+        self.assertEqual(reports[0]["provider_diagnostic"]["message"], "PRIVATE_ERROR_DETAIL")
+
+    def test_preflight_cli_never_reads_or_writes_paid_ledger(self):
+        class FakeStore:
+            def __init__(self, *args):
+                pass
+            def input_bytes(store):
+                return self.raw
+            def load(store):
+                raise AssertionError("paid ledger read prohibited")
+            def persist(store, _):
+                raise AssertionError("paid ledger write prohibited")
+            def persist_preflight(store, report):
+                self.assertEqual(report["status"], "passed")
+        with patch.object(runner, "PrivateStore", FakeStore), \
+                patch.dict(runner.os.environ, {"AI_MAPPING_INPUT_SHA256": self.digest, "ANTHROPIC_API_KEY": "SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY"}), \
+                patch("sys.argv", ["runner.py", "preflight", "--private-store"]), \
+                patch.object(runner.Provider, "check_models"), patch.object(runner.Provider, "count_tokens", return_value=123), \
+                patch.object(runner.Provider, "message", side_effect=AssertionError("generation prohibited")), redirect_stdout(io.StringIO()) as output:
+            runner.main()
+        self.assertEqual(json.loads(output.getvalue())["status"], "preflight_passed")
+
+    def test_preflight_cannot_receive_paid_opt_in(self):
+        with patch("sys.argv", ["runner.py", "preflight", "--private-store", "--execute-paid"]), \
+                patch.object(runner, "PrivateStore") as store, self.assertRaisesRegex(runner.Refused, "invalid_command"):
+            runner.main()
+        store.assert_not_called()
+
+    def test_private_preflight_checkpoint_uses_distinct_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = object.__new__(runner.PrivateStore)
+            store.root = Path(d)
+            (store.root / "state").mkdir()
+            ledger = store.root / "state/mapping-review-ledger.json"
+            ledger.write_bytes(b"ORIGINAL_LEDGER_UNCHANGED")
+            with patch.object(store, "git", return_value=b"") as git:
+                store.persist_preflight({"status": "failed"})
+            self.assertEqual(ledger.read_bytes(), b"ORIGINAL_LEDGER_UNCHANGED")
+            self.assertEqual((store.root / "state/mapping-review-preflight.json").stat().st_mode & 0o777, 0o600)
+            self.assertNotIn("mapping-review-ledger.json", repr(git.call_args_list))
+            with self.assertRaisesRegex(runner.Refused, "unsafe_output"):
+                store.persist_document("../unsafe.json", {})
 
     def test_budget_rejects_nonfinite_overcap_and_reserves_before_call(self):
         for amount in ("100", "95.01", "NaN", "Infinity", "0", "-1", "0.0000001"):

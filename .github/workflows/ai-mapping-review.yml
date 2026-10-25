@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'dry-run is offline; models checks account access; run makes paid calls'
+        description: 'dry-run is offline; models checks access; preflight counts tokens free; run makes paid calls'
         type: choice
-        options: [dry-run, models, run]
+        options: [dry-run, models, preflight, run]
         default: dry-run
         required: true
       usd_cap:
@@ -61,6 +61,7 @@ jobs:
           case "$REQUESTED_COMMAND" in
             dry-run) python scripts/ai-mapping-review/runner.py dry-run --private-store ;;
             models) python scripts/ai-mapping-review/runner.py models ;;
+            preflight) python scripts/ai-mapping-review/runner.py preflight --private-store ;;
             run) python scripts/ai-mapping-review/runner.py run --private-store --execute-paid --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
             *) exit 2 ;;
           esac
