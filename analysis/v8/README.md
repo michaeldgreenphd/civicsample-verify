@@ -31,3 +31,9 @@ The application-written synthetic database round trip is exercised by
 `tests/mu8-roundtrip.test.ts` (see `docs/V8_SYNTHETIC_ROUNDTRIP.md`). It tests
 both overlap alternatives without choosing either for the study. Real-design
 analysis remains disabled pending the documented scientific and integrity gates.
+
+The loader also checks cross-file judgment/reference consistency, revision
+endpoints, adjudication basis and manifest counts. See
+[export integrity](../../docs/V8_EXPORT_INTEGRITY.md) for the enforced relationships
+and the remaining limits of the four-file format. Checksums and internal
+consistency do not authenticate a bundle against a trusted database snapshot.

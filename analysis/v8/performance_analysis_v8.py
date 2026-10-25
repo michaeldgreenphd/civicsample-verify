@@ -83,6 +83,87 @@ def refuse_unless(cond: bool, msg: str) -> None:
         raise Refused(msg)
 
 
+def verify_judgment_reference_consistency(J: pd.DataFrame, R: pd.DataFrame) -> None:
+    """Check the relationships in the existing database export views, not a new clinical rule.
+
+    This verifies the exported initial/effective endpoints only. Format 7.0 omits
+    intermediate revisions and judgment content hashes, so it cannot independently
+    reproduce the database's full snapshot hash.
+    """
+    payload = ("answer", "reason", "note", "uncertain")
+    required_j = {"judgment_status", "n_revisions", "first_submitted_at", "last_submitted_at"}
+    required_j.update(f"{field}_{stage}" for field in payload for stage in ("initial", "effective"))
+    required_r = {"routing", "final_answer", "final_status", "adjudication_status", "adjudication_basis",
+                  "adjudication_reason_code", "adjudication_disagreement_reason_code"}
+    required_r.update(f"answer_{stage}_slot{slot}" for stage in ("initial", "effective") for slot in (1, 2))
+    refuse_unless(required_j <= set(J.columns) and required_r <= set(R.columns),
+                  "judgment/reference export is missing required columns")
+    refuse_unless(J.judgment_status.isin(["ANSWERED", "NOT_ANSWERED"]).all(), "unknown judgment status")
+    refuse_unless(J.n_revisions.str.fullmatch(r"0|[1-9][0-9]*").all(), "invalid revision count")
+    answered = J.judgment_status.eq("ANSWERED")
+    blank_columns = [f"{f}_{s}" for f in payload for s in ("initial", "effective")]
+    blank_columns += ["first_submitted_at", "last_submitted_at"]
+    refuse_unless(J.loc[~answered, blank_columns].eq("").all().all()
+                  and J.loc[~answered, "n_revisions"].eq("0").all(),
+                  "unanswered assignments must not contain judgment data")
+    for stage in ("initial", "effective"):
+        a, reason, flag = (J.loc[answered, f"{field}_{stage}"] for field in ("answer", "reason", "uncertain"))
+        refuse_unless(a.isin(ANSWERS).all(), "unknown reviewer answer")
+        refuse_unless(flag.isin(["true", "false"]).all(), "uncertainty must be explicitly true or false")
+        refuse_unless(a.eq("DISAGREE").equals(reason.ne("")), "disagreement reason does not match reviewer answer")
+    unrevised = answered & J.n_revisions.eq("0")
+    for field in payload:
+        refuse_unless(J.loc[unrevised, f"{field}_initial"].equals(J.loc[unrevised, f"{field}_effective"]),
+                      "initial/effective judgments differ without a revision")
+    for row in J.loc[answered].itertuples():
+        try:
+            first = dt.datetime.fromisoformat(row.first_submitted_at.replace("Z", "+00:00"))
+            last = dt.datetime.fromisoformat(row.last_submitted_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise Refused("invalid judgment timestamp") from None
+        refuse_unless(first.tzinfo is not None and last.tzinfo is not None, "judgment timestamps need time zones")
+        refuse_unless(first <= last and (row.n_revisions != "0" or first == last),
+                      "judgment timestamps contradict revision history")
+    # Slot cardinality is checked by the caller before this join.
+    ji = J.assign(reviewer_slot=J.reviewer_slot.astype(int)).set_index(["unit_id", "reviewer_slot"])
+    adjudication_columns = ("adjudication_status", "adjudication_basis", "adjudication_reason_code",
+                            "adjudication_disagreement_reason_code")
+    adjudication_reasons = {"", "CONSTRUCT_BOUNDARY", "POLICY_RULE_INTERPRETATION", "MESH_PLACEMENT_MISLEADING",
+                           "TRIAL_CONTEXT", "PACKET_INSUFFICIENT", "MULTILABEL_OR_CROSS_AREA", "OTHER"}
+    for row in R.itertuples():
+        for slot in (1, 2):
+            for stage in ("initial", "effective"):
+                refuse_unless(getattr(row, f"answer_{stage}_slot{slot}") == ji.at[(row.unit_id, slot), f"answer_{stage}"],
+                              "reference answers differ from independent judgments")
+        a1, a2 = row.answer_effective_slot1, row.answer_effective_slot2
+        if not a1 or not a2:
+            routing, final, status = "INCOMPLETE", "", "INCOMPLETE"
+        elif a1 == a2:
+            routing = "BOTH_CANNOT_TELL" if a1 == "CANNOT_TELL" else f"CONCORDANT_{a1}"
+            final, status = a1, "CANNOT_TELL_BY_RULE" if a1 == "CANNOT_TELL" else "CONCORDANT"
+        else:
+            routing = "ROUTED"
+            refuse_unless(row.adjudication_disagreement_reason_code in adjudication_reasons,
+                          "unknown adjudication disagreement reason")
+            if row.adjudication_status == "UNRESOLVED_ESCALATED":
+                final, status = "", "UNRESOLVED"
+                refuse_unless(row.adjudication_basis == "NONE" and row.adjudication_reason_code == "",
+                              "unresolved adjudication must not claim a decision or reviewer basis")
+            else:
+                refuse_unless(row.adjudication_status == "DISCORDANT_RESOLVED", "routed reference lacks completed adjudication")
+                final, status = row.final_answer, "ADJUDICATED"
+                refuse_unless(final in ("AGREE", "DISAGREE"), "resolved adjudication needs a determinate answer")
+                expected_basis = "REVIEWER_1" if a1 == final else "REVIEWER_2" if a2 == final else "NEITHER"
+                refuse_unless(row.adjudication_basis == expected_basis, "adjudication basis contradicts reviewer answers")
+                refuse_unless((final == "DISAGREE") == (row.adjudication_reason_code != ""),
+                              "disagreement reason does not match adjudicated answer")
+        refuse_unless(row.routing == routing and row.final_answer == final and row.final_status == status,
+                      "final reference contradicts reviewer answers or adjudication")
+        if routing != "ROUTED":
+            refuse_unless(all(getattr(row, col) == "" for col in adjudication_columns),
+                          "non-routed reference must not contain adjudication data")
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # 1. Load and verify
 # ---------------------------------------------------------------------------------------------------------------------
@@ -100,8 +181,8 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) ->
         refuse_unless(B.sha256_file(d / f) == man["files"].get(f), f"{f}: SHA-256 differs from the manifest")
     T = {f: pd.read_csv(d / f, dtype=str, keep_default_na=False) for f in FILES}
     U, D, J, R = (T[f] for f in FILES)
-    # This first integration is an engineering test harness. Formal interpretation, frozen
-    # reference/snapshot verification and the database round trip are not approved or complete.
+    # This remains an engineering test harness. Full snapshot authentication and
+    # approved scientific interpretation are still required before real-data analysis.
     refuse_unless(dv.startswith("SYN-8") and D.nct_id.str.startswith("SYN-TRIAL-").all(),
                   "v8 integration is synthetic-only; real study analysis remains disabled")
     for frame in (U, D, R):
@@ -114,7 +195,7 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) ->
     refuse_unless(U.record_category.eq("MAPPING_UNIT_FORMAL").all(),
                   "pilot, training and development records cannot enter performance analysis")
     ui, ri = U.set_index("unit_id"), R.set_index("unit_id").loc[U.unit_id]
-    for column in ("family", "category", "mapping_code", "assignment_code", "assignment_status"):
+    for column in ("family", "category", "unit_role", "mapping_code", "assignment_code", "assignment_status"):
         refuse_unless(ui[column].equals(ri[column]), "reference metadata differs from frozen units")
     unknown = sorted({f"{fa}|{c}" for fa, c in zip(U.family, U.category) if c not in VOCABULARY.get(fa, set())})
     refuse_unless(not unknown, f"categories outside the v8 vocabulary (logged, not dropped): {unknown}")
@@ -133,14 +214,26 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) ->
                                     Ui.at[u, "assignment_status"]) for u in Ui.index}
     refuse_unless(B.set_sha256(art) == fz["assignment_set_sha256"], "assignment-set hash differs from the freeze")
     refuse_unless(set(U.unit_id) == set(D.index) == set(R.unit_id), "units, design rows and final reference cover different units")
+    refuse_unless(J.reviewer_slot.isin(["1", "2"]).all(), "reviewer slot must be 1 or 2")
     slots = J.groupby("unit_id").reviewer_slot.apply(lambda s: sorted(s.astype(int)))
     refuse_unless(all(slots.get(u, []) == [1, 2] for u in U.unit_id), "every unit needs one row per reviewer slot (1 and 2)")
+    verify_judgment_reference_consistency(J, R)
+    refuse_unless(all(man.get("row_counts", {}).get(f) == len(T[f]) for f in FILES),
+                  "manifest row counts differ from exported tables")
+    refuse_unless(fz.get("n_units") == len(U), "freeze unit count differs from exported tables")
+    refuse_unless(D.design_version.eq(dv).all()
+                  and D.assignment_set_id.eq(man["design"].get("assignment_set_id")).all(),
+                  "design rows differ from manifest design or assignment set")
+    for column in ("frame_stratum_size", "n_sampled_in_stratum"):
+        refuse_unless(D.groupby("stratum")[column].nunique().eq(1).all(),
+                      "stratum sizes must be consistent within each stratum")
     cnt = D.groupby("stratum").unit_id.size()
     nh = D.groupby("stratum").n_sampled_in_stratum.first().astype(int)
     bad = [s for s in cnt.index if cnt[s] != nh[s]]
     refuse_unless(not bad, f"strata whose number of units differs from their design n: {bad}")
     ov = sorted(set(D.overlap_setting))
     refuse_unless(len(ov) == 1 and ov[0] in ("ALLOW", "ONE_PER_TRIAL"), f"one overlap setting expected, found {ov}")
+    refuse_unless(man["design"].get("overlap_setting") == ov[0], "overlap setting differs from manifest design")
     refuse_unless(ov[0] != "ONE_PER_TRIAL" or D.nct_id.is_unique,
                   "ONE_PER_TRIAL contains a repeated trial")
     if design_manifest is not None:
