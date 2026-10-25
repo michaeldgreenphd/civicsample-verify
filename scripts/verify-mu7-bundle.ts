@@ -1,4 +1,4 @@
-// Checks downloaded bundle 7.0, 8.1 or 8.2 files without a database or network connection:
+// Checks downloaded bundle 7.0, 8.1, 8.2 or 8.3 files without a database or network connection:
 //
 //   node --import tsx scripts/verify-mu7-bundle.ts --bundle /abs/folder [--expect-manifest-sha256 <hash>]
 //
@@ -15,7 +15,11 @@ import {
   MU7_FORBIDDEN_COLUMNS,
   type Mu7ExportRole,
 } from '../src/lib/mu7-export';
-import { isMu81Design } from '../src/lib/mu7-types';
+import { isMu81Design, mu7ReasonCodes } from '../src/lib/mu7-types';
+import {
+  MU81_REVIEWER_PROFILE_ID,
+  MU81_REVIEWER_GUIDE_SHA256,
+} from '../src/lib/mu81-reviewer-profile';
 
 /** LF-delimited exporter CSV. A bare CR is field data in legacy exports, not a row separator. */
 function csvRecords(text: string): string[][] {
@@ -145,7 +149,8 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
   if (
     (m.bundle_format_version !== '7.0' &&
       m.bundle_format_version !== '8.1' &&
-      m.bundle_format_version !== '8.2') ||
+      m.bundle_format_version !== '8.2' &&
+      m.bundle_format_version !== '8.3') ||
     (m.mode !== 'PILOT' && m.mode !== 'FORMAL') ||
     !object(m.files) ||
     !object(m.row_counts)
@@ -171,13 +176,13 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       MU7_EXPORT_COLUMNS[r],
     ]),
   );
-  if (format === '8.2') {
+  if (format === '8.2' || format === '8.3') {
     columns['judgment_history.csv'] = HISTORY_COLUMNS;
     if (m.history_contract_version !== 'mu81-history-1')
       problems.push('unknown judgment history contract');
   }
   let needsProbabilities = false;
-  if (format === '8.1' || format === '8.2') {
+  if (format === '8.1' || format === '8.2' || format === '8.3') {
     if (
       !object(m.design) ||
       !isMu81Design(m.design.design_version) ||
@@ -199,8 +204,37 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       problems.push('this bundle must not carry a probability binding');
   } else if (object(m.design) && isMu81Design(m.design.design_version))
     problems.push('v8.1 design requires bundle format 8.1 or 8.2');
-  if (!sameKeys(m.files, Object.keys(columns)) || !sameKeys(m.row_counts, Object.keys(columns)))
+  const inventory = [...Object.keys(columns), ...(format === '8.3' ? ['reviewer_guide.md'] : [])];
+  if (!sameKeys(m.files, inventory) || !sameKeys(m.row_counts, inventory))
     problems.push('file inventory differs from the versioned bundle contract');
+  if (format === '8.3') {
+    const guide = read('reviewer_guide.md');
+    const p = m.reviewer_profile;
+    if (
+      !guide ||
+      !object(p) ||
+      !sameKeys(p, ['profile_id', 'rubric_sha256', 'binding_sha256', 'design_version']) ||
+      !object(m.design) ||
+      p.profile_id !== MU81_REVIEWER_PROFILE_ID ||
+      p.design_version !== m.design.design_version ||
+      p.rubric_sha256 !== MU81_REVIEWER_GUIDE_SHA256 ||
+      hash(guide) !== p.rubric_sha256 ||
+      m.files['reviewer_guide.md'] !== p.rubric_sha256 ||
+      m.row_counts['reviewer_guide.md'] !== 1 ||
+      p.binding_sha256 !==
+        hash(
+          ['mu81-reviewer-profile-1', p.design_version, p.profile_id, p.rubric_sha256].join('|'),
+        ) ||
+      (mode === 'FORMAL' &&
+        (!object(m.freeze) || m.freeze.reviewer_profile_sha256 !== p.binding_sha256))
+    )
+      problems.push('reviewer guide or profile differs from the frozen presentation contract');
+    else rows['reviewer_guide.md'] = 1;
+  } else if (
+    m.reviewer_profile != null ||
+    (object(m.freeze) && m.freeze.reviewer_profile_sha256 != null)
+  )
+    problems.push('reviewer profile requires bundle format 8.3');
   for (const [name, header] of Object.entries(columns)) {
     const file = read(name);
     if (!file) continue;
@@ -223,6 +257,25 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
     } catch {
       problems.push(`${name}: invalid UTF-8 or CSV serialization`);
     }
+  }
+  if (format !== '8.3' && problems.length === 0) {
+    // This reason was introduced by the bound guide. Older formats retain their original
+    // vocabulary even when they omit full history (7.0/8.1). Inspect reason fields only;
+    // notes remain verbatim free text and can mention a code without adopting its meaning.
+    const newReason = 'NONMALIGNANT_NEOPLASM_STUDIED';
+    const judgmentColumns = (['reason_initial', 'reason_effective'] as const).map((name) =>
+      MU7_EXPORT_COLUMNS.independent_judgments.indexOf(name),
+    );
+    const adjudicationColumn = MU7_EXPORT_COLUMNS.final_reference.indexOf(
+      'adjudication_reason_code',
+    );
+    if (
+      tables['independent_judgments.csv'].some((row) =>
+        judgmentColumns.some((i) => row[i] === newReason),
+      ) ||
+      tables['final_reference.csv'].some((row) => row[adjudicationColumn] === newReason)
+    )
+      problems.push('reviewer profile reason requires bundle format 8.3');
   }
   if (needsProbabilities && problems.length === 0) {
     try {
@@ -287,7 +340,7 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       problems.push('probability files or binding differ from the frozen contract');
     }
   }
-  if (format === '8.2' && problems.length === 0) {
+  if ((format === '8.2' || format === '8.3') && problems.length === 0) {
     try {
       const records = (name: string) =>
         tables[name].map((row) => Object.fromEntries(columns[name].map((k, i) => [k, row[i]])));
@@ -297,7 +350,44 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
         records('subtype_observations.csv'),
         mode,
         m.snapshot,
+        format === '8.3' ? MU81_REVIEWER_PROFILE_ID : undefined,
       );
+      if (format === '8.3') {
+        const byId = new Map(records('units.csv').map((u) => [u.unit_id, u]));
+        const allowed = (id: string, answer: string, reason: string) => {
+          if (answer !== 'DISAGREE') return reason === '';
+          const u = byId.get(id);
+          if (!u) return false;
+          let codes = mu7ReasonCodes(u.family, u.assignment_code);
+          if (
+            u.family === 'SG' &&
+            ['K_KEEP_MALIGNANT_COMPATIBLE', 'K_KEEP_HEURISTIC_NONMALIGNANT_CLASS'].includes(
+              u.assignment_code,
+            )
+          )
+            codes = codes.filter((c) => c !== 'BENIGN_NEOPLASM');
+          if (u.family === 'SG' && u.assignment_code === 'K_REMOVE_VERIFIED_NONMALIGNANT')
+            codes.push('NONMALIGNANT_NEOPLASM_STUDIED');
+          if (
+            ['D4A_KEEP_UNRESOLVED_PARENT_ONLY', 'D4B_KEEP_UNRESOLVED_COMPLICATION_ONLY'].includes(
+              u.assignment_code,
+            )
+          )
+            codes = codes.filter((c) => c !== 'TYPE_2_STATED');
+          return codes.includes(reason);
+        };
+        if (
+          records('judgment_history.csv').some(
+            (r) => !allowed(r.unit_id, r.answer, r.reason_code),
+          ) ||
+          records('final_reference.csv').some(
+            (r) =>
+              r.adjudication_status === 'DISCORDANT_RESOLVED' &&
+              !allowed(r.unit_id, r.final_answer, r.adjudication_reason_code),
+          )
+        )
+          throw new Error('profile-specific reason mismatch');
+      }
     } catch {
       problems.push('judgment history differs from its locked snapshot or export contract');
     }

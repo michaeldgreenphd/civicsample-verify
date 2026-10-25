@@ -145,7 +145,7 @@ test('a rerun against a fully migrated PGlite database writes nothing and report
       await db.query<{ n: number }>('select count(*)::int as n from public.app_schema_version')
     ).rows[0].n;
     assert.equal(after, before);
-    assert.equal(result.schemaVersions.at(-1), '8.1.1-judgment-history');
+    assert.equal(result.schemaVersions.at(-1), '8.1.2-reviewer-profile');
   } finally {
     await db.close();
   }

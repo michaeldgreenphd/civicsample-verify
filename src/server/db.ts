@@ -250,6 +250,10 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     path.join(process.cwd(), 'migrations/0036_v81_judgment_history.sql'),
     'utf8',
   );
+  const v81ReviewerProfile = await readFile(
+    path.join(process.cwd(), 'migrations/0037_v81_reviewer_profile.sql'),
+    'utf8',
+  );
   for (const [version, migration] of [
     ['5.0.0', trialLabelVerification],
     ['5.1.0', trainingExamples],
@@ -277,6 +281,7 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ['8.0.1-v8-synthetic-identifiers', v8SyntheticIdentifiers],
     ['8.1.0-subtype-probability', v81Addendum],
     ['8.1.1-judgment-history', v81History],
+    ['8.1.2-reviewer-profile', v81ReviewerProfile],
   ] as const) {
     const present = await db.query<{ present: boolean }>(
       `select exists(select 1 from public.app_schema_version where version='${version}') as present`,

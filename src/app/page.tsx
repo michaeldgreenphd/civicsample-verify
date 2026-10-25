@@ -18,6 +18,7 @@ import { McPanel } from './mapconf-workspace';
 import { Mu7Panel } from './mu7-workspace';
 import { MfaPanel } from './mfa-panel';
 import { PracticeObserverPanel } from './practice-observer';
+import practiceStyles from './practice-sections.module.css';
 import type { LoginChoice } from '@/lib/login-choices';
 type SessionUser = Actor & { aal?: string; mfaEnrolled?: boolean; practiceReadOnly?: boolean };
 
@@ -386,7 +387,7 @@ export default function Home() {
         </>
       ) : hosted ? (
         <main id="main" className="app-shell">
-          <div className="page-intro">
+          <div className={`page-intro ${tab === 'mu7' ? practiceStyles.compactIntro : ''}`}>
             <div>
               <div className="eyebrow">Supabase staging · synthetic records only</div>
               <h1>Clinical review practice</h1>
@@ -428,7 +429,7 @@ export default function Home() {
         </main>
       ) : (
         <main id="main" className="app-shell">
-          <div className="page-intro">
+          <div className={`page-intro ${tab === 'mu7' ? practiceStyles.compactIntro : ''}`}>
             <div>
               <div className="eyebrow">
                 {user.role === 'INVESTIGATOR'
@@ -438,11 +439,13 @@ export default function Home() {
                     : 'Independent review'}
               </div>
               <h1>
-                {user.role === 'INVESTIGATOR'
-                  ? 'Pilot overview'
-                  : user.role === 'ADJUDICATOR'
-                    ? 'Resolve with the evidence.'
-                    : 'Your review workspace'}
+                {tab === 'mu7'
+                  ? 'Clinical review practice'
+                  : user.role === 'INVESTIGATOR'
+                    ? 'Pilot overview'
+                    : user.role === 'ADJUDICATOR'
+                      ? 'Resolve with the evidence.'
+                      : 'Your review workspace'}
               </h1>
               <p className="intro-copy">
                 {user.role === 'INVESTIGATOR'
@@ -452,7 +455,7 @@ export default function Home() {
                     : 'Read the evidence, make your judgment, and document the reasoning behind it.'}
               </p>
             </div>
-            {workspace && (
+            {workspace && tab !== 'mu7' && (
               <span className="phase-label">
                 {readable(workspace.campaign.state)} · Synthetic pilot
               </span>

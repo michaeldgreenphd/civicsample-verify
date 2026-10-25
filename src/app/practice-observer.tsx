@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { PracticeObserverWorkspace } from '@/lib/practice-observer';
 import { Training } from './mu7-workspace';
+import { PracticeSections } from './practice-sections';
 export function PracticeObserverPanel() {
   const [workspace, setWorkspace] = useState<PracticeObserverWorkspace | null>(null);
   const [error, setError] = useState('');
@@ -33,7 +34,12 @@ export function PracticeObserverPanel() {
       {error && <p role="alert">{error}</p>}
       {!workspace && !error && <p>Loading practice information…</p>}
       {workspace && (
-        <>
+        <PracticeSections
+          workLabel="Progress"
+          description="View practice completion and revisit the read-only examples."
+          exampleCount={workspace.training.length}
+          examples={<Training training={workspace.training} />}
+        >
           <p>
             {workspace.pilotUnits} synthetic units ·{' '}
             {workspace.locked ? 'Practice reference locked' : 'Practice in progress'}
@@ -52,8 +58,7 @@ export function PracticeObserverPanel() {
               <p className="muted">Refresh this page to update the counts.</p>
             </div>
           </section>
-          <Training training={workspace.training} />
-        </>
+        </PracticeSections>
       )}
     </section>
   );

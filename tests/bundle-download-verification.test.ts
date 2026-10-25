@@ -376,3 +376,88 @@ for (const overlap of [['ONE_PER_TRIAL'], ['ALLOW'], null, true, 1, {}, 'UNKNOWN
     }
   });
 }
+
+for (const format of ['7.0', '8.1'] as const) {
+  for (const field of [
+    'reason_initial',
+    'reason_effective',
+    'adjudication_reason_code',
+    'note_initial',
+  ] as const) {
+    test(`unbound ${format} preserves its reason vocabulary in ${field}`, () => {
+      const f = fixture('PILOT', 'ALLOW');
+      try {
+        const unitId = 'MU7-SG-RULE_K_REMOVED-999';
+        const input: Mu7BundleSources = {
+          mode: 'PILOT',
+          appGitSha: 'd'.repeat(40),
+          design: {
+            design_version: format === '8.1' ? 'SYN-8-1-REASON-COMPAT' : 'SYN-7-REASON-COMPAT',
+            overlap_setting: 'ALLOW',
+          },
+          freeze: null,
+          snapshot: null,
+          lockedAt: '2026-01-01T00:00:00Z',
+          nUnitsLocked: 1,
+          syntheticDatabase: true,
+          subtypes: [],
+          rows: {
+            units: [
+              {
+                unit_id: unitId,
+                mode: 'PILOT',
+                family: 'SG',
+                category: 'RULE_K_REMOVED',
+                mapping_code: 'RULE_K',
+                assignment_code: 'K_REMOVE_VERIFIED_NONMALIGNANT',
+              },
+            ],
+            unit_design: [],
+            independent_judgments: [
+              {
+                unit_id: unitId,
+                mode: 'PILOT',
+                answer_initial: 'DISAGREE',
+                answer_effective: 'DISAGREE',
+                reason_initial: 'MALIGNANT_NEOPLASM_STUDIED',
+                reason_effective: 'MALIGNANT_NEOPLASM_STUDIED',
+                note_initial: 'Fictional explanation.',
+              },
+            ],
+            final_reference: [
+              {
+                unit_id: unitId,
+                mode: 'PILOT',
+                final_answer: 'DISAGREE',
+                adjudication_reason_code: 'MALIGNANT_NEOPLASM_STUDIED',
+              },
+            ],
+          },
+        };
+        const write = () => {
+          const bundle = buildMu7Bundle(input);
+          for (const file of bundle.files) writeFileSync(join(f.dir, file.name), file.content);
+          writeFileSync(join(f.dir, 'manifest.json'), bundle.manifestText);
+          return verifyMu7Bundle(f.dir, bundle.manifestSha256);
+        };
+        assert.deepEqual(write().problems, [], 'the historical reason remains accepted');
+        const row =
+          field === 'adjudication_reason_code'
+            ? input.rows.final_reference[0]
+            : input.rows.independent_judgments[0];
+        row[field] = 'NONMALIGNANT_NEOPLASM_STUDIED';
+        const result = write();
+        if (field === 'note_initial') {
+          assert.deepEqual(result.problems, [], 'free text is not interpreted as a reason code');
+          assert.equal(result.registrationVerified, true);
+        } else {
+          assert.equal(result.ok, false);
+          assert.equal(result.registrationVerified, false);
+          assert.match(result.problems.join(';'), /profile reason requires bundle format 8.3/);
+        }
+      } finally {
+        f.cleanup();
+      }
+    });
+  }
+}

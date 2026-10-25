@@ -59,6 +59,7 @@ import mu8_bundle as B  # noqa: E402
 import mu8_estimators as E  # noqa: E402
 import mu81_observations as V81  # noqa: E402
 import mu82_history as V82  # noqa: E402
+import mu83_reviewer_profile as V83  # noqa: E402
 
 FORMAT = "7.0"
 DESIGN_PREFIXES = ("review-design-v8", "SYN-8")
@@ -201,8 +202,9 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None, ex
                       and B.sha256_file(d / "manifest.json") == expected_manifest_sha256,
                       "manifest differs from the independently registered manifest hash")
     man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
-    refuse_unless(str(man.get("bundle_format_version")) in (FORMAT, "8.1", "8.2"), f"bundle format {man.get('bundle_format_version')!r}, expected {FORMAT}")
+    refuse_unless(str(man.get("bundle_format_version")) in (FORMAT, "8.1", "8.2", "8.3"), f"bundle format {man.get('bundle_format_version')!r}, expected {FORMAT}")
     refuse_unless(man.get("mode") == "FORMAL", f"mode {man.get('mode')!r}: only a FORMAL bundle is analysed")
+    profile_bound = V83.verify_metadata(d, man, refuse_unless)
     dv = str(man.get("design", {}).get("design_version", ""))
     refuse_unless(dv.startswith(DESIGN_PREFIXES), f"design version {dv!r} is not design v8 (a v7 bundle is read by performance_analysis_v7.py)")
     synthetic = dv.startswith("SYN-8") or str(man.get("status", "")).upper().startswith("SYNTHETIC")
@@ -254,6 +256,8 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None, ex
     slots = J.groupby("unit_id").reviewer_slot.apply(lambda s: sorted(s.astype(int)))
     refuse_unless(all(slots.get(u, []) == [1, 2] for u in U.unit_id), "every unit needs one row per reviewer slot (1 and 2)")
     verify_judgment_reference_consistency(J, R)
+    if not profile_bound:
+        V83.reject_unbound_profile_reasons(J, R, refuse_unless)
     verify_freeze_inventory(U, J, fz)
     refuse_unless(all(man.get("row_counts", {}).get(f) == len(T[f]) for f in FILES),
                   "manifest row counts differ from exported tables")
@@ -284,10 +288,11 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None, ex
             refuse_unless(got == want, f"the bundle's allocation differs from the design manifest: "
                                        f"{sorted(set(got.items()) ^ set(want.items()))}")
     bound, subtype_counts = None, None
-    if str(man.get("bundle_format_version")) in ("8.1", "8.2"):
+    if str(man.get("bundle_format_version")) in ("8.1", "8.2", "8.3"):
         bound, subtype_counts = V81.verify(d, man, U, D, J, refuse_unless)
-        if man["bundle_format_version"] == "8.2":
-            V82.verify(d, man, J, refuse_unless)
+        reason_validator = V83.verify_reasons(U, J, R, refuse_unless) if profile_bound else None
+        if man["bundle_format_version"] in ("8.2", "8.3"):
+            V82.verify(d, man, J, refuse_unless, reason_validator)
     else:
         refuse_unless(not dv.startswith("SYN-8-1-") and dv != "review-design-v8.1.0", "v8.1 requires bundle format 8.1 or 8.2")
     return {"manifest": man, "units": U, "design": D, "judgments": J, "final": R, "overlap": ov[0], "synthetic": synthetic,
@@ -314,8 +319,8 @@ def analysis_frame(b: dict, probabilities: Path | None) -> pd.DataFrame:
     X["y"] = (X.final_answer == "AGREE").astype(int)
     X["d_R0"] = X.final_answer.isin(["AGREE", "DISAGREE"]).astype(int)
     X["d_R2"] = X.reviewed.astype(int)
-    if b["manifest"]["bundle_format_version"] in ("8.1", "8.2"):
-        refuse_unless(probabilities is None, "bundle 8.1/8.2 uses its frozen probability binding, not an external override")
+    if b["manifest"]["bundle_format_version"] in ("8.1", "8.2", "8.3"):
+        refuse_unless(probabilities is None, "bundle 8.1/8.2/8.3 uses its frozen probability binding, not an external override")
     if b["overlap"] == "ONE_PER_TRIAL":
         refuse_unless(b.get("bound_probabilities") is not None or probabilities is not None, "overlap ONE_PER_TRIAL needs --probabilities (Monte Carlo inclusion probabilities)")
         P = b["bound_probabilities"] if b.get("bound_probabilities") is not None else pd.read_csv(probabilities, dtype={"unit_id": str})
@@ -513,7 +518,8 @@ def main(argv=None) -> int:
     log = {"script": "performance_analysis_v8.py", "run_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
            "bundle": str(a.bundle), "bundle_manifest_sha256": B.sha256_file(a.bundle / "manifest.json"),
            "registered_manifest_verified": a.expect_manifest_sha256 is not None,
-           "judgment_snapshot_verified": b["manifest"]["bundle_format_version"] == "8.2",
+           "judgment_snapshot_verified": b["manifest"]["bundle_format_version"] in ("8.2", "8.3"),
+           "reviewer_profile_verified": b["manifest"]["bundle_format_version"] == "8.3",
            "overlap_setting": b["overlap"], "synthetic": b["synthetic"], "n_units": int(len(X)),
            "bootstrap_reps": a.bootstrap_reps, "seed": a.seed,
            "outputs": {p.name: B.sha256_file(p) for p in sorted(a.out.iterdir())}}

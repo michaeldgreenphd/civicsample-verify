@@ -25,7 +25,7 @@ def sha(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def verify(path, man, judgments, require):
+def verify(path, man, judgments, require, reason_validator=None):
     def check(ok):
         require(ok, 'judgment history differs from its locked snapshot or export contract')
     check(man.get('history_contract_version') == 'mu81-history-1')
@@ -57,7 +57,10 @@ def verify(path, man, judgments, require):
         check(re.fullmatch(r'[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}', r['assignment_id']))
         check(r['answer'] in ('AGREE', 'DISAGREE', 'CANNOT_TELL'))
         check(re.fullmatch(r'R-[A-Z0-9]{4}', r['reviewer_pseudo_id']))
-        check(r['reason_code'] in REASONS if r['answer'] == 'DISAGREE' else r['reason_code'] == '')
+        if reason_validator is not None:
+            check(reason_validator(r['unit_id'], r['answer'], r['reason_code']))
+        else:
+            check(r['reason_code'] in REASONS if r['answer'] == 'DISAGREE' else r['reason_code'] == '')
         check(r['uncertain'] in ('true', 'false'))
         check(r['seconds_on_unit'] == '' or integer(r['seconds_on_unit'], 0))
         check(r['diabetes_subtype'] in ('', 'TYPE_2_STATED', 'TYPE_2_NOT_STATED', 'CANNOT_TELL_FROM_PACKET'))
