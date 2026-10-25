@@ -16,7 +16,7 @@ import {
 } from '../src/lib/mu7-export';
 import { isMu81Design } from '../src/lib/mu7-types';
 
-/** Strict LF CSV; quoted fields may hold commas, escaped quotes and line breaks. */
+/** LF-delimited exporter CSV. A bare CR is field data in legacy exports, not a row separator. */
 function csvRecords(text: string): string[][] {
   const records: string[][] = [];
   let field = '',
@@ -40,7 +40,7 @@ function csvRecords(text: string): string[][] {
       }
     } else if (c === '"' && state === 'start') state = 'quoted';
     else {
-      if (c === '"' || state === 'closed' || c === '\r') throw new Error('invalid CSV');
+      if (c === '"' || state === 'closed') throw new Error('invalid CSV');
       field += c;
       state = 'plain';
     }
@@ -174,7 +174,7 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       !object(m.design) ||
       !isMu81Design(m.design.design_version) ||
       m.vocabulary_version !== 'mu81-subtype-1' ||
-      !['ALLOW', 'ONE_PER_TRIAL'].includes(String(m.design.overlap_setting))
+      (m.design.overlap_setting !== 'ALLOW' && m.design.overlap_setting !== 'ONE_PER_TRIAL')
     ) {
       problems.push('bundle 8.1 design or vocabulary is invalid');
       return result();

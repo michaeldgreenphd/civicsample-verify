@@ -304,7 +304,10 @@ async function runScenario(
               ? { diabetes_subtype: i === 0 ? 'TYPE_2_STATED' : 'TYPE_2_NOT_STATED' }
               : {}),
             ...(answer === 'DISAGREE'
-              ? { reason_code: 'NOT_THE_CONDITION_STUDIED', note: 'Synthetic disagreement only.' }
+              ? {
+                  reason_code: 'NOT_THE_CONDITION_STUDIED',
+                  note: 'Synthetic disagreement only.\rAdditional fictional context.',
+                }
               : {}),
             uncertain: index === 0,
           }),

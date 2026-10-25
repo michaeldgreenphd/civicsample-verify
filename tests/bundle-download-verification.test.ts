@@ -305,3 +305,74 @@ test('escaped quotes, commas and multiline notes remain valid CSV', () => {
     f.cleanup();
   }
 });
+
+for (const format of ['7.0', '8.1'] as const) {
+  for (const note of ['first\rsecond', '\rfirst', 'last\r', '"quoted"\rnote', 'first\r\nsecond']) {
+    test(`exported ${format} carriage-return note round-trips: ${JSON.stringify(note)}`, () => {
+      const f = fixture('PILOT', 'ALLOW');
+      try {
+        const bundle = buildMu7Bundle({
+          mode: 'PILOT',
+          appGitSha: 'd'.repeat(40),
+          design: {
+            design_version: format === '8.1' ? 'SYN-8-1-CSV-COMPAT' : 'SYN-7-CSV-COMPAT',
+            overlap_setting: 'ALLOW',
+          },
+          freeze: null,
+          snapshot: null,
+          lockedAt: '2026-01-01T00:00:00Z',
+          nUnitsLocked: 1,
+          syntheticDatabase: true,
+          subtypes: [],
+          rows: {
+            units: [],
+            unit_design: [],
+            final_reference: [],
+            independent_judgments: [
+              { unit_id: id, mode: 'PILOT', note_initial: note, note_effective: note },
+            ],
+          },
+        });
+        for (const file of bundle.files) writeFileSync(join(f.dir, file.name), file.content);
+        writeFileSync(join(f.dir, 'manifest.json'), bundle.manifestText);
+        const result = verifyMu7Bundle(f.dir, bundle.manifestSha256);
+        assert.deepEqual(result.problems, []);
+        assert.equal(result.registrationVerified, true);
+        if (!/[",\n]/.test(note)) {
+          const name = 'independent_judgments.csv';
+          const exported = readFileSync(join(f.dir, name), 'utf8');
+          assert.ok(
+            exported.includes(`"${note}"`),
+            'new exports quote lone CR for standard CSV readers',
+          );
+          // Keep verifying the bytes emitted by the old writer, too; existing files are never rewritten.
+          editFile(f.dir, name, (text) => text.replaceAll(`"${note}"`, note));
+          const legacyHash = sha(readFileSync(join(f.dir, 'manifest.json'), 'utf8'));
+          assert.deepEqual(verifyMu7Bundle(f.dir, legacyHash).problems, []);
+        }
+      } finally {
+        f.cleanup();
+      }
+    });
+  }
+}
+for (const overlap of [['ONE_PER_TRIAL'], ['ALLOW'], null, true, 1, {}, 'UNKNOWN']) {
+  test(`non-enum overlap cannot bypass probability files: ${JSON.stringify(overlap)}`, () => {
+    // Start with no probability files/binding. The malformed array used to select that
+    // inventory after passing a string-coerced enum check, even for a FORMAL bundle.
+    const f = fixture('FORMAL', 'ALLOW');
+    try {
+      const path = join(f.dir, 'manifest.json');
+      const manifest = JSON.parse(readFileSync(path, 'utf8'));
+      manifest.design.overlap_setting = overlap;
+      const raw = JSON.stringify(manifest);
+      writeFileSync(path, raw);
+      const result = verifyMu7Bundle(f.dir, sha(raw));
+      assert.equal(result.ok, false);
+      assert.equal(result.registrationVerified, false);
+      assert.match(result.problems.join(';'), /design or vocabulary is invalid/);
+    } finally {
+      f.cleanup();
+    }
+  });
+}

@@ -15,11 +15,16 @@ The checker verifies:
 - Exact versioned file inventory, each SHA-256, CSV columns, row widths and row counts. The new subtype file is required for 8.1; old 7.0 files retain their contract.
 - For formal 8.1 ONE_PER_TRIAL exports, complete probability coverage, canonical decimal rows, the unchanged source-file digest, exact source/canonical probability equality, and metadata/binding agreement with the frozen digest.
 - PILOT and ALLOW exports carry no probability binding. Old designs cannot be relabeled as bundle 8.1, and new designs cannot use bundle 7.0.
+- The overlap setting must be the actual string `ALLOW` or `ONE_PER_TRIAL`; arrays and other coerced values are refused before choosing the required files.
 - Malformed JSON/CSV/UTF-8 and symlink inputs are refused. It reads only fixed contract filenames, never arbitrary paths named by a manifest. Errors contain fixed filenames and categories, not data rows or local paths.
 
 Exit status is 0 for successful verification, 1 for an invalid bundle, and 2 for invalid command arguments. A requested registered-hash check without its value fails; it is never silently skipped. The output is one JSON result. Existing standard status text remains in the output; arbitrary status text from untrusted files is not echoed.
 
 This checks download integrity and probability provenance. It does not validate clinical judgments, choose an estimator, verify packet text absent from the bundle, or reproduce the full judgment snapshot. The analysis validator performs separate semantic checks and remains synthetic-only. A successful download check is not permission to start formal review.
+
+## Carriage-return compatibility
+
+Older exports may contain a bare carriage return inside an unquoted reviewer note. The download checker treats it as field content, matching those original bytes, while LF remains the record delimiter. New exports quote fields containing CR (as they already quote LF, commas and quotes), so standard CSV analysis readers retain the original note as one field. No stored note or prior export is rewritten. New export hashes reflect the exact new CSV bytes; verify each export against its own registered manifest hash.
 
 ## Verification scope
 
