@@ -19,6 +19,11 @@ covered by regression tests.
 - Resolved adjudication requires a determinate answer and a basis consistent with
   the effective reviewer answers. Unresolved adjudication has no final answer or
   selected reviewer. A routed unit without completed adjudication is refused.
+- Queue positions cover every frozen unit exactly once per reviewer slot, with
+  one reviewer per slot and two distinct reviewers. The queue digest is recomputed
+  in slot/position order. The packet inventory digest is recomputed from the
+  exported packet digests in unit order; individual design and assignment row
+  digests also match their canonical fields.
 - Manifest row counts, frozen unit count, design version, assignment-set identifier
   and overlap setting agree with the CSVs. Each stratum has one consistent frame
   size and sample size. Unit roles also match between units and final references.
@@ -40,8 +45,11 @@ full snapshot hash. Database-side snapshot validation still applies when exporti
 a future versioned export must carry enough history, with a trusted provenance
 anchor, before the offline analysis can claim full independent verification.
 
-Queue and packet freeze checks, provenance for the externally supplied inclusion
-probabilities, and full history authentication remain separate follow-up work.
+Packet-inventory verification compares recorded digests; it does not verify the
+evidence bytes, which are absent from this export. The queue hash binds slots,
+positions and unit IDs, not reviewer identities. Provenance for the externally
+supplied inclusion probabilities and full history authentication remain separate
+follow-up work.
 Real-design analysis is still refused even with `--allow-synthetic`.
 
 ## Verification
@@ -72,3 +80,25 @@ not repeated for this Python-only change; no served application code changed.
 
 The fixture scan and all three leakage commands completed successfully with zero
 violations. The full `npm run check` command exited successfully.
+
+## Follow-up: frozen inventory checks
+
+The synthetic generator now writes valid complete queues and freeze queue/packet
+inventory digests. Older hand-built fixtures lacking these fields must be
+regenerated; the application already exports them. This does not change bundle
+format 7.0 or any database schema. No estimator changed.
+
+Follow-up verification on 2026-10-24:
+
+- The baseline accepted a synthetic queue reordered after freeze when the CSV
+  checksum was updated. The new loader refuses it with a queue-hash mismatch.
+- Full Python suite: 515 passed, three standalone bundle skips. Targeted v8 suite:
+  118 passed, two standalone bundle skips. This adds 26 inventory regressions.
+- Application-written v8 bundles: five checks passed and one native PostgreSQL
+  check skipped locally; both overlap alternatives completed database-to-Python
+  validation without a skip. No private sample was used.
+- Build passed with 36 SQL inputs. Changed Markdown formatting and whitespace
+  checks passed. Browser tests were not repeated for this Python-only increment.
+- `VERIFY_ANALYSIS_PYTHON=<analysis-python> npm run check`: passed (255 tests,
+  zero failures, 33 reported skips and one existing todo); typecheck, lint, fixture
+  and v4/v5/v7 leakage scans passed, with zero leakage violations.

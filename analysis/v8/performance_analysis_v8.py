@@ -164,6 +164,31 @@ def verify_judgment_reference_consistency(J: pd.DataFrame, R: pd.DataFrame) -> N
                           "non-routed reference must not contain adjudication data")
 
 
+def verify_freeze_inventory(U: pd.DataFrame, J: pd.DataFrame, freeze: dict) -> None:
+    """Reproduce the queue and packet-inventory hashes from the existing export.
+
+    Packet bytes are not exported. This checks their recorded digests against the
+    freeze, not the evidence text itself or the authenticity of the manifest.
+    """
+    refuse_unless("packet_sha256" in U and {"queue_position", "reviewer_pseudo_id"} <= set(J.columns),
+                  "packet inventory or queue columns missing")
+    refuse_unless(U.packet_sha256.str.fullmatch(r"[0-9a-f]{64}").all(), "invalid packet digest")
+    packets_hash = B.sha256_text("\n".join(U.sort_values("unit_id").packet_sha256))
+    refuse_unless(packets_hash == freeze.get("packets_sha256"), "packet inventory hash differs from the freeze")
+    refuse_unless(J.queue_position.str.fullmatch(r"[1-9][0-9]*").all(), "queue positions must be positive integers")
+    # Compare as canonical decimal strings, avoiding float rounding and unbounded int conversions.
+    positions = {str(n) for n in range(1, len(U) + 1)}
+    for slot in ("1", "2"):
+        queue = J.loc[J.reviewer_slot == slot]
+        refuse_unless(queue.queue_position.is_unique and set(queue.queue_position) == positions,
+                      "each reviewer queue must contain positions 1 through the frozen unit count")
+        refuse_unless(queue.reviewer_pseudo_id.ne("").all() and queue.reviewer_pseudo_id.nunique() == 1,
+                      "each reviewer slot must identify one reviewer")
+    refuse_unless(J.reviewer_pseudo_id.nunique() == 2, "independent queues require two distinct reviewers")
+    rows = [(int(s), int(p), u) for s, p, u in J[["reviewer_slot", "queue_position", "unit_id"]].itertuples(index=False, name=None)]
+    refuse_unless(B.queue_sha256(rows) == freeze.get("queue_sha256"), "queue hash differs from the freeze")
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # 1. Load and verify
 # ---------------------------------------------------------------------------------------------------------------------
@@ -205,19 +230,25 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) ->
     fz = man["freeze"]
     refuse_unless(B.unit_list_sha256(U.unit_id) == fz["unit_list_sha256"], "unit list hash differs from the freeze")
     D = D.set_index("unit_id", drop=False)
+    refuse_unless({"design_row_sha256", "assignment_row_sha256"} <= set(D.columns), "individual row digests missing")
     drt = {u: B.design_row_text(u, D.at[u, "nct_id"], D.at[u, "frame_id"], D.at[u, "stratum"], int(D.at[u, "frame_stratum_size"]),
                                 int(D.at[u, "n_sampled_in_stratum"]), D.at[u, "allocation_option"], D.at[u, "overlap_setting"],
                                 int(D.at[u, "sampling_seed"]), D.at[u, "prn_key"]) for u in D.index}
     refuse_unless(B.set_sha256(drt) == fz["design_rows_sha256"], "design-row hash differs from the freeze")
+    refuse_unless(all(D.at[u, "design_row_sha256"] == B.sha256_text(text) for u, text in drt.items()),
+                  "individual design-row digest differs from its canonical fields")
     Ui = U.set_index("unit_id", drop=False)
     art = {u: B.assignment_row_text(D.at[u, "assignment_set_id"], u, Ui.at[u, "mapping_code"], Ui.at[u, "assignment_code"],
                                     Ui.at[u, "assignment_status"]) for u in Ui.index}
     refuse_unless(B.set_sha256(art) == fz["assignment_set_sha256"], "assignment-set hash differs from the freeze")
+    refuse_unless(all(D.at[u, "assignment_row_sha256"] == B.sha256_text(text) for u, text in art.items()),
+                  "individual assignment-row digest differs from its canonical fields")
     refuse_unless(set(U.unit_id) == set(D.index) == set(R.unit_id), "units, design rows and final reference cover different units")
     refuse_unless(J.reviewer_slot.isin(["1", "2"]).all(), "reviewer slot must be 1 or 2")
     slots = J.groupby("unit_id").reviewer_slot.apply(lambda s: sorted(s.astype(int)))
     refuse_unless(all(slots.get(u, []) == [1, 2] for u in U.unit_id), "every unit needs one row per reviewer slot (1 and 2)")
     verify_judgment_reference_consistency(J, R)
+    verify_freeze_inventory(U, J, fz)
     refuse_unless(all(man.get("row_counts", {}).get(f) == len(T[f]) for f in FILES),
                   "manifest row counts differ from exported tables")
     refuse_unless(fz.get("n_units") == len(U), "freeze unit count differs from exported tables")
