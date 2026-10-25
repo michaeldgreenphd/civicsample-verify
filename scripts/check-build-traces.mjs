@@ -40,6 +40,7 @@ const sqlInputs = new Set([
   'migrations/0032_v7_freeze_gates_v8_4.sql',
   'migrations/0033_v8_design_foundation.sql',
   'migrations/0034_v8_synthetic_identifiers.sql',
+  'migrations/0035_v81_subtype_probability.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {

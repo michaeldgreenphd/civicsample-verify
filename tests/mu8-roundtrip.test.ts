@@ -84,22 +84,37 @@ const fileWrite = (bundle: Awaited<ReturnType<typeof readMu7Bundle>>, path: stri
   for (const file of bundle.files) writeFileSync(join(path, file.name), file.content);
   writeFileSync(join(path, 'manifest.json'), bundle.manifestText);
 };
-async function payload(db: FixtureDb, u: Unit, overlap: 'ALLOW' | 'ONE_PER_TRIAL') {
+async function payload(
+  db: FixtureDb,
+  u: Unit,
+  overlap: 'ALLOW' | 'ONE_PER_TRIAL',
+  designVersion = version,
+) {
   const p = importObj(u);
   delete (p.packet.trial as Record<string, unknown>).registry_url;
   p.packet.unit.mapping_label = await one(db, 'owner', 'select private.mu7_mapping_label($1,$2)', [
     u.fam,
     u.cat,
   ]);
-  p.design.design_version = version;
+  p.design.design_version = designVersion;
   p.design.overlap_setting = overlap;
   return p;
 }
 
-async function runScenario(overlap: 'ALLOW' | 'ONE_PER_TRIAL', existing?: FixtureDb) {
+async function runScenario(
+  overlap: 'ALLOW' | 'ONE_PER_TRIAL',
+  existing?: FixtureDb,
+  addendum = false,
+) {
+  const designVersion = addendum ? 'SYN-8-1-DATABASE-ROUNDTRIP' : version;
+  const scenarioUnits = units.map((u) =>
+    addendum && u.cat === 'RULE_D_KEPT'
+      ? { ...u, code: 'D4B_KEEP_UNRESOLVED_COMPLICATION_ONLY' }
+      : u,
+  );
   const f = await signedOffPilot({
     existing,
-    designVersion: version,
+    designVersion,
     plannedPrimary: 96,
     plannedSubgroup: 4,
     overlap,
@@ -116,8 +131,8 @@ async function runScenario(overlap: 'ALLOW' | 'ONE_PER_TRIAL', existing?: Fixtur
       );
     const pseudos = [await pidOf(db, 'r1'), await pidOf(db, 'r2')];
     const data = [];
-    for (const u of units) {
-      const p = await payload(db, u, overlap);
+    for (const u of scenarioUnits) {
+      const p = await payload(db, u, overlap, designVersion);
       data.push(p);
       await one(db, 'inv', call('rpc_mu7_import_unit', p));
     }
@@ -174,6 +189,83 @@ async function runScenario(overlap: 'ALLOW' | 'ONE_PER_TRIAL', existing?: Fixtur
           .join('\n'),
       ),
     };
+    if (addendum && overlap === 'ONE_PER_TRIAL') {
+      await assert.rejects(
+        one(db, 'inv', call('rpc_mu7_freeze', { ...hashes, attestation: ATT })),
+        /MU81-G07/,
+      );
+      const probabilityRows = sorted.map((u) => ({
+        unit_id: u.unit_id,
+        pi_i: String((u.design.n_sampled_in_stratum / u.design.frame_stratum_size) * 0.97),
+        mc_standard_error: '0.001',
+      }));
+      const body = probabilityRows
+        .map((r) => `${r.unit_id},${r.pi_i},${r.mc_standard_error}\n`)
+        .join('');
+      const csv =
+        'unit_id,stratum,N_h,n_h,nominal_probability_n_h_over_N_h,pi_mc_ONE_PER_TRIAL,mc_se,pattern_group_units,weight_ONE_PER_TRIAL,ratio_mc_to_nominal\n' +
+        sorted
+          .map((u, i) =>
+            [
+              u.unit_id,
+              u.design.stratum,
+              u.design.frame_stratum_size,
+              u.design.n_sampled_in_stratum,
+              u.design.selection_probability,
+              probabilityRows[i].pi_i,
+              probabilityRows[i].mc_standard_error,
+              1,
+              1 / Number(probabilityRows[i].pi_i),
+              0.97,
+            ].join(','),
+          )
+          .join('\n') +
+        '\n';
+      const binding = {
+        binding_version: 'mu81-probability-1',
+        method: 'MONTE_CARLO_ONE_PER_TRIAL',
+        replicates: 20000,
+        seed: 1,
+        rows: probabilityRows,
+        source_csv: csv,
+        file_sha256: sha(csv),
+        rows_sha256: sha(body),
+      };
+      for (const role of ['r1', 'r2', 'adj', 'inv1', 'out'] as const)
+        await assert.rejects(
+          one(db, role, call('rpc_mu81_bind_probabilities', binding)),
+          /investigator role/,
+        );
+      for (const bad of [
+        { ...binding, file_sha256: '0'.repeat(64) },
+        { ...binding, rows_sha256: '0'.repeat(64) },
+        { ...binding, rows: probabilityRows.slice(1) },
+        { ...binding, rows: [probabilityRows[0], ...probabilityRows] },
+        { ...binding, seed: 2 },
+        {
+          ...binding,
+          rows: [{ ...probabilityRows[0], pi_i: '0.000000000000' }, ...probabilityRows.slice(1)],
+        },
+      ])
+        await assert.rejects(
+          one(db, 'inv', call('rpc_mu81_bind_probabilities', bad)),
+          /MU81-G0[56]/,
+        );
+      await one(db, 'inv', call('rpc_mu81_bind_probabilities', binding));
+      for (const role of ['r1', 'r2', 'adj', 'out'] as const)
+        assert.equal(
+          await one(db, role, 'select count(*)::int from public.mu7_probability_binding_v81'),
+          0,
+        );
+      await assert.rejects(
+        one(db, 'inv', call('rpc_mu81_bind_probabilities', binding)),
+        /duplicate key/,
+      );
+      await assert.rejects(
+        db.exec('delete from public.mu7_probability_binding_v81'),
+        /immutable|append.only|mutation/i,
+      );
+    }
     await one(db, 'inv', call('rpc_mu7_freeze', { ...hashes, attestation: ATT }));
     await one(
       db,
@@ -207,6 +299,9 @@ async function runScenario(overlap: 'ALLOW' | 'ONE_PER_TRIAL', existing?: Fixtur
           who,
           submitSql(await assignmentOf(db, pseudos[i], uid), {
             answer,
+            ...(addendum && uid.includes('RULE_D_KEPT')
+              ? { diabetes_subtype: i === 0 ? 'TYPE_2_STATED' : 'TYPE_2_NOT_STATED' }
+              : {}),
             ...(answer === 'DISAGREE'
               ? { reason_code: 'NOT_THE_CONDITION_STUDIED', note: 'Synthetic disagreement only.' }
               : {}),
@@ -219,6 +314,15 @@ async function runScenario(overlap: 'ALLOW' | 'ONE_PER_TRIAL', existing?: Fixtur
         100,
       );
     }
+    if (addendum)
+      assert.equal(
+        await one(
+          db,
+          'inv',
+          "select count(*)::int from public.v_mu81_subtypes where mode='FORMAL'",
+        ),
+        0,
+      );
     await one(db, 'inv', phase('FORMAL_CLOSED_COMPLETE'));
     await one(db, 'inv', 'select public.rpc_mu7_snapshot()');
     await one(
@@ -249,9 +353,26 @@ async function runScenario(overlap: 'ALLOW' | 'ONE_PER_TRIAL', existing?: Fixtur
       'unit_design.csv': 100,
       'independent_judgments.csv': 200,
       'final_reference.csv': 100,
+      ...(addendum
+        ? {
+            'subtype_observations.csv': 200,
+            ...(overlap === 'ONE_PER_TRIAL'
+              ? { 'probabilities.csv': 100, 'probability_source.csv': 100 }
+              : {}),
+          }
+        : {}),
     });
     assert.equal((bundle.manifest.snapshot as Record<string, unknown>).n_rows, 200);
     assert.equal(bundle.manifest.n_units_locked, 100);
+    assert.equal(bundle.manifest.bundle_format_version, addendum ? '8.1' : '7.0');
+    if (addendum) {
+      const reference = await rows<{ routing: string }>(
+        db,
+        'inv',
+        "select routing from public.v_mu7_final_reference where category='RULE_D_KEPT'",
+      );
+      assert.equal(reference[0].routing, 'CONCORDANT_AGREE'); // subtype disagreement never routes
+    }
     for (const [k, v] of Object.entries(hashes))
       assert.equal((bundle.manifest.freeze as Record<string, unknown>)[k], v);
     const counts = await rows<{ family: string; n: number }>(
@@ -492,3 +613,72 @@ test('0034 preserves existing v7 practice records during upgrade', async () => {
     await f.db.close();
   }
 });
+
+for (const overlap of ['ALLOW', 'ONE_PER_TRIAL'] as const)
+  test(
+    `v8.1 bound probability and subtype database-to-analysis roundtrip: ${overlap}`,
+    { timeout: 120_000 },
+    async () => {
+      const { bundle } = await runScenario(overlap, undefined, true);
+      if (!python) return;
+      const dir = mkdtempSync(join(tmpdir(), 'verify-v81-'));
+      try {
+        const path = join(dir, 'bundle');
+        fileWrite(bundle, path);
+        const args = [
+          'analysis/v8/performance_analysis_v8.py',
+          '--bundle',
+          path,
+          '--out',
+          join(dir, 'result'),
+          '--allow-synthetic',
+          '--bootstrap-reps',
+          '20',
+        ];
+        const result = spawnSync(python, args, { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        const counts = readFileSync(join(dir, 'result', 'diabetes_subtype_counts_v81.csv'), 'utf8');
+        assert.match(counts, /TYPE_2_STATED/);
+        assert.match(counts, /TYPE_2_NOT_STATED/);
+        const checks = spawnSync(
+          python,
+          ['-m', 'pytest', '-q', 'analysis/v8/tests/test_mu81_observations.py'],
+          { encoding: 'utf8', env: { ...process.env, MU81_DB_BUNDLE: path } },
+        );
+        assert.equal(checks.status, 0, checks.stdout + checks.stderr);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+test(
+  'native PostgreSQL: v8.1 bindings and subtype lifecycle',
+  {
+    skip:
+      !process.env.VERIFY_PG_TEST_URL && process.env.VERIFY_PG_REQUIRE !== '1'
+        ? 'BLOCKED: native PostgreSQL server unavailable'
+        : false,
+    timeout: 120_000,
+  },
+  async () => {
+    assert.ok(process.env.VERIFY_PG_TEST_URL);
+    await withDisposableHandoffDatabase(process.env.VERIFY_PG_TEST_URL, async (url: string) => {
+      const c = new Client({ connectionString: url });
+      try {
+        await c.connect();
+        await runScenario(
+          'ONE_PER_TRIAL',
+          {
+            exec: (sql) => c.query(sql),
+            query: async <T>(sql: string, params: unknown[] = []) => ({
+              rows: (await c.query(sql, params)).rows as T[],
+            }),
+          },
+          true,
+        );
+      } finally {
+        await c.end();
+      }
+    });
+  },
+);

@@ -7,6 +7,10 @@ const code = z.string().regex(/^[A-Z][A-Z0-9_]{1,40}$/);
 export const mu7SubmissionSchema = z
   .object({
     answer: z.enum(['AGREE', 'DISAGREE', 'CANNOT_TELL']),
+    diabetesSubtype: z
+      .enum(['TYPE_2_STATED', 'TYPE_2_NOT_STATED', 'CANNOT_TELL_FROM_PACKET'])
+      .nullable()
+      .optional(),
     reasonCode: code.nullable().optional(),
     note: z.string().max(2000).nullable().optional(),
     uncertain: z.boolean().optional(),

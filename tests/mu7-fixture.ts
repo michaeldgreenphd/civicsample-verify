@@ -81,6 +81,7 @@ export type ChainOptions = {
 };
 /** Migrations that build on another: leaving one out leaves its dependents out too. */
 const DEPENDENTS: Record<string, string[]> = {
+  'migrations/0034_v8_synthetic_identifiers.sql': ['migrations/0035_v81_subtype_probability.sql'],
   'migrations/0033_v8_design_foundation.sql': ['migrations/0034_v8_synthetic_identifiers.sql'],
   'migrations/0032_v7_freeze_gates_v8_4.sql': ['migrations/0033_v8_design_foundation.sql'],
   'migrations/0025_v7_review_fixes.sql': ['migrations/0026_v7_lifecycle_and_gates.sql'],
@@ -608,7 +609,7 @@ export async function signedOffPilot(
   const PEX = await must(
     db,
     'inv',
-    `select public.rpc_mu7_register_export(${lit({ mode: 'PILOT', bundle_format_version: '7.0', row_counts: { units: 12 }, file_sha256: {}, manifest_sha256: '3'.repeat(64), app_git_sha: 'abc123' })})`,
+    `select public.rpc_mu7_register_export(${lit({ mode: 'PILOT', bundle_format_version: options.designVersion?.startsWith('SYN-8-1-') ? '8.1' : '7.0', row_counts: { units: 12 }, file_sha256: {}, manifest_sha256: '3'.repeat(64), app_git_sha: 'abc123' })})`,
     'pilot export',
   );
   await must(

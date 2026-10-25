@@ -307,7 +307,7 @@ test('v7 synthetic pilot through the application service, end to end', async () 
     assert.equal(files[f.name], sha256(f.content), `${f.name} hash`);
     assert.equal(
       f.content.split('\n')[0],
-      MU7_EXPORT_COLUMNS[f.role].join(','),
+      MU7_EXPORT_COLUMNS[f.role as keyof typeof MU7_EXPORT_COLUMNS].join(','),
       `${f.name} columns`,
     );
     assert.doesNotMatch(f.content, /walkthrough|planted|expected_routing/);

@@ -48,6 +48,7 @@ import {
 } from '../lib/mu7-synthetic';
 import { MU7_ASSIGNMENT_ID, MU7_UNIT_ID } from '../lib/mu7-validation';
 import { ServiceError } from './service';
+import { isMu81Design, type Mu81Subtype } from '../lib/mu7-types';
 
 export type Mu7Filter = Record<string, string | number | boolean | null>;
 export interface Mu7Data {
@@ -80,6 +81,8 @@ export interface Mu7Context {
 const ROLE_TAGS = new Set(['MU7-G01', 'MU7-G37', 'MU7-G42', 'MU7-G58', 'MU7-G59']);
 const NOT_YOURS_TAGS = new Set(['MU7-G54', 'MU7-G57']);
 const INPUT_TAGS = new Set([
+  'MU81-G02',
+  'MU81-G03',
   'MU7-G07',
   'MU7-G13',
   'MU7-G14',
@@ -99,7 +102,7 @@ const INPUT_TAGS = new Set([
   'MU7-G63',
 ]);
 export function mu7PublicError(message: string): ServiceError | null {
-  const tagged = /\b((?:MU7X?|MU7C)-G\d{2}): ([^\n]{1,400})/.exec(message);
+  const tagged = /\b((?:MU7X?|MU7C|MU81)-G\d{2}): ([^\n]{1,400})/.exec(message);
   if (tagged) {
     const [, tag, text] = tagged;
     if (NOT_YOURS_TAGS.has(tag)) return new ServiceError(404, 'Resource not available.');
@@ -389,7 +392,15 @@ export async function getMu7ReviewerUnit(
     if (!unit || typeof unit !== 'object') throw notFound();
     const packet = mu7PacketView(unit.packet as Record<string, unknown>);
     const own = await d.select<Mu7Row>('mu7_judgments', {
-      columns: ['revision_number', 'answer', 'reason_code', 'note', 'uncertain', 'submitted_at'],
+      columns: [
+        'revision_number',
+        'answer',
+        'reason_code',
+        'note',
+        'uncertain',
+        'submitted_at',
+        'diabetes_subtype',
+      ],
       eq: { assignment_id: assignmentId },
       order: ['revision_number'],
     });
@@ -399,8 +410,12 @@ export async function getMu7ReviewerUnit(
       queuePosition: Number(unit.queue_position),
       unitRole: unit.unit_role as 'PRIMARY' | 'SUBGROUP',
       packet,
-      reasonCodes: reasonList(packet.unit.family, packet.unit.assignment_code),
+      subtypeRequired: unit.subtype_required === true,
+      reasonCodes: reasonList(packet.unit.family, packet.unit.assignment_code).filter(
+        (r) => !unit.subtype_required || r.code !== 'TYPE_2_STATED',
+      ),
       ownAnswers: own.map((j) => ({
+        diabetesSubtype: (j.diabetes_subtype as Mu81Subtype | null) ?? null,
         revisionNumber: Number(j.revision_number),
         answer: j.answer as Mu7Answer,
         reasonCode: (j.reason_code as string | null) ?? null,
@@ -419,6 +434,7 @@ export async function submitMu7(
   requireRole(ctx, 'REVIEWER');
   if (!MU7_ASSIGNMENT_ID.test(assignmentId)) throw notFound();
   const p: Record<string, unknown> = { answer: input.answer, uncertain: input.uncertain === true };
+  if (input.diabetesSubtype) p.diabetes_subtype = input.diabetesSubtype;
   if (input.reasonCode) p.reason_code = input.reasonCode;
   if (input.note?.trim()) p.note = input.note.trim();
   if (typeof input.secondsOnUnit === 'number') p.seconds_on_unit = input.secondsOnUnit;
@@ -461,6 +477,7 @@ export async function getMu7AdjudicatorUnit(
     )[0];
     if (!row) throw notFound();
     const packet = mu7PacketView(row.packet as Record<string, unknown>);
+    const vocabulary = await d.rpc<string | null>('rpc_mu81_vocabulary', {}, 'value');
     const slot = (n: 1 | 2): Mu7SlotAnswer => ({
       reviewerSlot: n,
       answer: asAnswer(row[`reviewer_${n}_answer`]),
@@ -492,7 +509,16 @@ export async function getMu7AdjudicatorUnit(
       mode: row.mode as Mu7Mode,
       packet,
       answers: [slot(1), slot(2)],
-      reasonCodes: reasonList(packet.unit.family, packet.unit.assignment_code),
+      reasonCodes: reasonList(packet.unit.family, packet.unit.assignment_code).filter(
+        (r) =>
+          !(
+            vocabulary === 'mu81-subtype-1' &&
+            ['D4A_KEEP_UNRESOLVED_PARENT_ONLY', 'D4B_KEEP_UNRESOLVED_COMPLICATION_ONLY'].includes(
+              packet.unit.assignment_code,
+            ) &&
+            r.code === 'TYPE_2_STATED'
+          ),
+      ),
       disagreementReasons: MU7_DISAGREEMENT_REASONS,
       adjudication: adj
         ? {
@@ -761,7 +787,52 @@ export async function readMu7Bundle(
           ['n_rows'],
         )
       : null;
+  const v81 = isMu81Design(design?.design_version);
+  const probability =
+    v81 && mode === 'FORMAL'
+      ? ((
+          await d.select<Mu7Row>('mu7_probability_binding_v81', {
+            columns: [
+              'binding_version',
+              'design_version',
+              'method',
+              'replicates',
+              'seed',
+              'source_csv',
+              'canonical_csv',
+              'file_sha256',
+              'rows_sha256',
+              'binding_sha256',
+            ],
+          })
+        )[0] ?? null)
+      : null;
+  if (probability) {
+    probability.seed = Number(probability.seed);
+    probability.replicates = Number(probability.replicates);
+  }
+  if (v81 && freeze)
+    freeze.probability_binding_sha256 =
+      (await d.select<Mu7Row>('mu7_freeze', { columns: ['probability_binding_sha256'] }))[0]
+        ?.probability_binding_sha256 ?? null;
+  const subtypes = v81
+    ? await d.select<Mu7Row>('v_mu81_subtypes', {
+        columns: [
+          'unit_id',
+          'mode',
+          'reviewer_slot',
+          'revision_number',
+          'answer',
+          'diabetes_subtype',
+          'content_sha256',
+        ],
+        eq: { mode },
+        order: ['unit_id', 'reviewer_slot', 'revision_number'],
+      })
+    : undefined;
   return buildMu7Bundle({
+    probability,
+    subtypes,
     mode,
     appGitSha,
     design: num(design, ['n_primary_planned', 'n_subgroup_planned']),

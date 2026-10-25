@@ -5,7 +5,7 @@
 // one written by tests/handoff/v7.mjs read identically in analysis/v7/performance_analysis_v7.py.
 // A PILOT bundle is SYNTHETIC: its manifest says so and the analysis refuses it (mode FORMAL only).
 import { createHash } from 'node:crypto';
-import type { Mu7Bundle, Mu7BundleFile, Mu7Mode } from './mu7-types';
+import { isMu81Design, type Mu7Bundle, type Mu7BundleFile, type Mu7Mode } from './mu7-types';
 
 export const MU7_BUNDLE_FORMAT = '7.0';
 export const MU7_EXPORT_COLUMNS = {
@@ -132,6 +132,8 @@ export function mu7SortRows(rows: Mu7Row[]): Mu7Row[] {
 }
 
 export interface Mu7BundleSources {
+  probability?: Mu7Row | null;
+  subtypes?: Mu7Row[];
   mode: Mu7Mode;
   appGitSha: string;
   design: Record<string, unknown> | null;
@@ -152,8 +154,57 @@ export function buildMu7Bundle(s: Mu7BundleSources): Mu7Bundle {
       return { name: `${role}.csv`, role, rows: rows.length, sha256: sha256(content), content };
     },
   );
+  const v81 = isMu81Design(s.design?.design_version);
+  let probability: Mu7Row | null = null;
+  if (v81) {
+    if (!s.subtypes) throw new Error('v8.1 export requires subtype revision observations');
+    const content = mu7Csv(
+      [
+        'unit_id',
+        'mode',
+        'reviewer_slot',
+        'revision_number',
+        'answer',
+        'diabetes_subtype',
+        'content_sha256',
+      ],
+      s.subtypes,
+    );
+    files.push({
+      name: 'subtype_observations.csv',
+      role: 'subtype_observations',
+      rows: s.subtypes.length,
+      content,
+      sha256: sha256(content),
+    });
+    if (s.mode === 'FORMAL' && s.design?.overlap_setting === 'ONE_PER_TRIAL') {
+      if (!s.probability || s.freeze?.probability_binding_sha256 !== s.probability.binding_sha256)
+        throw new Error('v8.1 export requires frozen probability binding');
+      const { source_csv, canonical_csv, ...metadata } = s.probability;
+      const csv = String(canonical_csv);
+      const source = String(source_csv);
+      if (sha256(source) !== metadata.file_sha256)
+        throw new Error('Probability file checksum mismatch');
+      probability = metadata;
+      files.push({
+        name: 'probability_source.csv',
+        role: 'probability_source',
+        rows: source.trimEnd().split('\n').length - 1,
+        content: source,
+        sha256: sha256(source),
+      });
+      files.push({
+        name: 'probabilities.csv',
+        role: 'probabilities',
+        rows: csv.trimEnd().split('\n').length - 1,
+        content: csv,
+        sha256: sha256(csv),
+      });
+    }
+  }
   const manifest: Record<string, unknown> = {
-    bundle_format_version: MU7_BUNDLE_FORMAT,
+    ...(v81 ? { vocabulary_version: 'mu81-subtype-1', probability_binding: probability } : {}),
+    bundle_format_version: v81 ? '8.1' : MU7_BUNDLE_FORMAT,
     mode: s.mode,
     status:
       s.mode === 'PILOT'
@@ -185,7 +236,7 @@ export function buildMu7Bundle(s: Mu7BundleSources): Mu7Bundle {
 export function mu7RegistrationPayload(bundle: Mu7Bundle, appGitSha: string, notes?: string) {
   return {
     mode: bundle.mode,
-    bundle_format_version: MU7_BUNDLE_FORMAT,
+    bundle_format_version: String(bundle.manifest.bundle_format_version),
     row_counts: Object.fromEntries(bundle.files.map((f) => [f.role, f.rows])),
     file_sha256: Object.fromEntries(bundle.files.map((f) => [f.name, f.sha256])),
     manifest_sha256: bundle.manifestSha256,

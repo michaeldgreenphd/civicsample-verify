@@ -1,5 +1,7 @@
 'use client';
 
+import { MU81_SUBTYPE_TEXT, type Mu81Subtype } from '../lib/mu7-types';
+
 // Review design v7 (mapping units). Reviewers answer one question per unit: is our displayed
 // assignment right for this trial? The adjudicator breaks ties on routed units only, and the
 // investigator runs the synthetic pilot. Every rule shown here is enforced again by the database,
@@ -295,6 +297,7 @@ function Reviewer({
   user: Actor;
 }) {
   const [detail, setDetail] = useState<Mu7ReviewerUnit | null>(null);
+  const [subtype, setSubtype] = useState<Mu81Subtype | ''>('');
   const [answer, setAnswer] = useState<Mu7Answer | ''>('');
   const [reasonCode, setReasonCode] = useState('');
   const [note, setNote] = useState('');
@@ -308,6 +311,7 @@ function Reviewer({
     const last = next.ownAnswers.at(-1);
     setDetail(next);
     setAnswer(last?.answer ?? '');
+    setSubtype(last?.diabetesSubtype ?? '');
     setReasonCode(last?.reasonCode ?? '');
     setNote(last?.note ?? '');
     setUncertain(last?.uncertain ?? false);
@@ -336,6 +340,7 @@ function Reviewer({
         method: 'POST',
         body: JSON.stringify({
           answer,
+          ...(shown.subtypeRequired ? { diabetesSubtype: subtype } : {}),
           reasonCode: answer === 'DISAGREE' && reasonCode ? reasonCode : null,
           note: note.trim() || null,
           uncertain,
@@ -458,6 +463,32 @@ function Reviewer({
                     </label>
                   ))}
                 </div>
+                {shown.subtypeRequired && (
+                  <fieldset className="field">
+                    <legend className="form-label">
+                      Does the registry text state that the trial studies type 2 diabetes?
+                      (required)
+                    </legend>
+                    <p className="form-hint">
+                      This records what the packet states, separately from your membership answer.
+                      It is not adjudicated.
+                    </p>
+                    {(Object.entries(MU81_SUBTYPE_TEXT) as [Mu81Subtype, string][]).map(
+                      ([value, label]) => (
+                        <label className="checkbox-row" key={value}>
+                          <input
+                            type="radio"
+                            name="diabetes-subtype"
+                            value={value}
+                            checked={subtype === value}
+                            onChange={() => setSubtype(value)}
+                          />
+                          <span>{label}</span>
+                        </label>
+                      ),
+                    )}
+                  </fieldset>
+                )}
                 {answer === 'DISAGREE' && (
                   <label className="field">
                     <span className="form-label">Reason code (required)</span>
@@ -494,7 +525,11 @@ function Reviewer({
                   <span>I am answering, but I am not sure.</span>
                 </label>
                 <div className="button-row">
-                  <button className="button" disabled={!answer || busy} onClick={submit}>
+                  <button
+                    className="button"
+                    disabled={!answer || busy || (shown.subtypeRequired && !subtype)}
+                    onClick={submit}
+                  >
                     {last ? 'Save revision' : 'Save answer'}
                   </button>
                 </div>
