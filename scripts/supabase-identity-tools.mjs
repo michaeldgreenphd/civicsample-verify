@@ -77,8 +77,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0032_v7_freeze_gates_v8_4.sql',
   'migrations/0033_v8_design_foundation.sql',
   'migrations/0034_v8_synthetic_identifiers.sql',
+  'migrations/0035_v81_subtype_probability.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '8.0.1-v8-synthetic-identifiers';
+export const EXPECTED_SCHEMA_VERSION = '8.1.0-subtype-probability';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -123,6 +124,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0032_v7_freeze_gates_v8_4.sql': ['7.0.7-v7-freeze-gates-v8-4'],
   'migrations/0033_v8_design_foundation.sql': ['8.0.0-v8-design-foundation'],
   'migrations/0034_v8_synthetic_identifiers.sql': ['8.0.1-v8-synthetic-identifiers'],
+  'migrations/0035_v81_subtype_probability.sql': ['8.1.0-subtype-probability'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([

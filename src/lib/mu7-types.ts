@@ -7,6 +7,14 @@
 import VOCABULARY from '../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json';
 
 export type Mu7Mode = 'PILOT' | 'FORMAL';
+export type Mu81Subtype = 'TYPE_2_STATED' | 'TYPE_2_NOT_STATED' | 'CANNOT_TELL_FROM_PACKET';
+export const MU81_SUBTYPE_TEXT: Record<Mu81Subtype, string> = {
+  TYPE_2_STATED: 'Type 2 diabetes is stated',
+  TYPE_2_NOT_STATED: 'Type 2 diabetes is not stated',
+  CANNOT_TELL_FROM_PACKET: 'Cannot tell from this packet',
+};
+export const isMu81Design = (v: unknown) =>
+  typeof v === 'string' && (v === 'review-design-v8.1.0' || v.startsWith('SYN-8-1-'));
 export type Mu7Answer = 'AGREE' | 'DISAGREE' | 'CANNOT_TELL';
 export type Mu7Family = 'AREA' | 'ROW' | 'SG';
 export type Mu7Routing =
@@ -139,6 +147,7 @@ export interface Mu7TrainingView {
   workedExample: Mu7WorkedExample;
 }
 export interface Mu7OwnAnswer {
+  diabetesSubtype?: Mu81Subtype | null;
   revisionNumber: number;
   answer: Mu7Answer;
   reasonCode: string | null;
@@ -155,6 +164,7 @@ export interface Mu7ReviewerWorkspace {
   trainingAcknowledgedAt: string | null;
 }
 export interface Mu7ReviewerUnit {
+  subtypeRequired?: boolean;
   assignmentId: string;
   mode: Mu7Mode;
   queuePosition: number;
@@ -164,6 +174,7 @@ export interface Mu7ReviewerUnit {
   ownAnswers: Mu7OwnAnswer[];
 }
 export interface Mu7SubmissionInput {
+  diabetesSubtype?: Mu81Subtype | null;
   answer: Mu7Answer;
   reasonCode?: string | null;
   note?: string | null;
@@ -294,7 +305,14 @@ export type Mu7AdminAction =
 // ---- Bundle 7.0 ------------------------------------------------------------------------------
 export interface Mu7BundleFile {
   name: string;
-  role: 'units' | 'unit_design' | 'independent_judgments' | 'final_reference';
+  role:
+    | 'units'
+    | 'unit_design'
+    | 'independent_judgments'
+    | 'final_reference'
+    | 'subtype_observations'
+    | 'probabilities'
+    | 'probability_source';
   rows: number;
   sha256: string;
   content: string;

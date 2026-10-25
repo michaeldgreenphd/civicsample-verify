@@ -57,6 +57,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mu8_bundle as B  # noqa: E402
 import mu8_estimators as E  # noqa: E402
+import mu81_observations as V81  # noqa: E402
 
 FORMAT = "7.0"
 DESIGN_PREFIXES = ("review-design-v8", "SYN-8")
@@ -195,7 +196,7 @@ def verify_freeze_inventory(U: pd.DataFrame, J: pd.DataFrame, freeze: dict) -> N
 def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) -> dict:
     refuse_unless((d / "manifest.json").exists(), f"no manifest.json in {d}")
     man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
-    refuse_unless(str(man.get("bundle_format_version")) == FORMAT, f"bundle format {man.get('bundle_format_version')!r}, expected {FORMAT}")
+    refuse_unless(str(man.get("bundle_format_version")) in (FORMAT, "8.1"), f"bundle format {man.get('bundle_format_version')!r}, expected {FORMAT}")
     refuse_unless(man.get("mode") == "FORMAL", f"mode {man.get('mode')!r}: only a FORMAL bundle is analysed")
     dv = str(man.get("design", {}).get("design_version", ""))
     refuse_unless(dv.startswith(DESIGN_PREFIXES), f"design version {dv!r} is not design v8 (a v7 bundle is read by performance_analysis_v7.py)")
@@ -277,7 +278,13 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) ->
             got = {s: int(nh[s]) for s in nh.index}
             refuse_unless(got == want, f"the bundle's allocation differs from the design manifest: "
                                        f"{sorted(set(got.items()) ^ set(want.items()))}")
-    return {"manifest": man, "units": U, "design": D, "judgments": J, "final": R, "overlap": ov[0], "synthetic": synthetic}
+    bound, subtype_counts = None, None
+    if str(man.get("bundle_format_version")) == "8.1":
+        bound, subtype_counts = V81.verify(d, man, U, D, J, refuse_unless)
+    else:
+        refuse_unless(not dv.startswith("SYN-8-1-") and dv != "review-design-v8.1.0", "v8.1 requires bundle format 8.1")
+    return {"manifest": man, "units": U, "design": D, "judgments": J, "final": R, "overlap": ov[0], "synthetic": synthetic,
+            "bound_probabilities": bound, "subtype_counts": subtype_counts}
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -300,10 +307,12 @@ def analysis_frame(b: dict, probabilities: Path | None) -> pd.DataFrame:
     X["y"] = (X.final_answer == "AGREE").astype(int)
     X["d_R0"] = X.final_answer.isin(["AGREE", "DISAGREE"]).astype(int)
     X["d_R2"] = X.reviewed.astype(int)
+    if b["manifest"]["bundle_format_version"] == "8.1":
+        refuse_unless(probabilities is None, "bundle 8.1 uses its frozen probability binding, not an external override")
     if b["overlap"] == "ONE_PER_TRIAL":
-        refuse_unless(probabilities is not None, "overlap ONE_PER_TRIAL needs --probabilities (Monte Carlo inclusion probabilities)")
-        P = pd.read_csv(probabilities, dtype={"unit_id": str})
-        col = "pi_mc_ONE_PER_TRIAL" if "pi_mc_ONE_PER_TRIAL" in P.columns else "pi"
+        refuse_unless(b.get("bound_probabilities") is not None or probabilities is not None, "overlap ONE_PER_TRIAL needs --probabilities (Monte Carlo inclusion probabilities)")
+        P = b["bound_probabilities"] if b.get("bound_probabilities") is not None else pd.read_csv(probabilities, dtype={"unit_id": str})
+        col = "pi_i" if "pi_i" in P.columns else "pi_mc_ONE_PER_TRIAL" if "pi_mc_ONE_PER_TRIAL" in P.columns else "pi"
         refuse_unless(P.unit_id.is_unique and set(P.unit_id) == set(X.unit_id),
                       "probabilities must contain exactly one row per frozen unit")
         numeric = pd.to_numeric(P[col], errors="coerce")
@@ -462,6 +471,8 @@ def main(argv=None) -> int:
            "subgroup_counts_v8.csv": cat[cat.family == "SG"], "agreement_v8.csv": agr,
            "reason_codes_v8.csv": reason_counts(b, X), "routing_summary_v8.csv": routing_summary(b),
            "uncertainty_flags_v8.csv": uncertainty_summary(b)}
+    if b.get("subtype_counts") is not None:
+        out["diabetes_subtype_counts_v81.csv"] = b["subtype_counts"]
     a.out.mkdir(parents=True)
     for name, df in out.items():
         df.to_csv(a.out / name, index=False, lineterminator="\n")
