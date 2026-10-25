@@ -6,9 +6,11 @@ The investigator requested Sonnet 5, Sonnet 5.5 and Opus 5.5, with total API spe
 
 ## Implemented and still outstanding
 
-Implemented: strict checksummed input validation; identical displayed wording, evidence and guide in each arm; offline cost bounds; account model-access checking; explicit paid-command opt-in; durable reservations before calls; resumable completed responses; refusal to retry uncertain or failed requests automatically; strict response validation; and a manual GitHub Actions workflow.
+Implemented: strict checksummed input validation; identical displayed wording, evidence and guide in each arm; offline cost bounds; account model-access checking; free token-count preflight; private provider-error diagnostics; explicit paid-command opt-in; durable reservations before calls; resumable completed responses; refusal to retry uncertain or failed requests automatically; strict response validation; and a manual GitHub Actions workflow.
 
-Outstanding before execution: reviewed code on the default branch, a private data repository and scoped store token, approved input-byte pin, configured workflow environment, and an executed account-access check. No API request or paid run is implied by local tests. The private-store clone/push and real model calls have not been tested against live services. Existing `ANTHROPIC_API_KEY` configuration does not install or run the workflow.
+Every installation needs reviewed code on the default branch, a private data repository and scoped store token, an approved input-byte pin, a configured workflow environment, and executed account-access and preflight checks. No API request or paid run is implied by local tests. Existing `ANTHROPIC_API_KEY` configuration does not install or run the workflow.
+
+Observed on 2026-10-25: the hosted dry-run fetched and validated the private input, all three metadata lookups passed, and the private reservation checkpoint succeeded. The first generation attempt then failed with the earlier runner's generic `provider_request_failed` category, leaving zero completed assessments and one unreconciled reservation. Its HTTP status/body were not retained, so the cause and actual charge cannot be recovered from that ledger. The diagnostic changes below do not reset, retry or reconcile it. Live token-count preflight and successful generation remain unverified until executed.
 
 ## Input fidelity
 
@@ -36,6 +38,8 @@ Before each potentially billable request, the runner reserves an intentionally c
 
 A timeout, malformed answer, model mismatch, truncated output, unexpected billing category or failed checkpoint stops further calls. A reserved/unreconciled entry prevents automatic resume until a separate reviewed reconciliation establishes what was charged and whether a valid result exists. Response notes obey the same 2,000-character limit as the physician form. Completed results are revalidated and skipped on resume. Changing the input, approval, cap, request shape or prices refuses reuse of the ledger. No code resets it to obtain a fresh budget.
 
+Provider HTTP failures now retain the status, known error type, bounded error message and request identifier in the **private** ledger or preflight report. The configured API key is redacted from those details. Public errors contain only fixed categories, such as `provider_http_400`, `provider_timeout` or `provider_connection_failed`; raw messages may echo packet evidence and must never be copied into public logs or issues. Unknown or malformed error bodies do not get printed. An HTTP rejection still leaves a generation attempt unreconciled; a status alone does not establish its bill or authorize a retry.
+
 ## Private store and workflow setup
 
 Use a separate **private** GitHub repository as a data store. Its clone is used only as data; hooks and executable files from it are never run. Its layout is:
@@ -43,6 +47,7 @@ Use a separate **private** GitHub repository as a data store. Its clone is used 
 ```text
 inputs/mapping-review.json
 state/mapping-review-ledger.json  # created by the runner; contains raw responses
+state/mapping-review-preflight.json  # token counts or private failure diagnostics
 ```
 
 Create a fine-grained token limited to **Contents: read/write on that private repository**. Do not grant it organization administration or broad repository access. In the app repository, configure the `ai-mapping-review` environment with a required investigator reviewer and permitted default branch. The workflow is `workflow_dispatch` only; it does not run on pushes, PRs, forks or schedules, and its job refuses non-default branches.
@@ -80,7 +85,9 @@ The workflow must be present on the app repository's default branch to appear fo
 
 3. After configuring private storage, dispatch `dry-run`. This fetches the private input and validates it but makes no Anthropic request. Review the conservative cost bound; it is not an observed bill.
 4. Dispatch `models` to verify all three requested identifiers are available to this account. This performs model-metadata GET requests only, not generation. Failure stops preparation; models are not silently substituted.
-5. Dispatch `run` only with the investigator spending-authorization reference and a combined cap of 95 or lower. The workflow translates this explicit choice to `--execute-paid`. Keep the same cap, approval and input when resuming.
-6. Read results only in the private ledger. Do not share per-unit AI answers with reviewers or the adjudicator. Model consistency is not clinical validity; this runner prints no accuracy claim, selected “winner”, or human-reference estimate.
+5. Dispatch `preflight`. This calls the [free token-count endpoint](https://platform.claude.com/docs/en/build-with-claude/token-counting) for all 300 planned prompts with the same model, evidence, guide, thinking and JSON schema. It makes no generation calls and neither reads nor changes the paid-run ledger, even if that ledger has an unreconciled attempt. Its separate private report stores input/request bindings, per-request counts or bounded diagnostic details. Only aggregate counts and fixed error categories are printed. Prior reports remain in the private repository history.
+6. Review the preflight report. A pass verifies token counting for those inputs; it does **not** prove the generation endpoint will accept every setting or that billing is enabled. Token counting omits the generation-only `max_tokens`, `stream` and `service_tier` fields. It cannot establish whether an earlier failed generation was charged. Investigate any existing reservation before another paid run.
+7. Dispatch `run` only with the investigator spending-authorization reference and a combined cap of 95 or lower. The workflow translates this explicit choice to `--execute-paid`. Keep the same cap, approval and input when resuming. Preflight is a separate operator step, not an automatic paid retry.
+8. Read results only in the private ledger. Do not share per-unit AI answers with reviewers or the adjudicator. Model consistency is not clinical validity; this runner prints no accuracy claim, selected “winner”, or human-reference estimate.
 
 A cancelled job may leave a durable reserved request. Do not delete or reset its ledger to restart. Reconcile that request first; this conservative behavior avoids charging twice for an uncertain call. The runner serializes jobs with a non-cancelling concurrency group and processes one request at a time.
