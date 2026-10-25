@@ -1,3 +1,4 @@
+import { HISTORY_COLUMNS } from '../lib/mu7-history';
 // Review design v7 (mapping units) service, written once against two operations: read a table or
 // view under the caller's row-level security, and call an rpc_mu7_* function. The local PGlite
 // path (src/server/mu7.ts) and the Supabase path (src/server/mu7-rest.ts) supply those operations,
@@ -830,7 +831,15 @@ export async function readMu7Bundle(
         order: ['unit_id', 'reviewer_slot', 'revision_number'],
       })
     : undefined;
+  const history = v81
+    ? await d.select<Mu7Row>('v_mu81_judgment_history', {
+        columns: HISTORY_COLUMNS,
+        eq: { mode },
+        order: ['unit_id', 'reviewer_slot', 'revision_number'],
+      })
+    : undefined;
   return buildMu7Bundle({
+    history,
     probability,
     subtypes,
     mode,

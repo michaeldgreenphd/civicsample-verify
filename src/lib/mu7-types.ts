@@ -312,7 +312,8 @@ export interface Mu7BundleFile {
     | 'final_reference'
     | 'subtype_observations'
     | 'probabilities'
-    | 'probability_source';
+    | 'probability_source'
+    | 'judgment_history';
   rows: number;
   sha256: string;
   content: string;

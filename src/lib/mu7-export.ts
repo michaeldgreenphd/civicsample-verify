@@ -5,6 +5,7 @@
 // one written by tests/handoff/v7.mjs read identically in analysis/v7/performance_analysis_v7.py.
 // A PILOT bundle is SYNTHETIC: its manifest says so and the analysis refuses it (mode FORMAL only).
 import { createHash } from 'node:crypto';
+import { HISTORY_COLUMNS } from './mu7-history';
 import { isMu81Design, type Mu7Bundle, type Mu7BundleFile, type Mu7Mode } from './mu7-types';
 
 export const MU7_BUNDLE_FORMAT = '7.0';
@@ -111,12 +112,16 @@ export function mu7CellText(value: unknown): string {
 export function mu7Csv(columns: readonly string[], rows: Mu7Row[]): string {
   if (!rows.length) return `${columns.join(',')}\n`;
   const esc = (v: unknown) => {
-    const s = mu7CellText(v);
+    const s = v === null || v === undefined ? '' : String(v);
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return (
-    [columns.join(','), ...rows.map((r) => columns.map((c) => esc(r[c])).join(','))].join('\n') +
-    '\n'
+    [
+      columns.join(','),
+      ...rows.map((r) =>
+        columns.map((c) => esc(c.endsWith('_at') ? mu7CellText(r[c]) : r[c])).join(','),
+      ),
+    ].join('\n') + '\n'
   );
 }
 /** Stable order: unit_id in code-point order (the database's collate "C"), then reviewer slot. */
@@ -134,6 +139,7 @@ export function mu7SortRows(rows: Mu7Row[]): Mu7Row[] {
 export interface Mu7BundleSources {
   probability?: Mu7Row | null;
   subtypes?: Mu7Row[];
+  history?: Mu7Row[];
   mode: Mu7Mode;
   appGitSha: string;
   design: Record<string, unknown> | null;
@@ -202,9 +208,22 @@ export function buildMu7Bundle(s: Mu7BundleSources): Mu7Bundle {
       });
     }
   }
+  const v82 = v81 && s.history !== undefined;
+  if (v82) {
+    const rows = s.history!.filter((r) => r.mode === s.mode);
+    const content = mu7Csv(HISTORY_COLUMNS, rows);
+    files.push({
+      name: 'judgment_history.csv',
+      role: 'judgment_history',
+      rows: rows.length,
+      content,
+      sha256: sha256(content),
+    });
+  }
   const manifest: Record<string, unknown> = {
+    ...(v82 ? { history_contract_version: 'mu81-history-1' } : {}),
     ...(v81 ? { vocabulary_version: 'mu81-subtype-1', probability_binding: probability } : {}),
-    bundle_format_version: v81 ? '8.1' : MU7_BUNDLE_FORMAT,
+    bundle_format_version: v82 ? '8.2' : v81 ? '8.1' : MU7_BUNDLE_FORMAT,
     mode: s.mode,
     status:
       s.mode === 'PILOT'

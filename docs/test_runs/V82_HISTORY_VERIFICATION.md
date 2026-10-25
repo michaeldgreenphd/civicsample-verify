@@ -1,0 +1,30 @@
+# Locked revision-history verification
+
+Base: `090f351a11c3be0dfc1814f9f8dffd01d8934c5e` (PR #23). That head's independent Codex re-review completed with no findings, and its web, analysis and PostgreSQL CI jobs passed. This follow-up is a separate change; those earlier CI results do not validate this head.
+
+The new additive migration 0036 adds a locked, investigator-only history view and permits bundle 8.2. Exports from v8.1 designs include every revision and preserve exact microsecond timestamps. Separate TypeScript and Python implementations reproduce per-revision content digests and the formal snapshot. Old 7.0/8.1 files retain their previous validation scope. No clinical policy, estimator, sample or approval was changed.
+
+## Observed local results
+
+| Command / check                                                                                                                                   | Result                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VERIFY_ANALYSIS_PYTHON=<existing-analysis-python> npm run check`                                                                                 | PASS: 307 Node tests passed, zero failures, 34 existing skips and one existing todo; typecheck and lint passed.                                                                                             |
+| `node --import tsx --test tests/mu82-history.test.ts tests/mu8-roundtrip.test.ts tests/bundle-download-verification.test.ts` with Python attached | PASS: 54 passed, zero failures, two native PostgreSQL skips.                                                                                                                                                |
+| Focused `v8.1 bound` round trips with Python attached                                                                                             | PASS: both overlap alternatives, each with 36 Python checks, zero skips, plus the TypeScript download checker.                                                                                              |
+| `MU7_ALLOW_NO_DB_BUNDLE=1 MU8_ALLOW_NO_DB_BUNDLE=1 <analysis-python> -m pytest -q analysis`                                                       | PASS: 522 passed, 39 skipped. The database-dependent tests are executed separately with actual synthetic exports by the round trips above.                                                                  |
+| `npm run test:handoff`                                                                                                                            | PASS with the existing documented differences: current chain through 0036 passes 360/362 v7 steps; the schema-version list and intentionally stricter adjudicator check differ. No new exception was added. |
+| `npm run build`                                                                                                                                   | PASS: 38 SQL inputs; no local runtime files in production traces.                                                                                                                                           |
+| `npm run test:e2e:production`                                                                                                                     | PASS: ten served-browser scenarios.                                                                                                                                                                         |
+| Changed-file Prettier and `git diff --check`                                                                                                      | PASS.                                                                                                                                                                                                       |
+
+The SQL lifecycle fixtures contain 100 fictional units and 200 initial judgments. One assignment has two additional revisions, giving a 202-row snapshot while leaving initial/effective agreement and adjudication routing unchanged. Pilot and training records are excluded from the formal history. The required subtype remains separate and unadjudicated.
+
+Mutation checks refuse missing intermediate revisions, changed notes/reasons/timing/subtypes, reordered revision numbers, changed reviewer identity, mismatched endpoints, malformed timestamps, microsecond-only timestamp changes and replaced digests even when file checksums are refreshed. A rehashed intermediate note still fails the frozen snapshot comparison. A delimiter-shift attack fails fixed-code validation. Registered-manifest checks refuse a replaced manifest; internal consistency alone is not authentication.
+
+Role checks cover both reviewers, adjudicator, outsider, low-assurance investigator, anonymous and service roles; none can read the new view. The investigator sees no formal history before locking. A synthetic investigator lock immediately hides the records; release restores access. Upgrade tests preserve all existing judgment, snapshot, design, freeze, lock and export rows in v7 and v8.1 pilot databases.
+
+## Limits
+
+- Native PostgreSQL: BLOCKED locally (no server); the existing hosted PostgreSQL 16 job now exercises full history reconstruction and access checks on its database-written export. Its result must be read for the new PR head.
+- Supabase: NOT TESTED for migration 0036 or bundle 8.2. No remote database request or operational mutation was performed.
+- No real study record was imported, no gate approved, no sample frozen, no clinician contacted, and no deployment or merge performed.

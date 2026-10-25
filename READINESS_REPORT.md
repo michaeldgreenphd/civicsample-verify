@@ -1,5 +1,7 @@
 # CivicSample Verify readiness — 2026-10-22
 
+Latest export-history engineering increment: [bundle 8.2 verification record](docs/test_runs/V82_HISTORY_VERIFICATION.md). This is synthetic/local evidence only; migration 0036 has not been applied to Supabase and does not authorize formal review. Historical evidence below remains scoped to its stated commits.
+
 ## Current independent audit
 
 **Local synthetic workflows pass; clinical deployment is not ready.** The latest investigator request is **100 individual trial-to-condition mappings with the existing assignment visible**, following three excluded worked examples. The proposed v5 100-trial questionnaire does not implement that request and is not approved as a substitute. See [the recorded decisions](docs/REVIEW_WORKFLOW_DECISIONS.md).
