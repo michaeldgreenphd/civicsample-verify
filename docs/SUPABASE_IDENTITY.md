@@ -50,7 +50,9 @@ reviewer is working. A returning browser's older `/api/session` refresh cookie
 is migrated by its startup session request and cleared under the old name.
 Transient Auth failures leave usable credentials intact and return a retryable
 error; successful rotation is returned even if a later data request fails.
-Logout confirms revocation, including when only a refresh cookie remains.
+Logout confirms revocation, including when only a refresh cookie remains. If
+Auth definitively rejects all remaining credentials as invalid, the app clears
+local sign-in state without claiming that other sessions were revoked.
 Live verification helpers revoke only the session created by that test.
 
 An authorized `accounts --apply` now checks every linked application's identity,

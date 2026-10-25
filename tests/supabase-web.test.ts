@@ -810,3 +810,20 @@ test('a refreshed session survives identity-service and data-service failures', 
     }
   }
 });
+
+test('logout clears already-invalid local credentials without claiming global revocation', async () => {
+  const { DELETE } = await import('../src/app/api/[...path]/route');
+  const expired = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1', -1);
+  g.refreshes.delete(expired.refresh_token);
+  for (const cookie of [
+    `${ACCESS_COOKIE}=${expired.access_token}`,
+    `${REFRESH_COOKIE}=${expired.refresh_token}`,
+    `${ACCESS_COOKIE}=${expired.access_token}; ${REFRESH_COOKIE}=${expired.refresh_token}`,
+  ]) {
+    const out = await DELETE(req('/api/session', { method: 'DELETE', cookie }));
+    assert.equal(out.status, 200, 'Sign out must let the browser leave its stale workspace');
+    assert.deepEqual(await out.json(), { ok: true, revocation: 'credentials_unavailable' });
+    assert.equal(out.headers.getSetCookie().length, 3);
+    assert.ok(out.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));
+  }
+});

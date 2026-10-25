@@ -132,3 +132,53 @@ test('view-only investigator sees progress without MFA or editing controls (mock
     page.getByRole('button', { name: /enrol|verify|import|assign|lock|approve|export/i }),
   ).toHaveCount(0);
 });
+
+test('hosted sign-out can retry an outage and leaves an expired workspace (mock Auth)', async ({
+  page,
+}) => {
+  let attempts = 0;
+  await page.route('**/api/session', (route) => {
+    if (route.request().method() === 'DELETE') {
+      attempts++;
+      return route.fulfill(
+        attempts === 1
+          ? { status: 502, json: { error: 'Sign-out could not be confirmed. Please try again.' } }
+          : { json: { ok: true, revocation: 'credentials_unavailable' } },
+      );
+    }
+    return route.fulfill({
+      json: {
+        environment: 'supabase-staging',
+        user: {
+          id: 'synthetic-expired-user',
+          displayName: 'Synthetic reviewer',
+          role: 'REVIEWER',
+          aal: 'aal1',
+          mfaEnrolled: false,
+        },
+      },
+    });
+  });
+  await page.route('**/api/mu7/workspace', (route) =>
+    route.fulfill({
+      json: {
+        kind: 'reviewer',
+        enrolled: true,
+        designRecorded: true,
+        queue: [],
+        training: [],
+        trainingAcknowledgedAt: null,
+      },
+    }),
+  );
+  await page.goto('/');
+  await expect(page.getByRole('tab', { name: 'Worked examples', exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('main').getByRole('alert')).toContainText('Please try again');
+  await expect(page.getByRole('button', { name: 'Sign out' })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: 'Worked examples', exact: false })).toHaveCount(0);
+  expect(attempts).toBe(2);
+});

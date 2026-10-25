@@ -206,22 +206,34 @@ async function handle(request: Request) {
       }
       if (path === '/api/session' && request.method === 'DELETE') {
         const cookies = readSessionCookies(request);
-        let access = cookies.access;
-        if (access) {
+        let revoked = false;
+        if (cookies.access) {
           try {
-            await auth.signOut(access);
+            await auth.signOut(cookies.access);
+            revoked = true;
           } catch (error) {
-            if (!(error instanceof HttpError && error.status === 401) || !cookies.refresh)
-              throw error;
-            access = undefined; // An expired access token can still revoke via its refresh token.
+            if (!(error instanceof HttpError && error.status === 401)) throw error;
+            // An expired access token may still revoke through its refresh token below.
           }
         }
-        if (!access && cookies.refresh) {
-          const renewed = await auth.refresh(cookies.refresh);
-          rememberCookies(sessionCookieHeaders(renewed, secure));
-          await auth.signOut(renewed.accessToken);
+        if (!revoked && cookies.refresh) {
+          try {
+            const renewed = await auth.refresh(cookies.refresh);
+            rememberCookies(sessionCookieHeaders(renewed, secure));
+            await auth.signOut(renewed.accessToken);
+            revoked = true;
+          } catch (error) {
+            if (!(error instanceof HttpError && error.status === 401)) throw error;
+            // Definite expired/revoked credentials must not trap a stale workspace on screen.
+            // This is local sign-out only; it does not claim revocation of another session.
+          }
         }
-        return json({ ok: true }, 200, {}, clearedSessionCookieHeaders(secure));
+        return json(
+          { ok: true, revocation: revoked ? 'confirmed' : 'credentials_unavailable' },
+          200,
+          {},
+          clearedSessionCookieHeaders(secure),
+        );
       }
       const resolved = await resolveSession(request, rememberCookies);
       if (path === '/api/session' && request.method === 'GET')

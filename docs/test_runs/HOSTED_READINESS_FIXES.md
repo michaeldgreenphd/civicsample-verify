@@ -14,7 +14,8 @@ The still-applicable PR #7 findings are addressed in this successor branch:
   outside explicit loopback hosts.
 - API activity can refresh a session. Refresh-only and expired-access logout
   confirm revocation; temporary Auth failures do not discard usable tokens or
-  report a successful logout. Rotated cookies survive downstream errors.
+  report a successful logout. Already-invalid credentials are cleared locally
+  without claiming global revocation. Rotated cookies survive downstream errors.
 - Staging test cleanup logs out its own session only. Returning-investigator
   TOTP factor selection was already server-controlled; its regression remains.
 - Account reconciliation validates the existing active identity, role and
@@ -40,9 +41,9 @@ requirements installed, outside this repository.
 
 | Command or check                                         | Result                                                                                                                                                            |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VERIFY_ANALYSIS_PYTHON=<analysis-python> npm run check` | PASS: typecheck, lint, 418 tests (380 passed, 0 failed, 37 skipped, 1 TODO), fixture scan and v4/v5/v7 leakage scans. Each leakage scan reported zero violations. |
+| `VERIFY_ANALYSIS_PYTHON=<analysis-python> npm run check` | PASS: typecheck, lint, 419 tests (381 passed, 0 failed, 37 skipped, 1 TODO), fixture scan and v4/v5/v7 leakage scans. Each leakage scan reported zero violations. |
 | `npm run build`                                          | PASS: 7 manifests, 39 SQL inputs, no local runtime files in production traces.                                                                                    |
-| `npm run test:e2e:production`                            | PASS: 14/14 locally served production-browser scenarios.                                                                                                          |
+| `npm run test:e2e:production`                            | PASS: 15/15 locally served production-browser scenarios, including failed/retried logout and exit from an expired workspace.                                      |
 | Changed-file Prettier check                              | PASS. Preserved handoff files were not reformatted; the previously documented whole-tree format failure is unchanged.                                             |
 | `git diff --check`                                       | PASS.                                                                                                                                                             |
 | Focused earlier-review regression run                    | PASS: 30/30 across `mu7-gates-v8-1`, `mu7-live-phases`, `supabase-pilot-tools`, and `mu7-lifecycle`.                                                              |
@@ -55,10 +56,12 @@ as passing. The full check includes the existing database-to-analysis roundtrips
 the standalone Python suite and unchanged supplied handoff suites were not
 repeated locally in this increment and remain hosted CI checks.
 
+Independent review also caught a stale-workspace logout edge case. A new API regression reproduced the 401 refusal before the fix. Definitively invalid credentials now clear local sign-in state without claiming global revocation; temporary service failures remain retryable. The follow-up Auth/startup suite passed 19/19.
+
 The first new browser run failed because a generic alert selector also matched
 Next.js's route announcer. Scoping the assertion to the application main region
 fixed the test; no product behavior or error check was removed. The final run
-passed all 14 scenarios. Browser coverage includes interrupted import and
+passed all 15 scenarios after the logout follow-up. Browser coverage includes interrupted import and
 assignment recovery, the status download, role-specific visibility, no page
 overflow at 320/390 pixels and an automated WCAG A/AA scan of the new panel.
 Auth and PostgREST recovery tests use an in-process synthetic gateway; they are
