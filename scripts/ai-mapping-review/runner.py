@@ -278,6 +278,11 @@ class Provider:
             if type(status) is int and 400 <= status <= 599:
                 diagnostic["http_status"] = status
                 category = "provider_http_" + str(status)
+            # Headers remain usable when an upstream error body is HTML, truncated
+            # or unreadable. Keep the correlation ID independently for reconciliation.
+            request_id = error.headers.get("request-id") if error.headers else None
+            if isinstance(request_id, str) and re.fullmatch(r"req_[A-Za-z0-9_-]{1,160}", request_id):
+                diagnostic["request_id"] = request_id.replace(self.key, "[redacted]")
             try:
                 raw = error.read(65_537)
                 diagnostic["body_truncated"] = len(raw) > 65_536
@@ -291,9 +296,6 @@ class Provider:
                             diagnostic["error_type"] = detail["type"]
                         if isinstance(detail.get("message"), str):
                             diagnostic["message"] = detail["message"].replace(self.key, "[redacted]")[:12_000]
-                request_id = error.headers.get("request-id") if error.headers else None
-                if isinstance(request_id, str) and re.fullmatch(r"req_[A-Za-z0-9_-]{1,160}", request_id):
-                    diagnostic["request_id"] = request_id.replace(self.key, "[redacted]")
             except Exception:
                 # The HTTP status is still useful when its body cannot be parsed.
                 diagnostic["body_unreadable"] = True

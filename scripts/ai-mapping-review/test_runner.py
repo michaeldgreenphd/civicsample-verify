@@ -205,6 +205,29 @@ class MappingRunnerTests(unittest.TestCase):
             if "message" in failure.diagnostic:
                 self.assertEqual(len(failure.diagnostic["message"]), 12_000)
 
+    def test_request_id_survives_malformed_or_unreadable_http_error_body(self):
+        class UnreadableBody(io.BytesIO):
+            def read(self, _):
+                raise OSError("PRIVATE_READ_ERROR")
+
+        provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
+        for label, body in (("html", io.BytesIO(b"<html>PRIVATE_UPSTREAM_ERROR</html>")),
+                            ("unreadable", UnreadableBody())):
+            error = urllib.error.HTTPError("https://api.anthropic.com/v1/messages", 502,
+                                           "PRIVATE_HTTP_REASON", {"request-id": "req_synthetic"}, body)
+            output = io.StringIO()
+            with self.subTest(body=label), patch.object(provider.opener, "open", side_effect=error), \
+                    redirect_stdout(output), redirect_stderr(output):
+                with self.assertRaises(runner.ProviderFailure) as caught:
+                    provider.message({})
+                failure = caught.exception
+                self.assertEqual(str(failure), "provider_http_502")
+                self.assertEqual(failure.diagnostic.get("request_id"), "req_synthetic")
+                self.assertTrue(failure.diagnostic["body_unreadable"])
+                self.assertEqual(failure.diagnostic["http_status"], 502)
+                self.assertNotIn("PRIVATE", repr(failure) + json.dumps(failure.diagnostic))
+                self.assertEqual(output.getvalue(), "")
+
     def test_transport_errors_do_not_disclose_url_reason_or_retry(self):
         provider = runner.Provider("SYNTHETIC-CREDENTIAL-FOR-TEST-ONLY")
         for error, category in [(TimeoutError("PRIVATE_TIMEOUT"), "provider_timeout"),
