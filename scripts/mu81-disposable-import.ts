@@ -4,6 +4,11 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { newDatabase, one, P } from '../tests/mu7-fixture';
+import {
+  MU81_REVIEWER_PROFILE_ID,
+  MU81_REVIEWER_GUIDE_SHA256,
+  mu81ProfileDisplayText,
+} from '../src/lib/mu81-reviewer-profile';
 
 const digest = (s: string | Buffer) => createHash('sha256').update(s).digest('hex');
 const hex = z.string().regex(/^[a-f0-9]{64}$/);
@@ -45,7 +50,7 @@ const invariantSchema = z.object({
 function requireCheck(ok: unknown) {
   if (!ok) throw new Error('verification refused');
 }
-function privateDirectory(input: string) {
+export function privateDirectory(input: string) {
   requireCheck(isAbsolute(input));
   const actual = realpathSync(input);
   // Check both lexical and resolved ancestors: refuse symlinks into or out of a repository.
@@ -89,15 +94,98 @@ function canonical(value: unknown): string {
         : v;
   return JSON.stringify(sorted(value));
 }
+/** Independently reconstruct the permitted edit from the checksummed source copy. */
+export function verifyProfilePreparation(
+  files: Map<string, Buffer>,
+  alternative: (typeof alternatives)[number],
+) {
+  const profileBytes = files.get('REVIEWER_PROFILE_PREPARATION_PRIVATE.json');
+  const profile = profileBytes
+    ? z
+        .object({
+          profile_id: z.literal(MU81_REVIEWER_PROFILE_ID),
+          rubric_sha256: z.literal(MU81_REVIEWER_GUIDE_SHA256),
+          alternative: z.enum(alternatives),
+          changed_packet_count: z.literal(2),
+          unchanged_packet_count: z.literal(98),
+          source_import_sha256: hex,
+          prepared_import_sha256: hex,
+          changes: z
+            .array(
+              z
+                .object({
+                  unit_id: z.string(),
+                  before_sha256: hex,
+                  after_sha256: hex,
+                  field: z.literal('packet.unit.display_text'),
+                })
+                .strict(),
+            )
+            .length(2),
+        })
+        .parse(JSON.parse(profileBytes.toString('utf8')))
+    : null;
+  if (!profile) return null;
+  requireCheck(profile.alternative === alternative);
+  const guide = files.get('REVIEWER_GUIDE_v81_r3.md');
+  requireCheck(guide && digest(guide) === MU81_REVIEWER_GUIDE_SHA256);
+  const raw = files.get(`MU7_IMPORT_UNITS_v8_1_${alternative}_PROFILE_R3_PROPOSED_PRIVATE.json`);
+  const source = files.get('SOURCE_IMPORT_BEFORE_PROFILE_PRIVATE.json');
+  requireCheck(
+    raw &&
+      source &&
+      digest(raw) === profile.prepared_import_sha256 &&
+      digest(source) === profile.source_import_sha256,
+  );
+  type ProfileInput = {
+    units: {
+      unit_id: string;
+      family: string;
+      assignment_code: string;
+      packet: { unit: { display_text: string } };
+    }[];
+    packet_sha256_canonical_json?: Record<string, string>;
+  };
+  const expected: ProfileInput = JSON.parse(source!.toString('utf8'));
+  requireCheck(Array.isArray(expected.units) && expected.units.length === 100);
+  const changes = [];
+  const packetHashes: Record<string, string> = {};
+  for (const u of expected.units) {
+    const before = digest(canonical(u.packet));
+    const display = u.family === 'SG' ? mu81ProfileDisplayText(u.assignment_code) : undefined;
+    if (display) {
+      requireCheck(display !== u.packet.unit.display_text);
+      u.packet.unit.display_text = display;
+      changes.push({
+        unit_id: u.unit_id,
+        before_sha256: before,
+        after_sha256: digest(canonical(u.packet)),
+        field: 'packet.unit.display_text',
+      });
+    }
+    packetHashes[u.unit_id] = digest(canonical(u.packet));
+  }
+  requireCheck(changes.length === 2 && canonical(changes) === canonical(profile.changes));
+  if (expected.packet_sha256_canonical_json) expected.packet_sha256_canonical_json = packetHashes;
+  requireCheck(canonical(expected) === canonical(JSON.parse(raw!.toString('utf8'))));
+  const manifest = files.get(`CANDIDATE_MANIFEST_${alternative}_PROFILE_R3_PRIVATE.json`);
+  if (manifest)
+    requireCheck(
+      JSON.parse(manifest.toString('utf8')).import_sha256 === profile.prepared_import_sha256,
+    );
+  return profile;
+}
 export async function checkAlternative(
   files: Map<string, Buffer>,
   alternative: (typeof alternatives)[number],
 ) {
-  const raw = files.get(`MU7_IMPORT_UNITS_v8_1_${alternative}_PROPOSED_PRIVATE.json`);
+  const profile = verifyProfilePreparation(files, alternative);
+  const suffix = profile ? '_PROFILE_R3' : '';
+  const raw = files.get(`MU7_IMPORT_UNITS_v8_1_${alternative}${suffix}_PROPOSED_PRIVATE.json`);
   requireCheck(raw);
   const input = inputSchema.parse(JSON.parse(raw!.toString('utf8')));
   const invariants = invariantSchema.parse(
-    JSON.parse(files.get('INVARIANTS_v8_1_PRIVATE.json')!.toString('utf8')),
+    JSON.parse(files.get(`INVARIANTS_v8_1${suffix}_PRIVATE.json`)!.toString('utf8')),
   );
   const before = invariants.alternatives[alternative];
   requireCheck(
@@ -150,6 +238,15 @@ export async function checkAlternative(
         attestation: 'Disposable offline compatibility check; no sample selection or approval.',
       }),
     ]);
+    if (profile)
+      await one(db, 'inv', 'select public.rpc_mu81_bind_reviewer_profile($1::jsonb)', [
+        JSON.stringify({
+          profile_id: profile.profile_id,
+          rubric_sha256: profile.rubric_sha256,
+          attestation:
+            'Disposable compatibility check of the reviewed guide; no gate approval or freeze.',
+        }),
+      ]);
     for (const u of input.units)
       await one(db, 'inv', 'select public.rpc_mu7_import_unit($1::jsonb)', [JSON.stringify(u)]);
     const hashes = (
@@ -193,7 +290,9 @@ export async function checkAlternative(
       status: 'PASS',
       units: 100,
       queue_positions_checked_only: 200,
-      original_packets_preserved: 100,
+      original_packets_preserved: profile ? 98 : 100,
+      reviewer_profile: profile?.profile_id ?? null,
+      intentional_packet_wording_changes: profile ? 2 : 0,
       manifest_matches: true,
       database_packet_hashes_valid: true,
       probability_binding_rows: alternative === 'ONE_PER_TRIAL' ? 100 : 0,
@@ -205,10 +304,18 @@ export async function checkAlternative(
 }
 export async function main(args: string[]) {
   try {
-    requireCheck(args.length === 2 && args[0] === '--private-dir');
+    requireCheck(
+      (args.length === 2 ||
+        (args.length === 4 &&
+          args[2] === '--alternative' &&
+          alternatives.includes(args[3] as (typeof alternatives)[number]))) &&
+        args[0] === '--private-dir',
+    );
     const files = readPrivatePackage(args[1]);
     const results = [];
-    for (const alternative of alternatives)
+    for (const alternative of args.length === 4
+      ? [args[3] as (typeof alternatives)[number]]
+      : alternatives)
       results.push(await checkAlternative(files, alternative));
     process.stdout.write(
       JSON.stringify({

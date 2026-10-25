@@ -7,6 +7,11 @@
 import { createHash } from 'node:crypto';
 import { HISTORY_COLUMNS } from './mu7-history';
 import { isMu81Design, type Mu7Bundle, type Mu7BundleFile, type Mu7Mode } from './mu7-types';
+import {
+  MU81_REVIEWER_PROFILE_ID,
+  MU81_REVIEWER_GUIDE_SHA256,
+  type Mu81ReviewerProfile,
+} from './mu81-reviewer-profile';
 
 export const MU7_BUNDLE_FORMAT = '7.0';
 export const MU7_EXPORT_COLUMNS = {
@@ -137,6 +142,7 @@ export function mu7SortRows(rows: Mu7Row[]): Mu7Row[] {
 }
 
 export interface Mu7BundleSources {
+  reviewerProfile?: Mu81ReviewerProfile | null;
   probability?: Mu7Row | null;
   subtypes?: Mu7Row[];
   history?: Mu7Row[];
@@ -220,10 +226,43 @@ export function buildMu7Bundle(s: Mu7BundleSources): Mu7Bundle {
       sha256: sha256(content),
     });
   }
+  let profile: Record<string, string> | null = null;
+  if (s.reviewerProfile) {
+    const p = s.reviewerProfile;
+    if (
+      !v82 ||
+      p.profileId !== MU81_REVIEWER_PROFILE_ID ||
+      p.designVersion !== s.design?.design_version ||
+      p.rubricSha256 !== MU81_REVIEWER_GUIDE_SHA256 ||
+      sha256(p.guideText) !== p.rubricSha256 ||
+      p.bindingSha256 !==
+        sha256(
+          ['mu81-reviewer-profile-1', p.designVersion, p.profileId, p.rubricSha256].join('|'),
+        ) ||
+      (s.mode === 'FORMAL' && s.freeze?.reviewer_profile_sha256 !== p.bindingSha256)
+    )
+      throw new Error('Export requires the bound reviewer guide and its frozen profile.');
+    profile = {
+      profile_id: p.profileId,
+      rubric_sha256: p.rubricSha256,
+      binding_sha256: p.bindingSha256,
+      design_version: p.designVersion,
+    };
+    files.push({
+      name: 'reviewer_guide.md',
+      role: 'reviewer_guide',
+      rows: 1,
+      sha256: p.rubricSha256,
+      content: p.guideText,
+    });
+  } else if (s.freeze?.reviewer_profile_sha256) {
+    throw new Error('Frozen reviewer profile is missing from the export.');
+  }
   const manifest: Record<string, unknown> = {
+    ...(profile ? { reviewer_profile: profile } : {}),
     ...(v82 ? { history_contract_version: 'mu81-history-1' } : {}),
     ...(v81 ? { vocabulary_version: 'mu81-subtype-1', probability_binding: probability } : {}),
-    bundle_format_version: v82 ? '8.2' : v81 ? '8.1' : MU7_BUNDLE_FORMAT,
+    bundle_format_version: profile ? '8.3' : v82 ? '8.2' : v81 ? '8.1' : MU7_BUNDLE_FORMAT,
     mode: s.mode,
     status:
       s.mode === 'PILOT'

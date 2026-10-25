@@ -130,12 +130,43 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
 
     // ---- reviewer A in the browser --------------------------------------------------------------
     await expect(aPage.getByRole('button', { name: /^Unit 9:/ })).toBeDisabled();
-    await aPage.getByText(/^EX7-03:/).click();
+    await expect(aPage.getByRole('group', { name: 'Choose a worked example' })).toBeHidden();
+    await aPage.getByRole('tab', { name: 'Worked examples' }).click();
+    await aPage.getByRole('button', { name: /Example 3/ }).click();
+    await expect(
+      aPage.getByRole('region', { name: 'Illustrative answers and outcome' }),
+    ).not.toContainText('ORGAN_OF_ORIGIN_ONLY');
+    await expect(
+      aPage.getByRole('region', { name: 'Illustrative answers and outcome' }),
+    ).toContainText('Cancer’s organ of origin only');
     await expect(
       aPage.getByText('the adjudicator adopts Reviewer 2', { exact: false }),
     ).toBeVisible();
+    // A failed acknowledgment stays visible on the examples tab and is safe to retry.
+    await aPage.route(
+      '**/api/mu7/training/acknowledge',
+      (route) =>
+        route.fulfill({
+          status: 503,
+          json: { error: 'Synthetic temporary acknowledgment failure.' },
+        }),
+      { times: 1 },
+    );
+    await aPage.getByRole('button', { name: 'Mark the worked examples as read' }).click();
+    await expect(
+      aPage.getByRole('alert').filter({ hasText: 'Synthetic temporary acknowledgment failure.' }),
+    ).toBeVisible();
     await aPage.getByRole('button', { name: 'Mark the worked examples as read' }).click();
     await expect(aPage.getByTestId('mu7-training-ack')).toContainText('Read ');
+    await aPage.getByRole('button', { name: 'Back to practice cases' }).click();
+    // The adjudicator can study illustrations before any actual response is available.
+    const beforeAnswers = await (await adj.request.get('/api/mu7/workspace')).json();
+    expect(beforeAnswers.queue).toEqual([]);
+    expect(beforeAnswers.training).toHaveLength(3);
+    await adjPage.getByRole('tab', { name: 'Worked examples' }).click();
+    await expect(adjPage.getByRole('group', { name: 'Choose a worked example' })).toBeVisible();
+    await expect(adjPage.getByTestId('mu7-slot-1')).toHaveCount(0);
+    await adjPage.getByRole('tab', { name: 'Adjudication', exact: true }).click();
     const aQueue = await queueOf(a);
     const disagreeUnit = aQueue.find(
       (q) => q.unitRole === 'PRIMARY' && planted(q.unitId, 1).answer === 'DISAGREE',
@@ -144,22 +175,139 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await aPage.getByRole('button', { name: new RegExp(`^Unit ${pos}:`) }).click();
     await expect(aPage.getByTestId('mu7-unit-id')).toHaveText(disagreeUnit.unitId);
     await expect(aPage.getByTestId('mu7-notice')).toContainText(
-      'SYNTHETIC UNIT: excluded from every statistic',
+      'Synthetic unit · excluded from every statistic',
     );
     const p = planted(disagreeUnit.unitId, 1);
     await aPage.getByRole('radio', { name: 'Disagree', exact: true }).check();
-    await aPage.getByLabel(/Reason code/).selectOption(p.reason_code!);
+    await aPage.getByLabel(/^Reason \(required\)/).selectOption(p.reason_code!);
+    await expect(aPage.getByLabel(/^Reason \(required\)/).locator('option:checked')).not.toHaveText(
+      /_/,
+    );
+    await expect(aPage.locator('#mu7-reviewer-reason-help')).not.toBeEmpty();
     await aPage.getByRole('button', { name: 'Save answer' }).click();
-    await expect(aPage.locator('.notice.error')).toContainText('MU7-G36: a DISAGREE answer needs a note');
+    await expect(aPage.locator('.notice.error')).toContainText(
+      'MU7-G36: a DISAGREE answer needs a note',
+    );
     await aPage.getByLabel(/Note/).fill(p.note!);
+    await aPage.getByLabel(/not sure/).check();
+    // Switching to a read-only example must neither submit nor discard the unsaved form.
+    const writes: string[] = [];
+    const captureWrite = (request: import('@playwright/test').Request) => {
+      if (request.method() === 'POST') writes.push(request.url());
+    };
+    aPage.on('request', captureWrite);
+    await aPage.getByRole('tab', { name: 'Practice cases', exact: true }).focus();
+    await aPage.keyboard.press('ArrowRight');
+    await expect(aPage.getByRole('tab', { name: 'Worked examples' })).toBeFocused();
+    for (const example of [1, 2, 3]) {
+      await aPage.getByRole('button', { name: new RegExp(`Example ${example}`) }).click();
+      await expect(
+        aPage.getByRole('region', { name: 'Illustrative answers and outcome' }),
+      ).toBeVisible();
+    }
+    expect(
+      (await new AxeBuilder({ page: aPage }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations,
+    ).toEqual([]);
+    await aPage.screenshot({ path: 'test-results/mu7-examples-desktop.png', fullPage: true });
+    await aPage.setViewportSize({ width: 390, height: 844 });
+    await aPage.screenshot({ path: 'test-results/mu7-examples-mobile.png', fullPage: true });
+    for (const width of [320, 640]) {
+      await aPage.setViewportSize({ width, height: 844 });
+      expect(
+        await aPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    }
+    await aPage.setViewportSize({ width: 390, height: 844 });
+    await aPage.getByRole('tab', { name: 'Worked examples' }).focus();
+    await aPage.keyboard.press('Home');
+    await expect(aPage.getByRole('tab', { name: 'Practice cases', exact: true })).toBeFocused();
+    await expect(aPage.getByRole('radio', { name: 'Disagree', exact: true })).toBeChecked();
+    await expect(aPage.getByLabel(/^Reason \(required\)/)).toHaveValue(p.reason_code!);
+    await expect(aPage.getByLabel(/Note/)).toHaveValue(p.note!);
+    await expect(aPage.getByLabel(/not sure/)).toBeChecked();
+    expect(writes).toEqual([]);
+    aPage.off('request', captureWrite);
+    expect(
+      (
+        await a.request
+          .get(`/api/mu7/assignments/${disagreeUnit.assignmentId}`)
+          .then((r) => r.json())
+      ).ownAnswers,
+    ).toHaveLength(0);
+    await expect(aPage.getByLabel('Choose a practice case')).toHaveValue(disagreeUnit.assignmentId);
+    await expect(
+      aPage
+        .getByLabel('Choose a practice case')
+        .locator('option')
+        .filter({ hasText: 'Opens later' })
+        .first(),
+    ).toHaveJSProperty('disabled', true);
+    // Saving on mobile persists the answer; changing the mobile picker loads the right case.
+    await aPage.getByLabel(/not sure/).uncheck();
     await aPage.getByRole('button', { name: 'Save answer' }).click();
     await expect(aPage.getByTestId('mu7-own-answer')).toContainText(
       'Your answer on record: Disagree',
     );
+    await expect(aPage.getByTestId('mu7-own-answer')).toContainText('MeSH placement is misleading');
+    expect(
+      (
+        await a.request
+          .get(`/api/mu7/assignments/${disagreeUnit.assignmentId}`)
+          .then((r) => r.json())
+      ).ownAnswers.at(-1).reasonCode,
+    ).toBe(p.reason_code);
     expect(await aPage.content()).not.toMatch(hidden);
     const axe = await new AxeBuilder({ page: aPage }).withTags(['wcag2a', 'wcag2aa']).analyze();
     expect(axe.violations).toEqual([]);
+    await aPage.screenshot({ path: 'test-results/mu7-reviewer-mobile.png', fullPage: true });
+    for (const width of [320, 640]) {
+      await aPage.setViewportSize({ width, height: 844 });
+      expect(
+        await aPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    }
+    const nextMobile = aQueue.find(
+      (q) => q.available && q.assignmentId !== disagreeUnit.assignmentId,
+    )!;
+    await aPage.getByLabel('Choose a practice case').selectOption(nextMobile.assignmentId);
+    await expect(aPage.getByTestId('mu7-unit-id')).toHaveText(nextMobile.unitId);
+    await aPage.getByLabel('Choose a practice case').selectOption(disagreeUnit.assignmentId);
+    await expect(aPage.getByTestId('mu7-own-answer')).toContainText('Disagree');
+    await aPage.setViewportSize({ width: 1440, height: 1000 });
     await aPage.screenshot({ path: 'test-results/mu7-reviewer-desktop.png', fullPage: true });
+    // Preview the hosted navigation with the same local authenticated synthetic data.
+    // Only the session's display-environment flag is mocked; no Supabase service is contacted.
+    const preview = await a.newPage();
+    await preview.route('**/api/session', async (route) => {
+      const response = await route.fetch();
+      const session = await response.json();
+      await route.fulfill({ response, json: { ...session, environment: 'supabase-staging' } });
+    });
+    await preview.setViewportSize({ width: 1440, height: 1000 });
+    await preview.goto('/');
+    await preview.getByRole('button', { name: new RegExp(`^Unit ${pos}:`) }).click();
+    await expect(preview.getByTestId('mu7-own-answer')).toContainText('Disagree');
+    await preview.screenshot({
+      path: 'test-results/mu7-hosted-practice-desktop.png',
+      fullPage: true,
+    });
+    await preview.getByRole('tab', { name: 'Worked examples' }).click();
+    await preview.getByRole('button', { name: /Example 3/ }).click();
+    await preview.screenshot({
+      path: 'test-results/mu7-hosted-examples-desktop.png',
+      fullPage: true,
+    });
+    await preview.setViewportSize({ width: 390, height: 844 });
+    await preview.screenshot({
+      path: 'test-results/mu7-hosted-examples-mobile.png',
+      fullPage: true,
+    });
+    await preview.getByRole('tab', { name: 'Practice cases', exact: true }).click();
+    await preview.screenshot({
+      path: 'test-results/mu7-hosted-practice-mobile.png',
+      fullPage: true,
+    });
+    await preview.close();
     // Save and reload: the answer comes back from the database; a revision keeps the first one.
     await aPage.reload();
     await aPage.getByRole('button', { name: /Mapping units/ }).click();
@@ -174,8 +322,8 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await aPage.reload();
     await aPage.getByRole('button', { name: /Mapping units/ }).click();
     await aPage.getByRole('button', { name: /^Unit 9:/ }).click();
-    await expect(aPage.getByTestId('mu7-display-decision')).toContainText(/KEEP|REMOVE/);
-    await expect(aPage.getByText(/^Parent row:/)).toBeVisible();
+    await expect(aPage.getByTestId('mu7-display-decision')).toContainText(/Included|Excluded/);
+    await expect(aPage.getByText(/^Condition group:/)).toBeVisible();
     // Registry text that names another trial is shown unchanged.
     const canAll = aQueue.findIndex((q) => q.unitId === 'SYN7-ROW-CAN_ALL-001') + 1;
     await aPage.getByRole('button', { name: new RegExp(`^Unit ${canAll}:`) }).click();

@@ -141,6 +141,10 @@ test('v7 over the PostgREST path: the synthetic pilot under each caller’s own 
     })) as Mu7InvestigatorWorkspace;
     assert.equal(ws.counts.pilotQueue, 24);
     assert.equal(ws.localTools, false);
+    assert.equal(ws.training.length, 3);
+    const trainingAdj = (await core.getMu7Workspace(adj)) as Mu7AdjudicatorWorkspace;
+    assert.equal(trainingAdj.training.length, 3);
+    assert.equal(trainingAdj.queue.length, 0);
     assert.match(
       (
         await status(

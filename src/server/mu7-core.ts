@@ -1,4 +1,12 @@
 import { HISTORY_COLUMNS } from '../lib/mu7-history';
+import { readReviewerProfile } from './mu81-reviewer-profile';
+import {
+  MU81_PROFILE_REASON_MEANING,
+  MU81_REVIEWER_GUIDE_SHA256,
+  MU81_REVIEWER_PROFILE_ID,
+  mu81ProfileDisplayText,
+  type Mu81ReviewerProfile,
+} from '../lib/mu81-reviewer-profile';
 // Review design v7 (mapping units) service, written once against two operations: read a table or
 // view under the caller's row-level security, and call an rpc_mu7_* function. The local PGlite
 // path (src/server/mu7.ts) and the Supabase path (src/server/mu7-rest.ts) supply those operations,
@@ -84,6 +92,8 @@ const NOT_YOURS_TAGS = new Set(['MU7-G54', 'MU7-G57']);
 const INPUT_TAGS = new Set([
   'MU81-G02',
   'MU81-G03',
+  'MU81-P03',
+  'MU81-P08',
   'MU7-G07',
   'MU7-G13',
   'MU7-G14',
@@ -103,7 +113,7 @@ const INPUT_TAGS = new Set([
   'MU7-G63',
 ]);
 export function mu7PublicError(message: string): ServiceError | null {
-  const tagged = /\b((?:MU7X?|MU7C|MU81)-G\d{2}): ([^\n]{1,400})/.exec(message);
+  const tagged = /\b((?:(?:MU7X?|MU7C|MU81)-G|MU81-P)\d{2}): ([^\n]{1,400})/.exec(message);
   if (tagged) {
     const [, tag, text] = tagged;
     if (NOT_YOURS_TAGS.has(tag)) return new ServiceError(404, 'Resource not available.');
@@ -137,8 +147,18 @@ const iso = (v: unknown) => (v === null || v === undefined ? '' : mu7CellText(v)
 const bool = (v: unknown) => v === true || v === 't' || v === 'true';
 const asAnswer = (v: unknown) =>
   v === null || v === undefined || v === '' ? null : (v as Mu7Answer);
-const reasonList = (family: string, code: string) =>
-  mu7ReasonCodes(family, code).map((c) => ({ code: c, meaning: MU7_REASON_MEANING[c] ?? '' }));
+const reasonList = (family: string, code: string, profile?: Mu81ReviewerProfile | null) => {
+  let reasons = mu7ReasonCodes(family, code);
+  if (profile && family === 'SG') {
+    if (['K_KEEP_MALIGNANT_COMPATIBLE', 'K_KEEP_HEURISTIC_NONMALIGNANT_CLASS'].includes(code))
+      reasons = reasons.filter((r) => r !== 'BENIGN_NEOPLASM');
+    if (code === 'K_REMOVE_VERIFIED_NONMALIGNANT') reasons.push('NONMALIGNANT_NEOPLASM_STUDIED');
+  }
+  return reasons.map((c) => ({
+    code: c,
+    meaning: (profile ? MU81_PROFILE_REASON_MEANING[c] : undefined) ?? MU7_REASON_MEANING[c] ?? '',
+  }));
+};
 
 // ---------------------------------------------------------------------------------------------
 // Workspaces
@@ -180,6 +200,7 @@ export async function getMu7Workspace(ctx: Mu7Context): Promise<Mu7Workspace> {
     });
     return {
       kind: 'reviewer',
+      reviewerProfile: await readReviewerProfile(d),
       designRecorded: design.length > 0,
       enrolled: queue.length > 0,
       queue,
@@ -243,7 +264,13 @@ async function adjudicatorWorkspace(ctx: Mu7Context): Promise<Mu7AdjudicatorWork
         };
       })
       .sort((a, b) => (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
-    return { kind: 'adjudicator', designRecorded: design.length > 0, queue };
+    return {
+      kind: 'adjudicator',
+      reviewerProfile: await readReviewerProfile(d),
+      designRecorded: design.length > 0,
+      queue,
+      training: await readTraining(d),
+    };
   });
 }
 
@@ -319,6 +346,14 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
     );
     return {
       kind: 'investigator',
+      reviewerProfile: await readReviewerProfile(d),
+      canCreateProfilePilot:
+        ctx.syntheticDatabase &&
+        !!ctx.localTools &&
+        !design &&
+        units.length === 0 &&
+        training.length === 0,
+      training: await readTraining(d),
       design: design
         ? {
             designVersion: String(design.design_version),
@@ -392,6 +427,7 @@ export async function getMu7ReviewerUnit(
     );
     if (!unit || typeof unit !== 'object') throw notFound();
     const packet = mu7PacketView(unit.packet as Record<string, unknown>);
+    const reviewerProfile = await readReviewerProfile(d);
     const own = await d.select<Mu7Row>('mu7_judgments', {
       columns: [
         'revision_number',
@@ -407,14 +443,17 @@ export async function getMu7ReviewerUnit(
     });
     return {
       assignmentId,
+      reviewerProfile,
       mode: unit.mode as Mu7Mode,
       queuePosition: Number(unit.queue_position),
       unitRole: unit.unit_role as 'PRIMARY' | 'SUBGROUP',
       packet,
       subtypeRequired: unit.subtype_required === true,
-      reasonCodes: reasonList(packet.unit.family, packet.unit.assignment_code).filter(
-        (r) => !unit.subtype_required || r.code !== 'TYPE_2_STATED',
-      ),
+      reasonCodes: reasonList(
+        packet.unit.family,
+        packet.unit.assignment_code,
+        reviewerProfile,
+      ).filter((r) => !unit.subtype_required || r.code !== 'TYPE_2_STATED'),
       ownAnswers: own.map((j) => ({
         diabetesSubtype: (j.diabetes_subtype as Mu81Subtype | null) ?? null,
         revisionNumber: Number(j.revision_number),
@@ -478,6 +517,7 @@ export async function getMu7AdjudicatorUnit(
     )[0];
     if (!row) throw notFound();
     const packet = mu7PacketView(row.packet as Record<string, unknown>);
+    const reviewerProfile = await readReviewerProfile(d);
     const vocabulary = await d.rpc<string | null>('rpc_mu81_vocabulary', {}, 'value');
     const slot = (n: 1 | 2): Mu7SlotAnswer => ({
       reviewerSlot: n,
@@ -507,10 +547,15 @@ export async function getMu7AdjudicatorUnit(
     });
     return {
       unitId,
+      reviewerProfile,
       mode: row.mode as Mu7Mode,
       packet,
       answers: [slot(1), slot(2)],
-      reasonCodes: reasonList(packet.unit.family, packet.unit.assignment_code).filter(
+      reasonCodes: reasonList(
+        packet.unit.family,
+        packet.unit.assignment_code,
+        reviewerProfile,
+      ).filter(
         (r) =>
           !(
             vocabulary === 'mu81-subtype-1' &&
@@ -563,6 +608,38 @@ export async function mu7AdminAction(
 ): Promise<Mu7InvestigatorWorkspace> {
   requireRole(ctx, 'INVESTIGATOR');
   switch (input.action) {
+    case 'record-profile-design':
+      if (!ctx.syntheticDatabase || !ctx.localTools)
+        throw new ServiceError(
+          403,
+          'The revised-guide practice setup is available only in a new local synthetic database.',
+        );
+      // Local withData is one transaction: a refused binding cannot leave a partial design.
+      await ctx.withData(async (d) => {
+        await d.rpc(
+          'rpc_mu7_record_design',
+          {
+            p: {
+              ...MU7_SYNTHETIC_DESIGN,
+              design_version: 'SYN-8-1-PLAIN-LANGUAGE-PILOT',
+              attestation: input.attestation,
+            },
+          },
+          'value',
+        );
+        await d.rpc(
+          'rpc_mu81_bind_reviewer_profile',
+          {
+            p: {
+              profile_id: MU81_REVIEWER_PROFILE_ID,
+              rubric_sha256: MU81_REVIEWER_GUIDE_SHA256,
+              attestation: input.attestation,
+            },
+          },
+          'value',
+        );
+      });
+      break;
     case 'record-design':
       await ctx.withData((d) =>
         d.rpc(
@@ -585,7 +662,16 @@ export async function mu7AdminAction(
         const missing = MU7_PILOT_IMPORTS.filter((u) => !have.has(u.unit_id));
         if (!missing.length)
           throw new ServiceError(409, 'The synthetic pilot units are already imported.');
-        for (const u of missing) await d.rpc('rpc_mu7_import_unit', { p: u }, 'value');
+        const profile = await readReviewerProfile(d);
+        for (const source of missing) {
+          const u = structuredClone(source);
+          if (profile) {
+            const p = u.packet as { unit: { assignment_code: string; display_text: string } };
+            const display = mu81ProfileDisplayText(p.unit.assignment_code);
+            if (display) p.unit.display_text = display;
+          }
+          await d.rpc('rpc_mu7_import_unit', { p: u }, 'value');
+        }
       });
       break;
     case 'import-training':
@@ -816,6 +902,11 @@ export async function readMu7Bundle(
     freeze.probability_binding_sha256 =
       (await d.select<Mu7Row>('mu7_freeze', { columns: ['probability_binding_sha256'] }))[0]
         ?.probability_binding_sha256 ?? null;
+  const reviewerProfile = v81 ? await readReviewerProfile(d) : null;
+  if (v81 && freeze)
+    freeze.reviewer_profile_sha256 =
+      (await d.select<Mu7Row>('mu7_freeze', { columns: ['reviewer_profile_sha256'] }))[0]
+        ?.reviewer_profile_sha256 ?? null;
   const subtypes = v81
     ? await d.select<Mu7Row>('v_mu81_subtypes', {
         columns: [
@@ -839,6 +930,7 @@ export async function readMu7Bundle(
       })
     : undefined;
   return buildMu7Bundle({
+    reviewerProfile,
     history,
     probability,
     subtypes,

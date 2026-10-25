@@ -14,6 +14,10 @@ import { MU7_SYNTHETIC_TRAINING } from '../src/lib/mu7-synthetic';
 import { mu7RegistrationPayload } from '../src/lib/mu7-export';
 import { verifyMu7Bundle } from '../scripts/verify-mu7-bundle';
 import {
+  MU81_REVIEWER_GUIDE_SHA256,
+  MU81_REVIEWER_PROFILE_ID,
+} from '../src/lib/mu81-reviewer-profile';
+import {
   ATT,
   signedOffPilot,
   one,
@@ -97,6 +101,10 @@ async function payload(
     u.fam,
     u.cat,
   ]);
+  p.packet.unit.display_text = await one(db, 'owner', 'select private.mu7_display_text($1,$2)', [
+    u.fam,
+    u.code,
+  ]);
   p.design.design_version = designVersion;
   p.design.overlap_setting = overlap;
   return p;
@@ -106,7 +114,9 @@ async function runScenario(
   overlap: 'ALLOW' | 'ONE_PER_TRIAL',
   existing?: FixtureDb,
   addendum = false,
+  reviewerProfile = false,
 ) {
+  assert.ok(!reviewerProfile || addendum, 'reviewer profile uses the v8.1 design contract');
   const designVersion = addendum ? 'SYN-8-1-DATABASE-ROUNDTRIP' : version;
   const scenarioUnits = units.map((u) =>
     addendum && u.cat === 'RULE_D_KEPT'
@@ -119,6 +129,7 @@ async function runScenario(
     plannedPrimary: 96,
     plannedSubgroup: 4,
     overlap,
+    reviewerProfile,
   });
   const db = f.db;
   try {
@@ -309,6 +320,9 @@ async function runScenario(
                   note: 'Synthetic disagreement only.\rAdditional fictional context.',
                 }
               : {}),
+            ...(reviewerProfile && answer === 'CANNOT_TELL'
+              ? { note: 'Synthetic packet lacks the required detail.' }
+              : {}),
             uncertain: index === 0,
           }),
         );
@@ -401,6 +415,7 @@ async function runScenario(
       'unit_design.csv': 100,
       'independent_judgments.csv': 200,
       'final_reference.csv': 100,
+      ...(reviewerProfile ? { 'reviewer_guide.md': 1 } : {}),
       ...(addendum
         ? {
             'subtype_observations.csv': 202,
@@ -416,7 +431,25 @@ async function runScenario(
       addendum ? 202 : 200,
     );
     assert.equal(bundle.manifest.n_units_locked, 100);
-    assert.equal(bundle.manifest.bundle_format_version, addendum ? '8.2' : '7.0');
+    assert.equal(
+      bundle.manifest.bundle_format_version,
+      reviewerProfile ? '8.3' : addendum ? '8.2' : '7.0',
+    );
+    if (reviewerProfile) {
+      const profile = (await one(db, 'inv', 'select public.rpc_mu81_reviewer_profile()')) as {
+        profile_id: string;
+        binding_sha256: string;
+      };
+      assert.equal(profile.profile_id, MU81_REVIEWER_PROFILE_ID);
+      assert.equal(
+        (bundle.manifest.freeze as Record<string, unknown>).reviewer_profile_sha256,
+        profile.binding_sha256,
+      );
+      assert.equal(
+        bundle.files.find((file) => file.role === 'reviewer_guide')?.sha256,
+        MU81_REVIEWER_GUIDE_SHA256,
+      );
+    }
     if (addendum) {
       for (const role of ['r1', 'r2', 'adj', 'out', 'inv1'] as const)
         assert.equal(
@@ -794,6 +827,107 @@ test(
         );
       } finally {
         await c.end();
+      }
+    });
+  },
+);
+
+test(
+  'bundle 8.3 reviewer guide: 100 synthetic mappings through database, export and Python',
+  { timeout: 120_000 },
+  async () => {
+    const { bundle, pilot } = await runScenario('ONE_PER_TRIAL', undefined, true, true);
+    const dir = mkdtempSync(join(tmpdir(), 'verify-profile-roundtrip-'));
+    try {
+      const path = join(dir, 'bundle');
+      const pilotPath = join(dir, 'pilot');
+      fileWrite(bundle, path);
+      fileWrite(pilot, pilotPath);
+      assert.deepEqual(verifyMu7Bundle(path, bundle.manifestSha256).problems, []);
+      assert.deepEqual(verifyMu7Bundle(pilotPath, pilot.manifestSha256).problems, []);
+      if (!python) return; // The separately named interpreter check records this limitation.
+      const result = spawnSync(
+        python,
+        [
+          'analysis/v8/performance_analysis_v8.py',
+          '--bundle',
+          path,
+          '--out',
+          join(dir, 'result'),
+          '--allow-synthetic',
+          '--bootstrap-reps',
+          '20',
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      const output = readFileSync(join(dir, 'result', 'results_summary_v8.md'), 'utf8');
+      assert.match(output, /SYNTHETIC/);
+      assert.match(output, /clinician confirmation of displayed assignments/);
+      const refused = spawnSync(
+        python,
+        [
+          'analysis/v8/performance_analysis_v8.py',
+          '--bundle',
+          pilotPath,
+          '--out',
+          join(dir, 'pilot-refused'),
+          '--allow-synthetic',
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(refused.status, 3);
+      assert.match(refused.stderr, /only a FORMAL bundle/);
+      const guide = join(path, 'reviewer_guide.md');
+      writeFileSync(guide, readFileSync(guide, 'utf8') + '\nSynthetic tamper.\n');
+      assert.ok(verifyMu7Bundle(path, bundle.manifestSha256).problems.length > 0);
+      const tampered = spawnSync(
+        python,
+        [
+          'analysis/v8/performance_analysis_v8.py',
+          '--bundle',
+          path,
+          '--out',
+          join(dir, 'tampered-refused'),
+          '--allow-synthetic',
+        ],
+        { encoding: 'utf8' },
+      );
+      assert.equal(tampered.status, 3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  'native PostgreSQL: bundle 8.3 reviewer profile through complete synthetic lifecycle',
+  {
+    skip:
+      !process.env.VERIFY_PG_TEST_URL && process.env.VERIFY_PG_REQUIRE !== '1'
+        ? 'BLOCKED: native PostgreSQL server unavailable'
+        : false,
+    timeout: 120_000,
+  },
+  async () => {
+    assert.ok(process.env.VERIFY_PG_TEST_URL);
+    await withDisposableHandoffDatabase(process.env.VERIFY_PG_TEST_URL, async (url: string) => {
+      const client = new Client({ connectionString: url });
+      try {
+        await client.connect();
+        await runScenario(
+          'ONE_PER_TRIAL',
+          {
+            exec: (sql) => client.query(sql),
+            query: async <T>(sql: string, params: unknown[] = []) => ({
+              rows: (await client.query(sql, params)).rows as T[],
+            }),
+          },
+          true,
+          true,
+        );
+      } finally {
+        await client.end();
       }
     });
   },

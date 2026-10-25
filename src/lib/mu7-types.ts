@@ -5,6 +5,7 @@
 // The vocabulary is the database's own (tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json, the
 // texts the supplied suite checks against the migration); the wording comes from REVIEW_RUBRIC_v7.md.
 import VOCABULARY from '../../tests/handoff/fixtures/v7/VOCABULARY_CONTRACT_v7.json';
+import type { Mu81ReviewerProfile } from './mu81-reviewer-profile';
 
 export type Mu7Mode = 'PILOT' | 'FORMAL';
 export type Mu81Subtype = 'TYPE_2_STATED' | 'TYPE_2_NOT_STATED' | 'CANNOT_TELL_FROM_PACKET';
@@ -156,6 +157,7 @@ export interface Mu7OwnAnswer {
   submittedAt: string;
 }
 export interface Mu7ReviewerWorkspace {
+  reviewerProfile?: Mu81ReviewerProfile | null;
   kind: 'reviewer';
   designRecorded: boolean;
   enrolled: boolean;
@@ -164,6 +166,7 @@ export interface Mu7ReviewerWorkspace {
   trainingAcknowledgedAt: string | null;
 }
 export interface Mu7ReviewerUnit {
+  reviewerProfile?: Mu81ReviewerProfile | null;
   subtypeRequired?: boolean;
   assignmentId: string;
   mode: Mu7Mode;
@@ -210,11 +213,14 @@ export interface Mu7AdjudicationQueueItem {
   adjudicated: boolean;
 }
 export interface Mu7AdjudicatorWorkspace {
+  reviewerProfile?: Mu81ReviewerProfile | null;
   kind: 'adjudicator';
+  training: Mu7TrainingView[];
   designRecorded: boolean;
   queue: Mu7AdjudicationQueueItem[];
 }
 export interface Mu7AdjudicatorUnit {
+  reviewerProfile?: Mu81ReviewerProfile | null;
   unitId: string;
   mode: Mu7Mode;
   packet: Mu7Packet;
@@ -257,7 +263,10 @@ export interface Mu7RoutingCheck {
   matches: boolean | null;
 }
 export interface Mu7InvestigatorWorkspace {
+  reviewerProfile?: Mu81ReviewerProfile | null;
+  canCreateProfilePilot?: boolean;
   kind: 'investigator';
+  training: Mu7TrainingView[];
   design: {
     designVersion: string;
     assignmentSetId: string;
@@ -292,6 +301,7 @@ export type Mu7Workspace =
 
 export type Mu7AdminAction =
   | { action: 'record-design'; attestation: string }
+  | { action: 'record-profile-design'; attestation: string }
   | { action: 'import-pilot' }
   | { action: 'import-training' }
   | { action: 'assign-pilot' }
@@ -313,7 +323,8 @@ export interface Mu7BundleFile {
     | 'subtype_observations'
     | 'probabilities'
     | 'probability_source'
-    | 'judgment_history';
+    | 'judgment_history'
+    | 'reviewer_guide';
   rows: number;
   sha256: string;
   content: string;

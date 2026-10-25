@@ -8,6 +8,11 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { HOSTED_SCHEMA_FILES } from '../scripts/supabase-identity-tools.mjs';
+import {
+  MU81_REVIEWER_PROFILE_ID,
+  MU81_REVIEWER_GUIDE_SHA256,
+  mu81ProfileDisplayText,
+} from '../src/lib/mu81-reviewer-profile';
 
 /** PGlite or a node-postgres client: both expose exec-like and query with `{ rows }`. */
 export type FixtureDb = {
@@ -60,6 +65,8 @@ export type ChainOptions = {
   plannedPrimary?: number;
   plannedSubgroup?: number;
   overlap?: 'ALLOW' | 'ONE_PER_TRIAL';
+  /** Opt into the new reviewer guide before any disposable pilot activity. */
+  reviewerProfile?: boolean;
   existing?: FixtureDb;
   /** Stop the pilot after the adjudications, before the pilot lock and sign-off. */
   stopAfterPilotAdjudication?: boolean;
@@ -83,6 +90,7 @@ export type ChainOptions = {
 const DEPENDENTS: Record<string, string[]> = {
   'migrations/0034_v8_synthetic_identifiers.sql': ['migrations/0035_v81_subtype_probability.sql'],
   'migrations/0035_v81_subtype_probability.sql': ['migrations/0036_v81_judgment_history.sql'],
+  'migrations/0036_v81_judgment_history.sql': ['migrations/0037_v81_reviewer_profile.sql'],
   'migrations/0033_v8_design_foundation.sql': ['migrations/0034_v8_synthetic_identifiers.sql'],
   'migrations/0032_v7_freeze_gates_v8_4.sql': ['migrations/0033_v8_design_foundation.sql'],
   'migrations/0025_v7_review_fixes.sql': ['migrations/0026_v7_lifecycle_and_gates.sql'],
@@ -346,7 +354,7 @@ const byKey = (k: number) => FORMAL_UNITS[k - 1].uid;
 export const FORMAL_QUEUE_1 = [1, 2, 4, 3, 5, 6, 7, 8].map(byKey);
 export const FORMAL_QUEUE_2 = [3, 1, 5, 4, 6, 2, 8, 7].map(byKey);
 const sortedUnits = () => [...FORMAL_UNITS].sort((a, b) => cmp(a.uid, b.uid));
-const freezeHashes = () => ({
+export const freezeHashes = () => ({
   unit_list_sha256: sha256(
     FORMAL_UNITS.map((u) => u.uid)
       .sort(cmp)
@@ -516,9 +524,21 @@ export async function signedOffPilot(
     `select public.rpc_mu7_record_design(${lit({ design_version: options.designVersion ?? DESIGN_VERSION, assignment_set_id: SET, overlap_setting: options.overlap ?? 'ALLOW', n_primary_planned: options.plannedPrimary ?? 6, n_subgroup_planned: options.plannedSubgroup ?? 2, attestation: ATT })})`,
     'record design',
   );
+  if (options.reviewerProfile)
+    await must(
+      db,
+      'inv',
+      `select public.rpc_mu81_bind_reviewer_profile(${lit({ profile_id: MU81_REVIEWER_PROFILE_ID, rubric_sha256: MU81_REVIEWER_GUIDE_SHA256, attestation: ATT })})`,
+      'bind synthetic reviewer profile',
+    );
   if (options.stopAfter === 'design') return { db, PT1, PT2 };
   type PilotUnit = {
-    import: { unit_id: string; unit_role: string };
+    import: {
+      unit_id: string;
+      unit_role: string;
+      assignment_code: string;
+      packet: { unit: Record<string, unknown> };
+    };
     walkthrough: {
       planted_answers: Array<{
         reviewer_slot: number;
@@ -530,7 +550,19 @@ export async function signedOffPilot(
       expected_routing: string;
     };
   };
-  const PU = PILOT.units as PilotUnit[];
+  const PU = structuredClone(PILOT.units) as PilotUnit[];
+  if (options.reviewerProfile)
+    for (const u of PU) {
+      const display = mu81ProfileDisplayText(u.import.assignment_code);
+      if (display) u.import.packet.unit.display_text = display;
+      for (const a of u.walkthrough.planted_answers) {
+        if (a.reason_code === 'BENIGN_NEOPLASM') {
+          a.reason_code = 'OTHER_SPECIFIED';
+          a.note = 'Synthetic disagreement for testing only.';
+        }
+        if (a.answer === 'CANNOT_TELL') a.note = 'Synthetic packet lacks the required detail.';
+      }
+    }
   for (const u of PU)
     await must(
       db,
@@ -607,10 +639,32 @@ export async function signedOffPilot(
     return { db, PT1, PT2 };
   await must(db, 'inv', `select public.rpc_mu7_lock_reference('PILOT', '${ATT}')`, 'pilot lock');
   if (options.stopAfter === 'pilotLock') return { db, PT1, PT2 };
+  let exportPayload: unknown = {
+    mode: 'PILOT',
+    bundle_format_version: options.designVersion?.startsWith('SYN-8-1-') ? '8.1' : '7.0',
+    row_counts: { units: 12 },
+    file_sha256: {},
+    manifest_sha256: '3'.repeat(64),
+    app_git_sha: 'abc123',
+  };
+  if (options.reviewerProfile) {
+    const { readMu7Bundle } = await import('../src/server/mu7-core');
+    const { mu7SqlData } = await import('../src/server/mu7');
+    const { mu7RegistrationPayload } = await import('../src/lib/mu7-export');
+    const bundle = await as(db, 'inv', () =>
+      readMu7Bundle(
+        mu7SqlData({ query: (sql, params) => db.query(sql, params) }),
+        'PILOT',
+        'e'.repeat(40),
+        true,
+      ),
+    );
+    exportPayload = mu7RegistrationPayload(bundle, 'e'.repeat(40), 'Synthetic profile fixture.');
+  }
   const PEX = await must(
     db,
     'inv',
-    `select public.rpc_mu7_register_export(${lit({ mode: 'PILOT', bundle_format_version: options.designVersion?.startsWith('SYN-8-1-') ? '8.1' : '7.0', row_counts: { units: 12 }, file_sha256: {}, manifest_sha256: '3'.repeat(64), app_git_sha: 'abc123' })})`,
+    `select public.rpc_mu7_register_export(${lit(exportPayload)})`,
     'pilot export',
   );
   await must(
@@ -643,13 +697,19 @@ export async function formalOpen(options: ChainOptions = {}): Promise<FormalOpen
     );
   const R1 = await pidOf(db, 'r1');
   const R2 = await pidOf(db, 'r2');
-  for (const u of FORMAL_UNITS)
+  for (const u of FORMAL_UNITS) {
+    const imported = importObj(u);
+    if (options.reviewerProfile) {
+      const display = mu81ProfileDisplayText(u.code);
+      if (display) imported.packet.unit.display_text = display;
+    }
     await must(
       db,
       'inv',
-      `select public.rpc_mu7_import_unit(${lit({ ...importObj(u), design: { ...designRow(u), design_version: options.designVersion ?? DESIGN_VERSION } })})`,
+      `select public.rpc_mu7_import_unit(${lit({ ...imported, design: { ...designRow(u), design_version: options.designVersion ?? DESIGN_VERSION } })})`,
       `import ${u.uid}`,
     );
+  }
   if (await hasGateRequirements(db)) await specifyAndApproveGates(db, options.gates ?? 'all');
   else
     await must(
