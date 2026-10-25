@@ -36,7 +36,8 @@
     "tlv5:staging-dryrun": "node --import tsx scripts/tlv5-staging-dryrun.ts",
     "demo:mapconf": "node scripts/mapconf-demo.mjs",
     "build:hosted": "node scripts/hosted-build.mjs",
-    "start:hosted": "node scripts/hosted-start.mjs"
+    "start:hosted": "node scripts/hosted-start.mjs",
+    "mu81:offline-import-check": "node --import tsx scripts/mu81-disposable-import.ts"
   },
   "engines": {
     "node": ">=22.0.0"
