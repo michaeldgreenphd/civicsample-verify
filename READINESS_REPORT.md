@@ -1,5 +1,7 @@
 # CivicSample Verify readiness — 2026-10-22
 
+Latest offline import compatibility check: [revision-2 results](docs/test_runs/V81_OFFLINE_IMPORT_CHECK.md). Both existing candidates passed in disposable databases only. The investigator requests a new proposed sample matching the final model; neither candidate is selected or approved.
+
 Latest export-history engineering increment: [bundle 8.2 verification record](docs/test_runs/V82_HISTORY_VERIFICATION.md). This is synthetic/local evidence only; migration 0036 has not been applied to Supabase and does not authorize formal review. Historical evidence below remains scoped to its stated commits.
 
 ## Current independent audit
