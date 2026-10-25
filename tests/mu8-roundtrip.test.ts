@@ -318,6 +318,41 @@ async function runScenario(
         100,
       );
     }
+    if (addendum) {
+      const uid = queue1.find((u) => u.includes('RULE_D_KEPT'))!;
+      const assignment = await assignmentOf(db, pseudos[0], uid);
+      await one(
+        db,
+        'r1',
+        submitSql(assignment, {
+          answer: 'DISAGREE',
+          reason_code: 'DIABETES_NOT_STUDIED',
+          note: 'Intermediate fictional note|with a delimiter\nAnd a new line\rAnd CR',
+          uncertain: true,
+          seconds_on_unit: 25,
+          diabetes_subtype: 'CANNOT_TELL_FROM_PACKET',
+        }),
+      );
+      await one(
+        db,
+        'r1',
+        submitSql(assignment, {
+          answer: 'AGREE',
+          note: '2026-10-25T01:02:03.123456Z',
+          uncertain: false,
+          seconds_on_unit: 31,
+          diabetes_subtype: 'TYPE_2_STATED',
+        }),
+      );
+      assert.equal(
+        await one(
+          db,
+          'inv',
+          "select count(*)::int from public.v_mu81_judgment_history where mode='FORMAL'",
+        ),
+        0,
+      );
+    }
     if (addendum)
       assert.equal(
         await one(
@@ -329,6 +364,15 @@ async function runScenario(
       );
     await one(db, 'inv', phase('FORMAL_CLOSED_COMPLETE'));
     await one(db, 'inv', 'select public.rpc_mu7_snapshot()');
+    if (addendum)
+      assert.equal(
+        await one(
+          db,
+          'inv',
+          "select count(*)::int from public.v_mu81_judgment_history where mode='FORMAL'",
+        ),
+        0,
+      );
     await one(
       db,
       'adj',
@@ -359,17 +403,72 @@ async function runScenario(
       'final_reference.csv': 100,
       ...(addendum
         ? {
-            'subtype_observations.csv': 200,
+            'subtype_observations.csv': 202,
+            'judgment_history.csv': 202,
             ...(overlap === 'ONE_PER_TRIAL'
               ? { 'probabilities.csv': 100, 'probability_source.csv': 100 }
               : {}),
           }
         : {}),
     });
-    assert.equal((bundle.manifest.snapshot as Record<string, unknown>).n_rows, 200);
+    assert.equal(
+      (bundle.manifest.snapshot as Record<string, unknown>).n_rows,
+      addendum ? 202 : 200,
+    );
     assert.equal(bundle.manifest.n_units_locked, 100);
-    assert.equal(bundle.manifest.bundle_format_version, addendum ? '8.1' : '7.0');
+    assert.equal(bundle.manifest.bundle_format_version, addendum ? '8.2' : '7.0');
     if (addendum) {
+      for (const role of ['r1', 'r2', 'adj', 'out', 'inv1'] as const)
+        assert.equal(
+          await one(db, role, 'select count(*)::int from public.v_mu81_judgment_history'),
+          0,
+        );
+      assert.equal(
+        await one(
+          db,
+          'inv',
+          "select count(*)::int from public.v_mu81_judgment_history where mode='FORMAL'",
+        ),
+        202,
+      );
+      assert.match(
+        bundle.files.find((f) => f.role === 'judgment_history')!.content,
+        /2026-10-25T01:02:03.123456Z/,
+      );
+      const checkDir = mkdtempSync(join(tmpdir(), 'verify-history-native-'));
+      try {
+        const path = join(checkDir, 'bundle');
+        fileWrite(bundle, path);
+        assert.deepEqual(verifyMu7Bundle(path, bundle.manifestSha256).problems, []);
+      } finally {
+        rmSync(checkDir, { recursive: true, force: true });
+      }
+      await db.exec(
+        "insert into public.account_locks(user_id,locked_by,reason) select user_id,'synthetic-test','Synthetic investigator lock test.' from public.users where email='investigator@example.test'",
+      );
+      assert.equal(
+        await one(db, 'inv', 'select count(*)::int from public.v_mu81_judgment_history'),
+        0,
+      );
+      await db.exec(
+        "update public.account_locks set released_at=now(),released_by='synthetic-test' where released_at is null",
+      );
+      assert.equal(
+        await one(
+          db,
+          'inv',
+          "select count(*)::int from public.v_mu81_judgment_history where mode='FORMAL'",
+        ),
+        202,
+      );
+      for (const role of ['anon', 'service_role'])
+        await assert.rejects(
+          as(db, 'owner', async () => {
+            await db.exec(`set role ${role}`);
+            return db.query('select * from public.v_mu81_judgment_history');
+          }),
+          /permission denied/,
+        );
       const reference = await rows<{ routing: string }>(
         db,
         'inv',
@@ -650,10 +749,19 @@ for (const overlap of ['ALLOW', 'ONE_PER_TRIAL'] as const)
         assert.match(counts, /TYPE_2_NOT_STATED/);
         const checks = spawnSync(
           python,
-          ['-m', 'pytest', '-q', 'analysis/v8/tests/test_mu81_observations.py'],
+          [
+            '-m',
+            'pytest',
+            '-q',
+            'analysis/v8/tests/test_mu81_observations.py',
+            'analysis/v8/tests/test_mu82_history.py',
+          ],
           { encoding: 'utf8', env: { ...process.env, MU81_DB_BUNDLE: path } },
         );
         assert.equal(checks.status, 0, checks.stdout + checks.stderr);
+        assert.match(checks.stdout, /36 passed/);
+        assert.doesNotMatch(checks.stdout, /skipped|xfailed/);
+        console.info(`History/probability Python checks (${overlap}): 36 passed, no skips`);
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

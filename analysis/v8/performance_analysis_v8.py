@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mu8_bundle as B  # noqa: E402
 import mu8_estimators as E  # noqa: E402
 import mu81_observations as V81  # noqa: E402
+import mu82_history as V82  # noqa: E402
 
 FORMAT = "7.0"
 DESIGN_PREFIXES = ("review-design-v8", "SYN-8")
@@ -193,10 +194,14 @@ def verify_freeze_inventory(U: pd.DataFrame, J: pd.DataFrame, freeze: dict) -> N
 # ---------------------------------------------------------------------------------------------------------------------
 # 1. Load and verify
 # ---------------------------------------------------------------------------------------------------------------------
-def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) -> dict:
+def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None, expected_manifest_sha256: str | None = None) -> dict:
     refuse_unless((d / "manifest.json").exists(), f"no manifest.json in {d}")
+    if expected_manifest_sha256 is not None:
+        refuse_unless(len(expected_manifest_sha256) == 64 and all(c in "0123456789abcdef" for c in expected_manifest_sha256)
+                      and B.sha256_file(d / "manifest.json") == expected_manifest_sha256,
+                      "manifest differs from the independently registered manifest hash")
     man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
-    refuse_unless(str(man.get("bundle_format_version")) in (FORMAT, "8.1"), f"bundle format {man.get('bundle_format_version')!r}, expected {FORMAT}")
+    refuse_unless(str(man.get("bundle_format_version")) in (FORMAT, "8.1", "8.2"), f"bundle format {man.get('bundle_format_version')!r}, expected {FORMAT}")
     refuse_unless(man.get("mode") == "FORMAL", f"mode {man.get('mode')!r}: only a FORMAL bundle is analysed")
     dv = str(man.get("design", {}).get("design_version", ""))
     refuse_unless(dv.startswith(DESIGN_PREFIXES), f"design version {dv!r} is not design v8 (a v7 bundle is read by performance_analysis_v7.py)")
@@ -279,10 +284,12 @@ def load_bundle(d: Path, allow_synthetic: bool, design_manifest: Path | None) ->
             refuse_unless(got == want, f"the bundle's allocation differs from the design manifest: "
                                        f"{sorted(set(got.items()) ^ set(want.items()))}")
     bound, subtype_counts = None, None
-    if str(man.get("bundle_format_version")) == "8.1":
+    if str(man.get("bundle_format_version")) in ("8.1", "8.2"):
         bound, subtype_counts = V81.verify(d, man, U, D, J, refuse_unless)
+        if man["bundle_format_version"] == "8.2":
+            V82.verify(d, man, J, refuse_unless)
     else:
-        refuse_unless(not dv.startswith("SYN-8-1-") and dv != "review-design-v8.1.0", "v8.1 requires bundle format 8.1")
+        refuse_unless(not dv.startswith("SYN-8-1-") and dv != "review-design-v8.1.0", "v8.1 requires bundle format 8.1 or 8.2")
     return {"manifest": man, "units": U, "design": D, "judgments": J, "final": R, "overlap": ov[0], "synthetic": synthetic,
             "bound_probabilities": bound, "subtype_counts": subtype_counts}
 
@@ -307,8 +314,8 @@ def analysis_frame(b: dict, probabilities: Path | None) -> pd.DataFrame:
     X["y"] = (X.final_answer == "AGREE").astype(int)
     X["d_R0"] = X.final_answer.isin(["AGREE", "DISAGREE"]).astype(int)
     X["d_R2"] = X.reviewed.astype(int)
-    if b["manifest"]["bundle_format_version"] == "8.1":
-        refuse_unless(probabilities is None, "bundle 8.1 uses its frozen probability binding, not an external override")
+    if b["manifest"]["bundle_format_version"] in ("8.1", "8.2"):
+        refuse_unless(probabilities is None, "bundle 8.1/8.2 uses its frozen probability binding, not an external override")
     if b["overlap"] == "ONE_PER_TRIAL":
         refuse_unless(b.get("bound_probabilities") is not None or probabilities is not None, "overlap ONE_PER_TRIAL needs --probabilities (Monte Carlo inclusion probabilities)")
         P = b["bound_probabilities"] if b.get("bound_probabilities") is not None else pd.read_csv(probabilities, dtype={"unit_id": str})
@@ -450,6 +457,7 @@ def main(argv=None) -> int:
     ap.add_argument("--bundle", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--design-manifest", type=Path)
+    ap.add_argument("--expect-manifest-sha256", help="Independent registered manifest hash (not taken from the download)")
     ap.add_argument("--probabilities", type=Path)
     ap.add_argument("--bootstrap-reps", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=2026102408)
@@ -459,7 +467,7 @@ def main(argv=None) -> int:
         print(f"REFUSED: {a.out} exists; the analysis writes to a new folder", file=sys.stderr)
         return 3
     try:
-        b = load_bundle(a.bundle, a.allow_synthetic, a.design_manifest)
+        b = load_bundle(a.bundle, a.allow_synthetic, a.design_manifest, a.expect_manifest_sha256)
         X = analysis_frame(b, a.probabilities)
     except Refused as e:
         print(f"REFUSED: {e}", file=sys.stderr)
@@ -487,7 +495,7 @@ def main(argv=None) -> int:
                       f"{r.kappa:.2f} (95% CI {r.kappa_ci_low:.2f} to {r.kappa_ci_high:.2f}), n = {r.n_pairs} pairs",
                       "source": "agreement_v8.csv", "method": "Cohen's kappa, percentile bootstrap"})
     pd.DataFrame(trace).to_csv(a.out / "numbers_trace_analysis_v8.csv", index=False, lineterminator="\n")
-    lines = ["# Mapping-unit confirmation review over the ten areas: results (bundle 7.0, design v8)", "",
+    lines = [f"# Mapping-unit confirmation review over the ten areas: results (bundle {b['manifest']['bundle_format_version']}, design v8)", "",
              "SYNTHETIC ENGINEERING TEST ONLY. Estimator and rubric remain proposed; not study results.",
              f"Bundle: {a.bundle} (overlap setting {b['overlap']}{'; SYNTHETIC' if b['synthetic'] else ''}).",
              "Outcome: clinician confirmation of displayed assignments. Reviewers saw our assignment; the share says nothing "
@@ -504,6 +512,8 @@ def main(argv=None) -> int:
     (a.out / "results_summary_v8.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     log = {"script": "performance_analysis_v8.py", "run_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
            "bundle": str(a.bundle), "bundle_manifest_sha256": B.sha256_file(a.bundle / "manifest.json"),
+           "registered_manifest_verified": a.expect_manifest_sha256 is not None,
+           "judgment_snapshot_verified": b["manifest"]["bundle_format_version"] == "8.2",
            "overlap_setting": b["overlap"], "synthetic": b["synthetic"], "n_units": int(len(X)),
            "bootstrap_reps": a.bootstrap_reps, "seed": a.seed,
            "outputs": {p.name: B.sha256_file(p) for p in sorted(a.out.iterdir())}}

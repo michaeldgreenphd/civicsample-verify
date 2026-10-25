@@ -41,6 +41,7 @@ const sqlInputs = new Set([
   'migrations/0033_v8_design_foundation.sql',
   'migrations/0034_v8_synthetic_identifiers.sql',
   'migrations/0035_v81_subtype_probability.sql',
+  'migrations/0036_v81_judgment_history.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 function traces(directory) {

@@ -1,4 +1,4 @@
-// Checks downloaded bundle 7.0 or 8.1 files without a database or network connection:
+// Checks downloaded bundle 7.0, 8.1 or 8.2 files without a database or network connection:
 //
 //   node --import tsx scripts/verify-mu7-bundle.ts --bundle /abs/folder [--expect-manifest-sha256 <hash>]
 //
@@ -7,6 +7,7 @@
 // --expect-manifest-sha256 (the hash the database registered, from the investigator console or the
 // read-only inspection) the manifest itself must match it. Prints one JSON line; exit 1 on failure.
 import { createHash } from 'node:crypto';
+import { HISTORY_COLUMNS, verifyJudgmentHistory } from '../src/lib/mu7-history';
 import { lstatSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -142,7 +143,9 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
     return result();
   }
   if (
-    (m.bundle_format_version !== '7.0' && m.bundle_format_version !== '8.1') ||
+    (m.bundle_format_version !== '7.0' &&
+      m.bundle_format_version !== '8.1' &&
+      m.bundle_format_version !== '8.2') ||
     (m.mode !== 'PILOT' && m.mode !== 'FORMAL') ||
     !object(m.files) ||
     !object(m.row_counts)
@@ -168,8 +171,13 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       MU7_EXPORT_COLUMNS[r],
     ]),
   );
+  if (format === '8.2') {
+    columns['judgment_history.csv'] = HISTORY_COLUMNS;
+    if (m.history_contract_version !== 'mu81-history-1')
+      problems.push('unknown judgment history contract');
+  }
   let needsProbabilities = false;
-  if (format === '8.1') {
+  if (format === '8.1' || format === '8.2') {
     if (
       !object(m.design) ||
       !isMu81Design(m.design.design_version) ||
@@ -190,7 +198,7 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
     )
       problems.push('this bundle must not carry a probability binding');
   } else if (object(m.design) && isMu81Design(m.design.design_version))
-    problems.push('v8.1 design requires bundle format 8.1');
+    problems.push('v8.1 design requires bundle format 8.1 or 8.2');
   if (!sameKeys(m.files, Object.keys(columns)) || !sameKeys(m.row_counts, Object.keys(columns)))
     problems.push('file inventory differs from the versioned bundle contract');
   for (const [name, header] of Object.entries(columns)) {
@@ -277,6 +285,21 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
         throw new Error('freeze');
     } catch {
       problems.push('probability files or binding differ from the frozen contract');
+    }
+  }
+  if (format === '8.2' && problems.length === 0) {
+    try {
+      const records = (name: string) =>
+        tables[name].map((row) => Object.fromEntries(columns[name].map((k, i) => [k, row[i]])));
+      verifyJudgmentHistory(
+        records('judgment_history.csv'),
+        records('independent_judgments.csv'),
+        records('subtype_observations.csv'),
+        mode,
+        m.snapshot,
+      );
+    } catch {
+      problems.push('judgment history differs from its locked snapshot or export contract');
     }
   }
   return result();
