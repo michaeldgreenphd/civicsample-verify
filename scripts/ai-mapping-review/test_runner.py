@@ -77,6 +77,195 @@ class MappingRunnerTests(unittest.TestCase):
     def run_fake(self, provider=None, persist=lambda _: None):
         return runner.run(self.bundle, self.digest, self.state, self.cap, "SYNTHETIC-APPROVAL", provider or FakeProvider(), persist)
 
+    def legacy_failure(self):
+        legacy = runner.request_for(self.bundle, self.bundle["units"][0], runner.MODELS[0])
+        legacy["output_config"]["format"]["schema"]["properties"]["reason_code"] = {
+            "type": ["string", "null"], "enum": [None, "OTHER_SPECIFIED"]}
+        self.state["records"] = [{"model": runner.MODELS[0], "unit_id": self.bundle["units"][0]["unit_id"],
+                                  "status": "unreconciled", "request_sha256": runner.sha(runner.encode(legacy)),
+                                  "reserved_micro_usd": runner.reserve_cost(legacy), "reserved_at": runner.now(),
+                                  "failure_category": "provider_request_failed"}]
+        report = {"format": "civicsample-ai-mapping-preflight-1.0", "input_sha256": self.digest,
+                  "settings": copy.deepcopy(runner.SETTINGS), "status": "failed", "failure_category": "provider_http_400",
+                  "provider_diagnostic": {"http_status": 400, "error_type": "invalid_request_error", "message": runner.LEGACY_REASON_SCHEMA_ERROR},
+                  "records": [{field: self.state["records"][0][field] for field in ("model", "unit_id", "request_sha256")}]}
+        return report
+
+    def recover_fake(self, report):
+        return runner.recover_legacy_schema(self.bundle, self.digest, self.state, report, self.cap, "SYNTHETIC-APPROVAL", "d" * 40)
+
+    def test_nullable_reason_preserves_choices_without_null_in_string_enum(self):
+        for unit in self.bundle["units"]:
+            reason = runner.response_schema(unit)["properties"]["reason_code"]
+            string_branch, null_branch = reason["anyOf"]
+            self.assertEqual(string_branch["type"], "string")
+            self.assertEqual(string_branch["enum"], [r["code"] for r in unit["reason_codes"]])
+            self.assertTrue(all(isinstance(value, str) for value in string_branch["enum"]))
+            self.assertEqual(null_branch, {"type": "null"})
+            for value, accepted in ((None, True), ("OTHER_SPECIFIED", True), ("UNKNOWN", False), (False, False), ({}, False)):
+                actual = value is None or (isinstance(value, str) and value in string_branch["enum"])
+                self.assertEqual(actual, accepted)
+
+    def test_schema_recovery_keeps_original_ledger_and_diagnostic_unchanged(self):
+        report = self.legacy_failure()
+        original = copy.deepcopy(self.state)
+        original_report = copy.deepcopy(report)
+        candidate = self.recover_fake(report)
+        self.assertEqual(self.state, original)
+        self.assertEqual(report, original_report)
+        self.assertEqual(candidate["schema_recovery"]["previous_ledger"], original)
+        self.assertEqual(candidate["schema_recovery"]["preflight_report"], original_report)
+        self.assertEqual(candidate["records"], [])
+        self.assertEqual(runner.accounted_micro(candidate), original["records"][0]["reserved_micro_usd"])
+        self.assertEqual(candidate["cap_micro_usd"], original["cap_micro_usd"])
+        self.assertEqual(candidate["approval_ref"], original["approval_ref"])
+        self.assertNotIn("SYN-AI", json.dumps(runner.summary(candidate)))
+        self.state = candidate
+        with self.assertRaisesRegex(runner.Refused, "recovery_already_recorded"):
+            self.recover_fake(report)
+
+    def test_recovered_ledger_version_cannot_be_silently_read_as_legacy(self):
+        report = self.legacy_failure()
+        recovered = self.recover_fake(report)
+        self.assertEqual(recovered["format"], "civicsample-ai-mapping-ledger-1.1")
+        self.assertEqual(recovered["schema_recovery"]["previous_ledger"]["format"], "civicsample-ai-mapping-ledger-1.0")
+        # The deployed 1.0 runner accepts only this exact version string.
+        self.assertNotEqual(recovered["format"], "civicsample-ai-mapping-ledger-1.0")
+        missing = copy.deepcopy(recovered)
+        missing.pop("schema_recovery")
+        downgraded = copy.deepcopy(recovered)
+        downgraded["format"] = runner.STATE_FORMAT
+        for invalid in (missing, downgraded):
+            self.state = invalid
+            provider = FakeProvider()
+            with self.assertRaisesRegex(runner.Refused, "ledger_binding_mismatch"):
+                self.run_fake(provider)
+            self.assertEqual(provider.checked, 0)
+            self.assertEqual(provider.calls, [])
+
+    def test_schema_recovery_refuses_unknown_failures_answers_and_wrong_bindings(self):
+        mutations = [
+            lambda state, report: state["records"][0].update(status="reserved"),
+            lambda state, report: state["records"][0].update(failure_category="provider_timeout"),
+            lambda state, report: state["records"][0].update(response={"model": runner.MODELS[0]}),
+            lambda state, report: state["records"][0].update(answer={"answer": "AGREE"}),
+            lambda state, report: state["records"].append(copy.deepcopy(state["records"][0])),
+            lambda state, report: state["records"][0].update(reserved_micro_usd=1),
+            lambda state, report: state["records"][0].update(model=runner.MODELS[1]),
+            lambda state, report: report.update(input_sha256="f" * 64),
+            lambda state, report: report.update(status="passed"),
+            lambda state, report: report["provider_diagnostic"].update(http_status=502),
+            lambda state, report: report["provider_diagnostic"].update(message="Unrelated failure"),
+            lambda state, report: report["records"][0].update(input_tokens=100),
+            lambda state, report: report["records"][0].update(request_sha256="e" * 64),
+        ]
+        for index, mutate in enumerate(mutations):
+            self.state = runner.new_state(self.digest, self.cap, "SYNTHETIC-APPROVAL")
+            report = self.legacy_failure()
+            mutate(self.state, report)
+            with self.subTest(mutation=index), self.assertRaises(runner.Refused):
+                self.recover_fake(report)
+
+    def test_unrecovered_legacy_failure_still_refuses_generation(self):
+        self.legacy_failure()
+        provider = FakeProvider()
+        with self.assertRaisesRegex(runner.Refused, "unreconciled_request"):
+            self.run_fake(provider)
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(provider.checked, 0)
+
+    def test_recovered_run_accounts_for_old_reservation_and_300_new_results(self):
+        report = self.legacy_failure()
+        original = copy.deepcopy(self.state)
+        held = original["records"][0]["reserved_micro_usd"]
+        self.state = self.recover_fake(report)
+        provider = FakeProvider()
+        result = self.run_fake(provider)
+        self.assertEqual(result["completed_requests"], 300)
+        self.assertEqual(len(provider.calls), 300)
+        self.assertEqual(result["accounted_usd"], (held + 200_000) / 1_000_000)
+        self.assertEqual(result["held_reservation_usd"], held / 1_000_000)
+        self.assertEqual(self.state["schema_recovery"]["previous_ledger"], original)
+        again = FakeProvider()
+        self.run_fake(again)
+        self.assertEqual(again.calls, [])
+
+    def test_retained_reservation_reduces_available_budget(self):
+        report = self.legacy_failure()
+        held = self.state["records"][0]["reserved_micro_usd"]
+        next_request = runner.request_for(self.bundle, self.bundle["units"][0], runner.MODELS[0])
+        self.cap = held + runner.reserve_cost(next_request) - 1
+        self.state["cap_micro_usd"] = self.cap
+        self.state = self.recover_fake(report)
+        provider = FakeProvider()
+        with self.assertRaisesRegex(runner.Refused, "budget_exhausted"):
+            self.run_fake(provider)
+        self.assertEqual(provider.calls, [])
+
+    def test_recovery_tampering_or_request_change_refuses_before_network(self):
+        report = self.legacy_failure()
+        recovered = self.recover_fake(report)
+        for mutate in (
+            lambda state: state["schema_recovery"].update(previous_ledger_sha256="e" * 64),
+            lambda state: state["schema_recovery"].update(preflight_report_sha256="e" * 64),
+            lambda state: state["schema_recovery"].update(replacement_request_sha256="e" * 64),
+            lambda state: state["schema_recovery"]["previous_ledger"]["records"][0].update(reserved_micro_usd=0),
+        ):
+            self.state = copy.deepcopy(recovered)
+            mutate(self.state)
+            provider = FakeProvider()
+            with self.assertRaises(runner.Refused):
+                self.run_fake(provider)
+            self.assertEqual(provider.checked, 0)
+            self.assertEqual(provider.calls, [])
+        self.state = copy.deepcopy(recovered)
+        self.bundle["guide"]["text"] += "Changed guide"
+        provider = FakeProvider()
+        with self.assertRaisesRegex(runner.Refused, "invalid_recovery"):
+            self.run_fake(provider)
+        self.assertEqual(provider.checked, 0)
+
+    def test_schema_recovery_does_not_accept_changed_budget_or_authorization(self):
+        report = self.legacy_failure()
+        for digest, cap, approval in (("f" * 64, self.cap, "SYNTHETIC-APPROVAL"),
+                                     (self.digest, self.cap - 1, "SYNTHETIC-APPROVAL"),
+                                     (self.digest, self.cap, "OTHER")):
+            with self.assertRaises(runner.Refused):
+                runner.recover_legacy_schema(self.bundle, digest, self.state, report, cap, approval, "d" * 40)
+
+    def test_recovery_cli_requires_explicit_offline_acknowledgment(self):
+        for args in (["recover-schema", "--private-store"], ["run", "--retain-uncertain-charge"],
+                     ["recover-schema", "--retain-uncertain-charge", "--execute-paid"],
+                     ["recover-schema", "--retain-uncertain-charge", "--private-store"]):
+            with patch("sys.argv", ["runner.py", *args]), patch.object(runner, "PrivateStore") as store, self.assertRaises(runner.Refused):
+                runner.main()
+            store.assert_not_called()
+
+    def test_recovery_cli_does_not_construct_a_provider_or_make_paid_calls(self):
+        report = self.legacy_failure()
+        original = copy.deepcopy(self.state)
+        saved = []
+        class FakeStore:
+            def __init__(self, *args):
+                pass
+            def input_bytes(store):
+                return self.raw
+            def load(store):
+                return self.state
+            def load_preflight(store):
+                return report
+            def persist(store, state):
+                saved.append(copy.deepcopy(state))
+        with patch.object(runner, "PrivateStore", FakeStore), patch.object(runner, "Provider", side_effect=AssertionError("network prohibited")), \
+                patch.dict(runner.os.environ, {"AI_MAPPING_INPUT_SHA256": self.digest, "GITHUB_SHA": "d" * 40}), \
+                patch("sys.argv", ["runner.py", "recover-schema", "--private-store", "--retain-uncertain-charge", "--usd-cap", "95", "--approval-ref", "SYNTHETIC-APPROVAL"]), \
+                redirect_stdout(io.StringIO()) as output:
+            runner.main()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["schema_recovery"]["previous_ledger"], original)
+        self.assertEqual(json.loads(output.getvalue())["paid_requests"], 0)
+        self.assertNotIn("SYN-AI", output.getvalue())
+
     def test_valid_bundle_and_offline_plan(self):
         parsed = runner.validate_bundle(self.raw, self.digest)
         with patch.object(runner.Provider, "call", side_effect=AssertionError("network")):
