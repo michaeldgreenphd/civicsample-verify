@@ -1,0 +1,66 @@
+name: Private three-model mapping comparison
+
+# This is never triggered by a push, pull request, schedule or fork. The source/input
+# pins and all packets/results live in the separately configured PRIVATE data store.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'dry-run is offline; models checks account access; run makes paid calls'
+        type: choice
+        options: [dry-run, models, run]
+        default: dry-run
+        required: true
+      usd_cap:
+        description: 'Combined USD ceiling for all three models, at most 95'
+        type: string
+        default: '95'
+        required: true
+      approval_ref:
+        description: 'Non-sensitive reference to the investigator spending authorization (required for run)'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-ai-mapping-review
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ai-mapping-review
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check runner using fictional evidence and mocked calls
+        run: python -m unittest discover -s scripts/ai-mapping-review -p 'test_*.py' -q
+      - name: Run only the requested operation
+        env:
+          REQUESTED_COMMAND: ${{ inputs.command }}
+          REQUESTED_CAP: ${{ inputs.usd_cap }}
+          REQUESTED_APPROVAL: ${{ inputs.approval_ref }}
+          ANTHROPIC_API_KEY: ${{ inputs.command != 'dry-run' && secrets.ANTHROPIC_API_KEY || '' }}
+          PRIVATE_STORE_REPO: ${{ vars.PRIVATE_STORE_REPO }}
+          PRIVATE_STORE_TOKEN: ${{ secrets.PRIVATE_STORE_TOKEN }}
+          AI_MAPPING_STORE_REF: ${{ secrets.AI_MAPPING_STORE_REF }}
+          AI_MAPPING_INPUT_SHA256: ${{ secrets.AI_MAPPING_INPUT_SHA256 }}
+        # No action artifact is uploaded. The runner prints fixed status/count/cost
+        # fields only; all source, raw responses and durable ledger stay private.
+        run: |
+          set -eu
+          umask 077
+          case "$REQUESTED_COMMAND" in
+            dry-run) python scripts/ai-mapping-review/runner.py dry-run --private-store ;;
+            models) python scripts/ai-mapping-review/runner.py models ;;
+            run) python scripts/ai-mapping-review/runner.py run --private-store --execute-paid --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
+            *) exit 2 ;;
+          esac
