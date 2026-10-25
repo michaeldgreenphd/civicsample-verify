@@ -98,6 +98,8 @@ export function unitDisplay(unit: Mu7UnitBlock, profileId?: string | null) {
     // A historical malignancy assertion stays a malignancy assertion. New profiles supply
     // their own versioned text from the server; the UI never invents a replacement target.
     assertion: unit.display_text,
+    note: unit.display_note ? studyLabel(unit.display_note) : undefined,
+    parent_row_label: unit.parent_row_label,
     decision,
     question,
     polarity:

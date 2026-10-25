@@ -1,0 +1,80 @@
+.preview {
+  margin-block: 1.5rem;
+  overflow-wrap: anywhere;
+}
+.preview h2 {
+  margin-block: 0.4rem 0.8rem;
+}
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-block: 1.5rem;
+}
+.count {
+  flex: 1 1 100%;
+  color: #455b57;
+  font-size: 0.9rem;
+}
+.navigation {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+  margin-block: 1.2rem;
+}
+.selector {
+  display: grid;
+  gap: 0.35rem;
+  flex: 1;
+  min-width: 0;
+}
+.selector select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.answers {
+  margin-block: 1.25rem;
+  padding: 1.25rem;
+  border-top: 1px solid #cdd8d5;
+}
+.answers dl > div {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 1rem;
+  padding-block: 0.65rem;
+}
+.answers dt {
+  font-weight: 650;
+}
+.answers dd {
+  margin: 0;
+}
+.answers li {
+  margin-block: 0.65rem;
+}
+.subtype {
+  border-top: 1px solid #cdd8d5;
+  margin-top: 1.2rem;
+  padding-top: 0.8rem;
+}
+@media (max-width: 600px) {
+  .navigation {
+    flex-wrap: wrap;
+  }
+  .selector {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .navigation button {
+    flex: 1;
+  }
+  .answers {
+    padding: 0.6rem 0;
+  }
+  .answers dl > div {
+    grid-template-columns: 1fr;
+    gap: 0.2rem;
+  }
+}

@@ -1,7 +1,7 @@
 import { HISTORY_COLUMNS } from '../lib/mu7-history';
+import { reviewReasonOptions } from '../lib/mu7-review-options';
 import { readReviewerProfile } from './mu81-reviewer-profile';
 import {
-  MU81_PROFILE_REASON_MEANING,
   MU81_REVIEWER_GUIDE_SHA256,
   MU81_REVIEWER_PROFILE_ID,
   mu81ProfileDisplayText,
@@ -16,9 +16,7 @@ import {
 // approved study decisions (migration 0026), and no button or route here records either.
 import {
   mu7PacketView,
-  mu7ReasonCodes,
   MU7_DISAGREEMENT_REASONS,
-  MU7_REASON_MEANING,
   type Mu7AdjudicationInput,
   type Mu7AdjudicationStatus,
   type Mu7AdjudicatorUnit,
@@ -147,18 +145,8 @@ const iso = (v: unknown) => (v === null || v === undefined ? '' : mu7CellText(v)
 const bool = (v: unknown) => v === true || v === 't' || v === 'true';
 const asAnswer = (v: unknown) =>
   v === null || v === undefined || v === '' ? null : (v as Mu7Answer);
-const reasonList = (family: string, code: string, profile?: Mu81ReviewerProfile | null) => {
-  let reasons = mu7ReasonCodes(family, code);
-  if (profile && family === 'SG') {
-    if (['K_KEEP_MALIGNANT_COMPATIBLE', 'K_KEEP_HEURISTIC_NONMALIGNANT_CLASS'].includes(code))
-      reasons = reasons.filter((r) => r !== 'BENIGN_NEOPLASM');
-    if (code === 'K_REMOVE_VERIFIED_NONMALIGNANT') reasons.push('NONMALIGNANT_NEOPLASM_STUDIED');
-  }
-  return reasons.map((c) => ({
-    code: c,
-    meaning: (profile ? MU81_PROFILE_REASON_MEANING[c] : undefined) ?? MU7_REASON_MEANING[c] ?? '',
-  }));
-};
+const reasonList = (family: string, code: string, profile?: Mu81ReviewerProfile | null) =>
+  reviewReasonOptions(family, code, profile?.profileId);
 
 // ---------------------------------------------------------------------------------------------
 // Workspaces
