@@ -37,3 +37,8 @@ endpoints, adjudication basis and manifest counts. See
 [export integrity](../../docs/V8_EXPORT_INTEGRITY.md) for the enforced relationships
 and the remaining limits of the four-file format. Checksums and internal
 consistency do not authenticate a bundle against a trusted database snapshot.
+
+The freeze checks also verify queue order, packet-digest inventory and individual
+canonical row digests. Regenerate older standalone synthetic fixtures that omit
+queue or packet inventory freeze hashes; application-written bundles already
+include those fields. The evidence bytes are not part of this export.

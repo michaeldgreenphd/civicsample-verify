@@ -259,3 +259,94 @@ def test_cli_refuses_contradiction_without_writing_results(tmp_path, capsys):
     assert PA.main(["--bundle", str(p), "--out", str(out), "--allow-synthetic"]) == 3
     assert not out.exists()
     assert "REFUSED: final reference" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("column", ["design_row_sha256", "assignment_row_sha256"])
+def test_row_digest_cannot_disagree_with_canonical_fields(tmp_path, column):
+    p = bundle(tmp_path)
+    def edit(d):
+        d.loc[0, column] = "0" * 64
+    rewrite_csv(p, "unit_design.csv", edit)
+    with pytest.raises(PA.Refused, match="individual .*digest"):
+        PA.load_bundle(p, True, None)
+
+
+def test_packet_inventory_is_bound_to_freeze_even_with_updated_csv_checksum(tmp_path):
+    p = bundle(tmp_path)
+    def edit(u):
+        u.loc[0, "packet_sha256"] = "1" * 64
+    rewrite_csv(p, "units.csv", edit)
+    with pytest.raises(PA.Refused, match="packet inventory hash"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("digest", ["", "x" * 64, "a" * 63])
+def test_packet_digest_syntax_is_checked_before_hashing_inventory(tmp_path, digest):
+    p = bundle(tmp_path)
+    rewrite_csv(p, "units.csv", lambda u: u.__setitem__("packet_sha256", digest))
+    with pytest.raises(PA.Refused, match="invalid packet digest"):
+        PA.load_bundle(p, True, None)
+
+
+def test_changed_queue_order_is_refused_with_updated_csv_checksum(tmp_path):
+    p = bundle(tmp_path)
+    def edit(j):
+        selected = j.index[j.reviewer_slot == "1"][:2]
+        j.loc[selected, "queue_position"] = j.loc[selected[::-1], "queue_position"].to_numpy()
+    rewrite_csv(p, "independent_judgments.csv", edit)
+    with pytest.raises(PA.Refused, match="queue hash"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("position", ["0", "-1", "1.5", "", "0001", "1", "101", "9" * 5000])
+def test_invalid_or_duplicated_queue_positions_are_refused(tmp_path, position):
+    p = bundle(tmp_path)
+    def edit(j):
+        # Position two becomes invalid, repeats position one, or leaves the frozen range.
+        j.loc[(j.reviewer_slot == "1") & (j.queue_position == "2"), "queue_position"] = position
+    rewrite_csv(p, "independent_judgments.csv", edit)
+    with pytest.raises(PA.Refused, match="queue"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("field", ["queue_sha256", "packets_sha256"])
+def test_missing_freeze_inventory_digest_is_refused(tmp_path, field):
+    p = bundle(tmp_path)
+    m = json.loads((p / "manifest.json").read_text())
+    del m["freeze"][field]
+    (p / "manifest.json").write_text(json.dumps(m))
+    with pytest.raises(PA.Refused, match="hash differs from the freeze"):
+        PA.load_bundle(p, True, None)
+
+
+@pytest.mark.parametrize("change", ["missing", "multiple", "same"])
+def test_reviewers_cannot_be_missing_split_or_the_same_person(tmp_path, change):
+    p = bundle(tmp_path)
+    def edit(j):
+        if change == "same":
+            j["reviewer_pseudo_id"] = "R-SYN1"
+        else:
+            j.loc[0, "reviewer_pseudo_id"] = "" if change == "missing" else "R-SYN3"
+    rewrite_csv(p, "independent_judgments.csv", edit)
+    with pytest.raises(PA.Refused, match="reviewer"):
+        PA.load_bundle(p, True, None)
+
+
+def test_freeze_inventory_is_independent_of_csv_row_order(tmp_path):
+    p = bundle(tmp_path)
+    for name in PA.FILES:
+        rewrite_csv(p, name, lambda f: f.iloc[::-1])
+    b = PA.load_bundle(p, True, None)
+    assert len(b["units"]) == 100 and len(b["judgments"]) == 200
+
+
+@pytest.mark.parametrize("file,column", [("unit_design.csv", "design_row_sha256"),
+                                         ("unit_design.csv", "assignment_row_sha256"),
+                                         ("units.csv", "packet_sha256"),
+                                         ("independent_judgments.csv", "queue_position"),
+                                         ("independent_judgments.csv", "reviewer_pseudo_id")])
+def test_required_inventory_columns_cannot_be_omitted(tmp_path, file, column):
+    p = bundle(tmp_path)
+    rewrite_csv(p, file, lambda f: f.drop(columns=[column]))
+    with pytest.raises(PA.Refused, match="missing"):
+        PA.load_bundle(p, True, None)

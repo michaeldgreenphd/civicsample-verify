@@ -83,7 +83,7 @@ def build(setting: str, seed: int) -> dict:
         for slot in (1, 2):
             if r.unit_id == INCOMPLETE and slot == 2:
                 J.append({"unit_id": r.unit_id, "mode": "FORMAL", "reviewer_slot": slot, "reviewer_pseudo_id": "R-SYN2",
-                          "queue_position": 0, "judgment_status": "NOT_ANSWERED", "answer_initial": "", "reason_initial": "",
+                          "queue_position": r.Index + 1, "judgment_status": "NOT_ANSWERED", "answer_initial": "", "reason_initial": "",
                           "note_initial": "", "uncertain_initial": "", "answer_effective": "", "reason_effective": "",
                           "note_effective": "", "uncertain_effective": "", "n_revisions": 0, "first_submitted_at": "",
                           "last_submitted_at": ""})
@@ -92,7 +92,7 @@ def build(setting: str, seed: int) -> dict:
             a1 = "AGREE" if (r.unit_id, slot) == REVISED else a0
             rc = lambda a: (REASON[r.family] if r.family != "SG" else REASON[r.code]) if a == "DISAGREE" else ""  # noqa: E731
             J.append({"unit_id": r.unit_id, "mode": "FORMAL", "reviewer_slot": slot, "reviewer_pseudo_id": f"R-SYN{slot}",
-                      "queue_position": 0, "judgment_status": "ANSWERED", "answer_initial": a0, "reason_initial": rc(a0),
+                      "queue_position": r.Index + 1, "judgment_status": "ANSWERED", "answer_initial": a0, "reason_initial": rc(a0),
                       "note_initial": "synthetic note" if a0 == "DISAGREE" else "", "uncertain_initial": "false",
                       "answer_effective": a1, "reason_effective": rc(a1), "note_effective": "synthetic note" if a1 == "DISAGREE" else "",
                       "uncertain_effective": "false", "n_revisions": 1 if (r.unit_id, slot) == REVISED else 0,
@@ -127,7 +127,7 @@ def build(setting: str, seed: int) -> dict:
                        "mapping_code": [f["mapping_code"] for f in F], "assignment_code": U.code, "assignment_status": "ASSIGNED",
                        "parent_row_code": [("FIG2_ROW_DIAB" if c.startswith("RULE_D") else "FIG2_ROW_CAN_ALL") if f == "SG" else ""
                                            for f, c in zip(U.family, U.category)],
-                       "packet_sha256": "0" * 64, "created_at": "2026-10-30T00:00:00.000Z"})
+                       "packet_sha256": [B.sha256_text(f"synthetic packet inventory: {u}") for u in U.unit_id], "created_at": "2026-10-30T00:00:00.000Z"})
     prn = [B.sha256_text(f"1|{s}|{t}") for s, t in zip(U.stratum, U.nct_id)]
     DS = pd.DataFrame({"unit_id": U.unit_id, "mode": "FORMAL", "nct_id": U.nct_id, "frame_id": "SYN_FRAME", "stratum": U.stratum,
                        "frame_stratum_size": U.N_h, "n_sampled_in_stratum": U.n_h, "selection_probability": U.n_h / U.N_h,
@@ -162,7 +162,10 @@ def write(b: dict, out: Path, setting: str) -> Path:
     D = b["unit_design"]
     man["freeze"] = {"n_units": int(len(D)), "unit_list_sha256": B.unit_list_sha256(D.unit_id),
                      "assignment_set_sha256": B.sha256_text("\n".join(D.sort_values("unit_id").assignment_row_sha256)),
-                     "design_rows_sha256": B.sha256_text("\n".join(D.sort_values("unit_id").design_row_sha256))}
+                     "design_rows_sha256": B.sha256_text("\n".join(D.sort_values("unit_id").design_row_sha256)),
+                     "packets_sha256": B.sha256_text("\n".join(b["units"].sort_values("unit_id").packet_sha256)),
+                     "queue_sha256": B.queue_sha256(b["independent_judgments"][["reviewer_slot", "queue_position", "unit_id"]]
+                                                   .itertuples(index=False, name=None))}
     (out / "manifest.json").write_text(json.dumps(man, indent=1) + "\n", encoding="utf-8")
     dm = {**{k: man["freeze"][k] for k in ("unit_list_sha256", "assignment_set_sha256", "design_rows_sha256")},
           "overlap_setting": setting, "strata": [{"stratum": s["stratum"], "n_h": int(s["n_h"])} for s in b["strata"]]}
