@@ -8,6 +8,8 @@ const config: NextConfig = {
   // Local runtime state is never part of a deployable application package.
   outputFileTracingExcludes: {
     '**': [
+      './.git',
+      './.git/**/*',
       './.local/**/*',
       './.data/**/*',
       './data_private/**/*',

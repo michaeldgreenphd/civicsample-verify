@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getSamplePreview } from '@/server/sample-preview';
 import { observerRequestAllowed } from '@/lib/practice-observer';
 import { getPracticeObserverWorkspace } from '@/server/practice-observer';
 import { publicLoginChoices } from '@/lib/login-choices';
@@ -132,6 +133,9 @@ async function mu7Route(
     );
   }
   if (path.startsWith('/api/mu7/admin/')) requireRole('INVESTIGATOR', 'an investigator account');
+  const preview = /^\/api\/mu7\/admin\/preview(?:\/(\d{1,3}))?$/.exec(path);
+  if (preview && request.method === 'GET')
+    return respond(await getSamplePreview(actor, preview[1] ? Number(preview[1]) : undefined));
   if (path === '/api/mu7/admin/action' && request.method === 'POST')
     return respond(await api.mu7AdminAction(actor, mu7AdminSchema.parse(await body(request))));
   const exported = /^\/api\/mu7\/admin\/export\/(PILOT|FORMAL)(?:\/([a-z_]+\.(?:csv|json)))?$/.exec(

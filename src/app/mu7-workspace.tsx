@@ -27,6 +27,7 @@ import type { Actor } from '@/lib/types';
 import { Icon } from '@/components/icons';
 import { PracticeSections, ReviewGuide } from './practice-sections';
 import { FormalPreparation } from './formal-preparation';
+import { ProposedSamplePreview } from './sample-preview';
 import {
   answerMeaning,
   reasonLabel,
@@ -183,9 +184,9 @@ function Packet({
             <strong>{display.title}</strong>
             {display.context && <span className={styles.mappingContext}> {display.context}</span>}
           </p>
-          {u.parent_row_label && (
+          {display.parent_row_label && (
             <p>
-              Condition group: <strong>{u.parent_row_label}</strong>
+              Condition group: <strong>{display.parent_row_label}</strong>
             </p>
           )}
           <p data-testid={tid('mu7-display-text')}>
@@ -201,9 +202,9 @@ function Packet({
             <span className={styles.assignmentLabel}>Why it was classified this way</span>
             {display.basis}
           </p>
-          {u.display_note && (
+          {display.note && (
             <p className="form-hint" data-testid={tid('mu7-display-note')}>
-              {studyLabel(u.display_note)}
+              {display.note}
             </p>
           )}
           <div className={styles.reviewQuestion}>
@@ -1072,6 +1073,9 @@ function Investigator({
       )}
       <Banner />
       <FormalPreparation workspace={w} />
+      <ProposedSamplePreview
+        renderPacket={(packet, profileId) => <Packet packet={packet} profileId={profileId} />}
+      />
       <section className="panel" aria-label="Synthetic pilot">
         <div className="panel-header">
           <span className="section-label">Synthetic pilot</span>
