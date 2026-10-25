@@ -38,6 +38,39 @@ not authorization to run migrations or create accounts.
 
 The privileged tool accepts only the staging references recorded in `APPROVED_STAGING_PROJECT_REFS` (`scripts/supabase-identity-tools.mjs`); a configuration naming any other project is refused before any request, whatever it calls itself. Changing that list requires a reviewed commit. Every mutation also needs `VERIFY_SUPABASE_ADMIN_APPLY=1`, `--apply` (never together with `--dry-run`), `--confirm-project <ref>` and `--plan-sha256` of the plan generated for the same configuration; the plan binds every provisioned field (username, internal address, role, a digest of the display name). Credentials are appended to the private file before each remote creation, so a failure after creation never loses a password; a rerun reconciles an Auth user that lacks its application row and never regenerates a delivered password. `apply-schema` plans against the `app_schema_version` markers of every non-repeatable file (schema.sql through the latest migration; the frozen-trial preflight is the only repeatable file), skips applied files, refuses a partially applied, out-of-order or unknown lineage before writing, and refuses a database destination that differs from the reviewed plan. The credentials path is resolved through real paths, so a symlinked directory inside a repository is refused.
 
+## Hosted-session and account recovery update
+
+The web launcher and hosted startup accept only the independently approved
+staging projects. Public origins require HTTPS; HTTP is limited to explicit
+loopback hosts for local testing. This does not add a new approved project.
+
+Hosted sessions use an HttpOnly refresh cookie named `verify_sb_refresh_v2`,
+scoped to `/api`. Protected API requests can renew an expiring session while a
+reviewer is working. A returning browser's older `/api/session` refresh cookie
+is migrated by its startup session request and cleared under the old name.
+Transient Auth failures leave usable credentials intact and return a retryable
+error; successful rotation is returned even if a later data request fails.
+Logout confirms revocation, including when only a refresh cookie remains. If
+Auth definitively rejects all remaining credentials as invalid, the app clears
+local sign-in state without claiming that other sessions were revoked.
+Live verification helpers revoke only the session created by that test.
+
+An authorized `accounts --apply` now checks every linked application's identity,
+role, immutable pilot flag and active state. It may reconcile the reviewed
+display name only, reporting `UPDATED_DISPLAY_NAME`; it does not reset a password,
+reactivate an account or change its study role. Interrupted Auth creation can be
+resumed without overwriting a different application identity. The plan hashes
+the exact display-name bytes, so regenerate and review the plan before applying
+with this version. Old plan hashes are not approval for a changed plan.
+
+The mapping-confirmation synthetic import can verify an existing partial set and
+resume only missing fixture packets. Assignment retries preserve recorded slots
+and the original seed and require active pilot accounts. A mismatched packet,
+identity or assignment stops the retry for investigation; existing records are
+never replaced. These changes require no database migration. Verification and
+deployment status for this increment are recorded in
+`docs/test_runs/HOSTED_READINESS_FIXES.md`.
+
 ## Bootstrap plan
 
 `node scripts/supabase-admin.mjs plan --config /absolute/private/supabase-admin.json` prints the plan without any remote request:

@@ -85,8 +85,9 @@ test(
       assert.equal(who[0].role, account.role);
       const rows = await client.select<{ user_id: string }>('users', 'select=user_id');
       assert.ok(rows.length >= 1, 'a user reads at least their own row');
-      await auth.signOut(session.accessToken);
-      await assert.rejects(auth.verify(session.accessToken), /Sign in to continue/);
+      await auth.signOut(session.accessToken, 'local');
+      // Supabase revokes refresh sessions; issued access JWTs may remain valid until expiry.
+      await assert.rejects(auth.refresh(session.refreshToken), /Sign in to continue/);
     }
   },
 );
@@ -146,6 +147,6 @@ test(
       403,
       'investigator without aal2 is refused',
     );
-    for (const s of [r, a, i]) await auth.signOut(s.accessToken);
+    for (const s of [r, a, i]) await auth.signOut(s.accessToken, 'local');
   },
 );

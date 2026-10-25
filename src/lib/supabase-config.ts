@@ -47,9 +47,16 @@ export function supabaseWebConfig(env: EnvMap = process.env): SupabaseWebConfig 
   const siteOrigin = env.VERIFY_SITE_ORIGIN ?? 'http://127.0.0.1:3300';
   try {
     const o = new URL(siteOrigin);
-    if (o.origin !== siteOrigin || !/^https?:$/.test(o.protocol)) throw new Error('x');
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(o.hostname);
+    if (
+      o.origin !== siteOrigin ||
+      (o.protocol !== 'https:' && !(loopback && o.protocol === 'http:'))
+    )
+      throw new Error('x');
   } catch {
-    throw new Error('VERIFY_SITE_ORIGIN must be an origin such as https://verify.example.org');
+    throw new Error(
+      'VERIFY_SITE_ORIGIN must be an HTTPS origin, or HTTP on an explicit loopback host.',
+    );
   }
   return {
     url,

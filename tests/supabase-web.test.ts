@@ -4,10 +4,13 @@
 // under the caller's token. No request leaves the process; nothing here is a real Supabase test.
 import assert from 'node:assert/strict';
 import test, { after, before } from 'node:test';
+import { validateWebConfig } from '../scripts/supabase-web.mjs';
+import { APPROVED_STAGING_PROJECT_REFS } from '../scripts/supabase-identity-tools.mjs';
 import { assertPublishableKey, supabaseWebConfig } from '../src/lib/supabase-config';
 import { toExportTimestamp } from '../src/lib/postgrest';
 import {
   ACCESS_COOKIE,
+  LEGACY_REFRESH_COOKIE,
   REFRESH_COOKIE,
   SupabaseAuth,
   internalEmail,
@@ -24,6 +27,7 @@ const jwt = (claims: Record<string, unknown>) =>
 
 /** Minimal GoTrue + PostgREST fake with a few synthetic accounts and mapping rows. */
 function gateway() {
+  const failures = new Map<string, number>();
   const users: Record<
     string,
     {
@@ -47,8 +51,11 @@ function gateway() {
       factors: [],
     },
   };
-  const tokens = new Map<string, { sub: string; aal: 'aal1' | 'aal2'; exp: number }>();
-  const refreshes = new Map<string, string>();
+  const tokens = new Map<
+    string,
+    { sub: string; aal: 'aal1' | 'aal2'; exp: number; sessionId: string }
+  >();
+  const refreshes = new Map<string, { sub: string; aal: 'aal1' | 'aal2'; sessionId: string }>();
   const log: {
     method: string;
     path: string;
@@ -57,12 +64,21 @@ function gateway() {
     body: unknown;
   }[] = [];
   let counter = 0;
-  const issue = (sub: string, aal: 'aal1' | 'aal2', ttl = 3600) => {
+  const issue = (sub: string, aal: 'aal1' | 'aal2', ttl = 3600, priorSessionId?: string) => {
+    ++counter;
     const exp = Math.floor(Date.now() / 1000) + ttl;
-    const access = jwt({ sub, aal, exp, session_id: `s-${++counter}`, role: 'authenticated' });
+    const sessionId = priorSessionId ?? `s-${counter}`;
+    const access = jwt({
+      sub,
+      aal,
+      exp,
+      session_id: sessionId,
+      nonce: counter,
+      role: 'authenticated',
+    });
     const refresh = `refresh-token-${counter}-synthetic-value`;
-    tokens.set(access, { sub, aal, exp });
-    refreshes.set(refresh, sub);
+    tokens.set(access, { sub, aal, exp, sessionId });
+    refreshes.set(refresh, { sub, aal, sessionId });
     return { access_token: access, refresh_token: refresh, expires_in: ttl, user: { id: sub } };
   };
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
@@ -86,6 +102,8 @@ function gateway() {
         status,
         headers: { 'Content-Type': 'application/json' },
       });
+    const failure = failures.get(url.pathname + url.search);
+    if (failure) return respond(failure, { message: 'Synthetic service failure' });
     if (url.pathname === '/auth/v1/token' && url.searchParams.get('grant_type') === 'password') {
       const u = users[body.email];
       if (!u || u.password !== body.password)
@@ -99,10 +117,10 @@ function gateway() {
       url.pathname === '/auth/v1/token' &&
       url.searchParams.get('grant_type') === 'refresh_token'
     ) {
-      const sub = refreshes.get(body.refresh_token);
-      if (!sub) return respond(400, { error: 'invalid_grant' });
+      const prior = refreshes.get(body.refresh_token);
+      if (!prior) return respond(400, { error: 'invalid_grant' });
       refreshes.delete(body.refresh_token);
-      return respond(200, issue(sub, 'aal1'));
+      return respond(200, issue(prior.sub, prior.aal, 3600, prior.sessionId));
     }
     if (url.pathname === '/auth/v1/user') {
       if (!session || session.exp < Date.now() / 1000)
@@ -115,10 +133,15 @@ function gateway() {
       });
     }
     if (url.pathname === '/auth/v1/logout') {
-      // scope=global: every session and refresh token of the user is revoked, as Supabase does.
+      if (!session || session.exp < Date.now() / 1000) return respond(401, {});
+      // Revocation assertions use refresh tokens. The fake also removes access tokens for its
+      // route checks; real Supabase access JWTs may remain valid until their expiry.
       if (session) {
-        for (const [t, v] of tokens) if (v.sub === session.sub) tokens.delete(t);
-        for (const [r, sub] of refreshes) if (sub === session.sub) refreshes.delete(r);
+        const matches = (v: { sub: string; sessionId: string }) =>
+          v.sub === session.sub &&
+          (url.searchParams.get('scope') === 'global' || v.sessionId === session.sessionId);
+        for (const [t, v] of tokens) if (matches(v)) tokens.delete(t);
+        for (const [r, v] of refreshes) if (matches(v)) refreshes.delete(r);
       }
       return new Response(null, { status: 204 });
     }
@@ -200,7 +223,7 @@ function gateway() {
     }
     return respond(404, {});
   }) as unknown as typeof fetch;
-  return { fetchImpl, log, users, tokens };
+  return { fetchImpl, log, users, tokens, refreshes, failures, issue };
 }
 
 const env = {
@@ -230,6 +253,49 @@ test('web configuration accepts only the publishable (or legacy anon) key and a 
     () => supabaseWebConfig({ ...env, VERIFY_SITE_ORIGIN: 'https://x.y/path' }),
     /VERIFY_SITE_ORIGIN/,
   );
+});
+
+test('hosted origins require HTTPS and the launcher independently limits its staging project', () => {
+  const approved = APPROVED_STAGING_PROJECT_REFS[0];
+  const config = {
+    project: {
+      environment: 'staging',
+      stagingProjectRef: approved,
+      projectUrl: `https://${approved}.supabase.co`,
+    },
+    publishableKey: PUB,
+    accountDomainRef: approved,
+    siteOrigin: 'https://synthetic.invalid',
+  };
+  assert.deepEqual(validateWebConfig(config), []);
+  assert.ok(
+    validateWebConfig({
+      ...config,
+      project: { ...config.project, stagingProjectRef: REF, projectUrl: URL_ },
+    }).length > 0,
+    'calling an arbitrary project staging is not approval to use it',
+  );
+  for (const siteOrigin of [
+    'http://synthetic.invalid',
+    'http://localhost.synthetic.invalid',
+    'http://192.168.1.5:3300',
+    'ftp://synthetic.invalid',
+  ]) {
+    assert.throws(() => supabaseWebConfig({ ...env, VERIFY_SITE_ORIGIN: siteOrigin }));
+    assert.ok(validateWebConfig({ ...config, siteOrigin }).length > 0, siteOrigin);
+  }
+  for (const siteOrigin of [
+    'http://localhost:3300',
+    'http://127.0.0.1:3300',
+    'http://[::1]:3300',
+    'https://synthetic.invalid',
+  ]) {
+    assert.equal(
+      supabaseWebConfig({ ...env, VERIFY_SITE_ORIGIN: siteOrigin }).siteOrigin,
+      siteOrigin,
+    );
+    assert.deepEqual(validateWebConfig({ ...config, siteOrigin }), []);
+  }
 });
 
 test('timestamps from PostgREST are normalised to the export contract', () => {
@@ -283,7 +349,7 @@ test('sign-in maps the username to the internal address, verifies tokens with Au
   );
   assert.match(
     cookies[1],
-    new RegExp(`^${REFRESH_COOKIE}=.*HttpOnly; Path=/api/session; SameSite=Strict; Max-Age=`),
+    new RegExp(`^${REFRESH_COOKIE}=.*HttpOnly; Path=/api; SameSite=Strict; Max-Age=`),
   );
   assert.ok(!cookies[0].includes('Secure'));
   assert.ok(sessionCookieHeaders(session, true)[0].includes('; Secure'));
@@ -353,6 +419,43 @@ test('TOTP enrolment and verification raise the session to aal2 through Auth', a
   const verified = await auth.verify(upgraded.accessToken);
   assert.equal(verified.aal, 'aal2');
   assert.equal(verified.verifiedFactors.length, 1);
+});
+
+test('local sign-out preserves other sessions and simultaneous refresh calls share one exchange', async () => {
+  const fake = gateway();
+  const auth = new SupabaseAuth(supabaseWebConfig(env), fake.fetchImpl);
+  const first = await auth.signIn('syn-reviewer-1', 'pw-reviewer-1-synthetic');
+  const second = await auth.signIn('syn-reviewer-1', 'pw-reviewer-1-synthetic');
+  await auth.signOut(first.accessToken, 'local');
+  assert.equal(fake.refreshes.has(first.refreshToken), false);
+  assert.equal(fake.refreshes.has(second.refreshToken), true);
+  const refreshed = await Promise.all([
+    auth.refresh(second.refreshToken),
+    auth.refresh(second.refreshToken),
+  ]);
+  assert.deepEqual(refreshed[0], refreshed[1]);
+  assert.equal(
+    fake.log.filter((l) => l.path === '/auth/v1/token?grant_type=refresh_token').length,
+    1,
+  );
+});
+
+test('Auth outages are retryable and never expose upstream network details', async () => {
+  const auth = new SupabaseAuth(supabaseWebConfig(env), (async () => {
+    throw new Error('Synthetic internal network detail that must not reach a browser');
+  }) as typeof fetch);
+  for (const action of [
+    () => auth.verify('synthetic-access-token'),
+    () => auth.refresh('synthetic-refresh-token'),
+    () => auth.signOut('synthetic-access-token'),
+  ]) {
+    await assert.rejects(action(), (error: unknown) => {
+      const e = error as { status: number; message: string };
+      assert.equal(e.status, 502);
+      assert.doesNotMatch(e.message, /internal network detail/);
+      return true;
+    });
+  }
 });
 
 // ---- route handler in Supabase mode --------------------------------------------------------------
@@ -523,4 +626,204 @@ test('routes in Supabase mode: sign-in sets cookies, session reports role and aa
   assert.ok(out.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));
   const after = await GET(req('/api/session', { cookie: aal2Cookies }));
   assert.equal(((await after.json()) as { user: unknown }).user, null);
+});
+
+test('refresh-only logout revokes every user refresh token before clearing cookies', async () => {
+  const { POST, DELETE } = await import('../src/app/api/[...path]/route');
+  const login = () =>
+    POST(
+      req('/api/session', {
+        method: 'POST',
+        body: JSON.stringify({ username: 'syn-reviewer-1', password: 'pw-reviewer-1-synthetic' }),
+      }),
+    );
+  const first = readSessionCookies(req('/api/session', { cookie: cookieJar(await login()) }));
+  const second = readSessionCookies(req('/api/session', { cookie: cookieJar(await login()) }));
+  const out = await DELETE(
+    req('/api/session', {
+      method: 'DELETE',
+      cookie: `${REFRESH_COOKIE}=${first.refresh}`,
+    }),
+  );
+  assert.equal(out.status, 200);
+  assert.equal(g.refreshes.has(first.refresh!), false);
+  assert.equal(g.refreshes.has(second.refresh!), false, 'the other session is revoked too');
+  assert.ok(out.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));
+});
+
+test('logout reports an Auth outage and retains rotated cookies for a retry', async () => {
+  const { POST, DELETE } = await import('../src/app/api/[...path]/route');
+  const signedIn = await POST(
+    req('/api/session', {
+      method: 'POST',
+      body: JSON.stringify({ username: 'syn-reviewer-1', password: 'pw-reviewer-1-synthetic' }),
+    }),
+  );
+  const old = readSessionCookies(req('/api/session', { cookie: cookieJar(signedIn) }));
+  g.failures.set('/auth/v1/logout?scope=global', 503);
+  try {
+    const out = await DELETE(
+      req('/api/session', {
+        method: 'DELETE',
+        cookie: `${REFRESH_COOKIE}=${old.refresh}`,
+      }),
+    );
+    assert.equal(out.status, 502);
+    assert.equal(((await out.json()) as { ok?: boolean }).ok, undefined);
+    const next = readSessionCookies(req('/api/session', { cookie: cookieJar(out) }));
+    assert.ok(
+      next.refresh && g.refreshes.has(next.refresh),
+      'the rotated refresh survives the error',
+    );
+    g.failures.delete('/auth/v1/logout?scope=global');
+    const retry = await DELETE(req('/api/session', { method: 'DELETE', cookie: cookieJar(out) }));
+    assert.equal(retry.status, 200);
+    assert.equal(g.refreshes.has(next.refresh), false);
+  } finally {
+    g.failures.delete('/auth/v1/logout?scope=global');
+  }
+});
+
+test('protected API activity renews an expired session and preserves rotation on action errors', async () => {
+  const { GET, POST } = await import('../src/app/api/[...path]/route');
+  const raw = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1', -1);
+  const cookies = sessionCookieHeaders(
+    {
+      accessToken: raw.access_token,
+      refreshToken: raw.refresh_token,
+      expiresAt: Math.floor(Date.now() / 1000) - 1,
+    },
+    false,
+  );
+  const cookieFor = (path: string) =>
+    cookies
+      .filter((c) => {
+        const scope = /; Path=([^;]+)/.exec(c)?.[1] ?? '/';
+        return path === scope || path.startsWith(scope.endsWith('/') ? scope : `${scope}/`);
+      })
+      .map((c) => c.split(';')[0])
+      .join('; ');
+  const refreshed = await GET(req('/api/mc/workspace', { cookie: cookieFor('/api/mc/workspace') }));
+  assert.equal(refreshed.status, 200);
+  assert.ok(
+    cookieJar(refreshed).includes(REFRESH_COOKIE),
+    'normal API requests can renew the session',
+  );
+  const raw2 = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1', -1);
+  const refused = await POST(
+    req('/api/mc/adjudicate', {
+      method: 'POST',
+      cookie: `${REFRESH_COOKIE}=${raw2.refresh_token}`,
+      body: '{}',
+    }),
+  );
+  assert.equal(refused.status, 403);
+  const rotated = readSessionCookies(req('/api/session', { cookie: cookieJar(refused) }));
+  assert.ok(
+    rotated.refresh && g.refreshes.has(rotated.refresh),
+    'authorization errors retain the refresh rotation',
+  );
+});
+
+test('a transient refresh failure does not clear the session or masquerade as sign-out', async () => {
+  const { GET } = await import('../src/app/api/[...path]/route');
+  const raw = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1');
+  const cookie = `${REFRESH_COOKIE}=${raw.refresh_token}`;
+  g.failures.set('/auth/v1/token?grant_type=refresh_token', 503);
+  try {
+    const response = await GET(req('/api/session', { cookie }));
+    assert.equal(response.status, 502);
+    assert.deepEqual(response.headers.getSetCookie(), []);
+    assert.ok(g.refreshes.has(raw.refresh_token));
+  } finally {
+    g.failures.delete('/auth/v1/token?grant_type=refresh_token');
+  }
+  assert.equal((await GET(req('/api/mc/workspace', { cookie }))).status, 200);
+});
+
+test('legacy refresh cookies migrate at startup and cannot shadow the new API cookie', async () => {
+  const { GET } = await import('../src/app/api/[...path]/route');
+  const raw = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1');
+  const oldCookie = `${ACCESS_COOKIE}=${raw.access_token}; ${LEGACY_REFRESH_COOKIE}=${raw.refresh_token}`;
+  const session = await GET(req('/api/session', { cookie: oldCookie }));
+  assert.equal(session.status, 200);
+  const headers = session.headers.getSetCookie();
+  assert.ok(
+    headers.some(
+      (c) => c.startsWith(`${REFRESH_COOKIE}=${raw.refresh_token};`) && c.includes('Path=/api;'),
+    ),
+  );
+  assert.ok(
+    headers.some(
+      (c) =>
+        c.startsWith(`${LEGACY_REFRESH_COOKIE}=;`) &&
+        c.includes('Path=/api/session;') &&
+        c.includes('Max-Age=0'),
+    ),
+  );
+  for (const pairs of [
+    [`${REFRESH_COOKIE}=${raw.refresh_token}`, `${LEGACY_REFRESH_COOKIE}=stale-legacy-token`],
+    [`${LEGACY_REFRESH_COOKIE}=stale-legacy-token`, `${REFRESH_COOKIE}=${raw.refresh_token}`],
+  ])
+    assert.equal(
+      readSessionCookies(req('/api/session', { cookie: pairs.join('; ') })).refresh,
+      raw.refresh_token,
+    );
+});
+
+test('expired-access logout uses the legacy refresh and rejects a definitely revoked refresh', async () => {
+  const { DELETE, GET } = await import('../src/app/api/[...path]/route');
+  const raw = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1', -1);
+  const out = await DELETE(
+    req('/api/session', {
+      method: 'DELETE',
+      cookie: `${ACCESS_COOKIE}=${raw.access_token}; ${LEGACY_REFRESH_COOKIE}=${raw.refresh_token}`,
+    }),
+  );
+  assert.equal(out.status, 200);
+  assert.equal(g.refreshes.has(raw.refresh_token), false);
+  const invalid = await GET(
+    req('/api/session', { cookie: `${REFRESH_COOKIE}=definitely-revoked-token` }),
+  );
+  assert.equal(invalid.status, 200);
+  assert.equal(((await invalid.json()) as { user: unknown }).user, null);
+  assert.ok(invalid.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));
+});
+
+test('a refreshed session survives identity-service and data-service failures', async () => {
+  const { GET } = await import('../src/app/api/[...path]/route');
+  for (const path of ['/auth/v1/user', '/rest/v1/rpc/rpc_whoami']) {
+    const raw = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1');
+    g.failures.set(path, 503);
+    try {
+      const failed = await GET(
+        req('/api/mc/workspace', { cookie: `${REFRESH_COOKIE}=${raw.refresh_token}` }),
+      );
+      assert.ok(failed.status >= 500);
+      const rotated = readSessionCookies(req('/api/session', { cookie: cookieJar(failed) }));
+      assert.ok(rotated.refresh && g.refreshes.has(rotated.refresh));
+      g.failures.delete(path);
+      const retry = await GET(req('/api/mc/workspace', { cookie: cookieJar(failed) }));
+      assert.equal(retry.status, 200);
+    } finally {
+      g.failures.delete(path);
+    }
+  }
+});
+
+test('logout clears already-invalid local credentials without claiming global revocation', async () => {
+  const { DELETE } = await import('../src/app/api/[...path]/route');
+  const expired = g.issue(g.users[internalEmail('syn-reviewer-1', REF)].id, 'aal1', -1);
+  g.refreshes.delete(expired.refresh_token);
+  for (const cookie of [
+    `${ACCESS_COOKIE}=${expired.access_token}`,
+    `${REFRESH_COOKIE}=${expired.refresh_token}`,
+    `${ACCESS_COOKIE}=${expired.access_token}; ${REFRESH_COOKIE}=${expired.refresh_token}`,
+  ]) {
+    const out = await DELETE(req('/api/session', { method: 'DELETE', cookie }));
+    assert.equal(out.status, 200, 'Sign out must let the browser leave its stale workspace');
+    assert.deepEqual(await out.json(), { ok: true, revocation: 'credentials_unavailable' });
+    assert.equal(out.headers.getSetCookie().length, 3);
+    assert.ok(out.headers.getSetCookie().every((c) => c.includes('Max-Age=0')));
+  }
 });

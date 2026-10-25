@@ -2,6 +2,7 @@
 // Same DTO contract as src/server/mapconf.ts; every read goes through the mc_ tables and views
 // under the caller's row-level security and every write through an rpc_mc_* function, so the
 // database enforces role separation exactly as on the local path. No service-role key exists here.
+import { isDeepStrictEqual } from 'node:util';
 import { PostgrestClient, toExportTimestamp } from '../lib/postgrest';
 import { buildMcBundle, type Row } from '../lib/mapconf-export';
 import {
@@ -403,14 +404,28 @@ export async function mcAdminAction(
       });
       break;
     case 'import-synthetic': {
-      const existing = await c.select<{ case_id: string }>(
-        'mc_cases',
-        'select=case_id&record_category=neq.EVALUATION&limit=1',
+      const fixtures = [...MC_SYNTHETIC_PILOT_CASES, ...MC_SYNTHETIC_TRAINING_CASES].map(
+        casePayload,
       );
-      if (existing.length)
-        throw new ServiceError(409, 'The synthetic mappings are already imported.');
-      for (const x of [...MC_SYNTHETIC_PILOT_CASES, ...MC_SYNTHETIC_TRAINING_CASES])
-        await c.rpc('rpc_mc_import_case', { p: casePayload(x) });
+      const existing = await c.select<
+        ReturnType<typeof casePayload> & { evidence_version: number }
+      >(
+        'mc_cases',
+        `select=${Object.keys(fixtures[0]).join(',')},evidence_version&order=case_id&limit=${fixtures.length + 1}`,
+      );
+      // Each RPC commits independently. Verify the entire saved prefix before resuming; never
+      // overwrite an existing packet or mistake a different campaign for this synthetic fixture.
+      for (const saved of existing) {
+        const expected = fixtures.find((fixture) => fixture.case_id === saved.case_id);
+        if (!expected || !isDeepStrictEqual(saved, { ...expected, evidence_version: 1 }))
+          throw new ServiceError(
+            409,
+            'The saved mappings differ from this synthetic pilot. Review the existing campaign before importing.',
+          );
+      }
+      const existingIds = new Set(existing.map((row) => row.case_id));
+      for (const payload of fixtures)
+        if (!existingIds.has(payload.case_id)) await c.rpc('rpc_mc_import_case', { p: payload });
       break;
     }
     case 'import-evaluation':
@@ -419,35 +434,22 @@ export async function mcAdminAction(
         'Evaluation import is disabled pending the approved condition set, sampling frame, frozen rubric and analysis specification.',
       );
     case 'assign': {
-      // Pilot test accounts (is_pilot_test_account) are enrolled with PILOT scope on first use; the
-      // two lowest pseudonymous ids take slots 1 and 2 (deterministic across runs).
+      // Retain any existing slot bindings when resuming an interrupted series of RPCs. New slots
+      // take the earliest active pilot accounts (with a stable user-id tie-breaker).
       const candidates = await c.select<{ user_id: string }>(
         'users',
-        'select=user_id&role=eq.REVIEWER&is_pilot_test_account=is.true&is_active=is.true&order=created_at',
+        'select=user_id&role=eq.REVIEWER&is_pilot_test_account=is.true&is_active=is.true&order=created_at,user_id',
       );
+      const candidateIds = [...new Set(candidates.map((candidate) => candidate.user_id))];
+      if (candidateIds.length < 2)
+        throw new ServiceError(
+          409,
+          'Two active pilot test accounts are required before assignment.',
+        );
       const enrolled = await c.select<{ reviewer_pseudo_id: string; user_id: string }>(
         'reviewers',
         'select=reviewer_pseudo_id,user_id&mode_scope=eq.PILOT&withdrawn_at=is.null',
       );
-      for (const u of candidates.slice(0, 2))
-        if (!enrolled.some((r) => r.user_id === u.user_id))
-          await c.rpc('rpc_enroll_reviewer', {
-            p_user_id: u.user_id,
-            p_mode_scope: 'PILOT',
-            p_qualifications: 'synthetic pilot test account',
-          });
-      const pilots = (
-        await c.select<{ reviewer_pseudo_id: string; user_id: string }>(
-          'reviewers',
-          'select=reviewer_pseudo_id,user_id&mode_scope=eq.PILOT&withdrawn_at=is.null',
-        )
-      ).sort(
-        (a, b) =>
-          candidates.findIndex((u) => u.user_id === a.user_id) -
-          candidates.findIndex((u) => u.user_id === b.user_id),
-      );
-      if (pilots.length < 2)
-        throw new ServiceError(409, 'Two enrolled pilot reviewers are required before assignment.');
       const ids = (
         await c.select<{ case_id: string }>(
           'mc_cases',
@@ -455,11 +457,51 @@ export async function mcAdminAction(
         )
       ).map((r) => r.case_id);
       if (!ids.length) throw new ServiceError(409, 'No synthetic mappings to assign.');
-      const assigned = await c.select<{ case_id: string; reviewer_pseudo_id: string }>(
-        'mc_assignments',
-        'select=case_id,reviewer_pseudo_id',
-      );
-      for (const [index, pilot] of pilots.slice(0, 2).entries()) {
+      const assigned = await c.select<{
+        case_id: string;
+        reviewer_pseudo_id: string;
+        reviewer_slot: number;
+        randomization_seed: number;
+      }>('mc_assignments', 'select=case_id,reviewer_pseudo_id,reviewer_slot,randomization_seed');
+      const slotUsers: (string | undefined)[] = [undefined, undefined];
+      for (const row of assigned) {
+        const reviewer = enrolled.find((r) => r.reviewer_pseudo_id === row.reviewer_pseudo_id);
+        const slot = row.reviewer_slot - 1;
+        if (
+          !reviewer ||
+          !candidateIds.includes(reviewer.user_id) ||
+          !ids.includes(row.case_id) ||
+          (slot !== 0 && slot !== 1) ||
+          Number(row.randomization_seed) !== input.seed ||
+          (slotUsers[slot] !== undefined && slotUsers[slot] !== reviewer.user_id) ||
+          slotUsers[1 - slot] === reviewer.user_id
+        )
+          throw new ServiceError(
+            409,
+            'Existing assignments do not match the active pilot reviewers and seed. Review the campaign before resuming.',
+          );
+        slotUsers[slot] = reviewer.user_id;
+      }
+      for (let slot = 0; slot < 2; slot++)
+        slotUsers[slot] ??= candidateIds.find((userId) => !slotUsers.includes(userId));
+      for (const userId of slotUsers)
+        if (!enrolled.some((r) => r.user_id === userId))
+          await c.rpc('rpc_enroll_reviewer', {
+            p_user_id: userId,
+            p_mode_scope: 'PILOT',
+            p_qualifications: 'synthetic pilot test account',
+          });
+      const eligible = (
+        await c.select<{ reviewer_pseudo_id: string; user_id: string }>(
+          'reviewers',
+          'select=reviewer_pseudo_id,user_id&mode_scope=eq.PILOT&withdrawn_at=is.null',
+        )
+      ).filter((r) => candidateIds.includes(r.user_id));
+      const pilots = slotUsers.map((userId) => eligible.find((r) => r.user_id === userId));
+      if (!pilots[0] || !pilots[1] || pilots[0].reviewer_pseudo_id === pilots[1].reviewer_pseudo_id)
+        throw new ServiceError(409, 'Two enrolled pilot reviewers are required before assignment.');
+      for (const [index, pilot] of pilots.entries()) {
+        if (!pilot) throw new ServiceError(409, 'A pilot reviewer is no longer available.');
         const remaining = ids.filter(
           (id) =>
             !assigned.some(

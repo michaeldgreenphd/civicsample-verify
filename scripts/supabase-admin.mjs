@@ -153,26 +153,30 @@ class CredentialsFile {
   }
 }
 
-async function provisionAccounts(client, config, credentials, result) {
+/** Called only after main's explicit apply guards; exported for synthetic recovery tests. */
+export async function provisionAccounts(client, config, credentials, result) {
   const ref = config.project.stagingProjectRef;
   for (const account of config.accounts) {
     const email = internalEmail(account.username, ref);
     const existing = await client.findAuthUserByEmail(email);
     if (existing) {
-      // Reconcile a partial earlier run: an Auth user without its application row is linked now;
-      // a linked one is left alone (its password is reset only through reset-password).
+      // Reconcile a partial earlier run without replacing credentials. A linked identity must
+      // match every immutable approved field; only its reviewed display name may be updated.
       const linked = await client.findAppUserByAuthUid(existing.id);
       if (linked) {
-        if (linked.role !== account.role)
-          throw new SupabaseIdentityError(
-            'ROLE_CONFLICT',
-            `Account ${account.username} exists with another role; refusing to continue.`,
-          );
+        const { userId, displayNameUpdated } = await client.reconcileLinkedAppUser(
+          linked,
+          existing.id,
+          email,
+          account.displayName,
+          account.role,
+          account.isPilotTestAccount === true,
+        );
         result.actions.push({
           username: account.username,
-          action: 'EXISTS_LINKED',
+          action: displayNameUpdated ? 'UPDATED_DISPLAY_NAME' : 'EXISTS_LINKED',
           authUserId: existing.id,
-          appUserId: linked.user_id,
+          appUserId: userId,
         });
       } else {
         const { userId } = await client.upsertAppUser(

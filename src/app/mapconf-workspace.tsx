@@ -23,6 +23,7 @@ import {
   type McWorkspace,
 } from '@/lib/mapconf-types';
 import type { Actor } from '@/lib/types';
+import { mcPreparation } from '@/lib/mapconf-preparation';
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -630,6 +631,9 @@ function McInvestigator({
       await onRefresh();
     } catch (e) {
       setError((e as Error).message);
+      // Hosted preparation consists of separate transactions. A failed response can still leave
+      // saved progress, so refresh the counts while retaining the actionable error for retry.
+      await onRefresh().catch(() => undefined);
     } finally {
       setBusy(false);
     }
@@ -639,6 +643,7 @@ function McInvestigator({
     bundle !== null && workspace.exports.some((x) => x.manifestSha256 === bundle.manifestSha256);
   const c = workspace.campaign;
   const phase = c?.phase ?? null;
+  const preparation = mcPreparation(workspace);
   return (
     <div>
       {error && (
@@ -690,24 +695,31 @@ function McInvestigator({
             <div className="step">
               <h3>Prepare the pilot</h3>
               <p>
-                {workspace.completion.length > 0
+                {preparation.assigned
                   ? 'Every mapping is assigned to both pilot reviewers.'
-                  : workspace.counts.syntheticPilot > 0
-                    ? 'The synthetic mappings are imported. Assign each one to the two pilot reviewers.'
-                    : 'Import the synthetic mappings, then assign each one to the two pilot reviewers.'}{' '}
+                  : !preparation.imported
+                    ? preparation.hasImported
+                      ? 'The import is incomplete. Resume it to add the missing mappings and training examples.'
+                      : 'Import the synthetic mappings and training examples, then assign each mapping to both pilot reviewers.'
+                    : preparation.hasAssignments
+                      ? 'Some mappings still need assigning. Resume assignment to complete both reviewers’ queues.'
+                      : 'The synthetic mappings are imported. Assign each one to the two pilot reviewers.'}{' '}
                 Evaluation import opens once the condition list, sampling frame and rubric are
                 approved.
               </p>
               <div className="toolbar">
-                {workspace.counts.syntheticPilot === 0 && (
+                {!preparation.imported && (
                   <button
                     className="button secondary"
+                    disabled={busy}
                     onClick={() => act({ action: 'import-synthetic' })}
                   >
-                    Import synthetic mappings
+                    {preparation.hasImported
+                      ? 'Resume synthetic import'
+                      : 'Import synthetic mappings'}
                   </button>
                 )}
-                {workspace.completion.length === 0 && (
+                {!preparation.assigned && (
                   <>
                     <label className="field inline">
                       <span className="form-label">Seed</span>
@@ -715,15 +727,23 @@ function McInvestigator({
                         type="number"
                         value={seed}
                         min={1}
+                        disabled={busy}
                         onChange={(e) => setSeed(Number(e.target.value))}
                       />
+                      {preparation.hasAssignments && (
+                        <span className="form-hint">
+                          Use the same seed as the original assignment.
+                        </span>
+                      )}
                     </label>
                     <button
                       className="button secondary"
-                      disabled={workspace.counts.syntheticPilot === 0}
+                      disabled={busy || !preparation.imported}
                       onClick={() => act({ action: 'assign', seed })}
                     >
-                      Assign to the two pilot reviewers
+                      {preparation.hasAssignments
+                        ? 'Resume reviewer assignment'
+                        : 'Assign to the two pilot reviewers'}
                     </button>
                   </>
                 )}

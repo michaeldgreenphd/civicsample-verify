@@ -85,7 +85,12 @@ async function session(rt: Runtime, username: string) {
     appGitSha: '0'.repeat(40),
     syntheticDatabase: true,
   };
-  return { ctx, client, token: s.accessToken, signOut: () => rt.auth.signOut(s.accessToken) };
+  return {
+    ctx,
+    client,
+    token: s.accessToken,
+    signOut: () => rt.auth.signOut(s.accessToken, 'local'),
+  };
 }
 
 test(
