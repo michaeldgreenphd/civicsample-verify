@@ -112,7 +112,7 @@ export function mu7Csv(columns: readonly string[], rows: Mu7Row[]): string {
   if (!rows.length) return `${columns.join(',')}\n`;
   const esc = (v: unknown) => {
     const s = mu7CellText(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return (
     [columns.join(','), ...rows.map((r) => columns.map((c) => esc(r[c])).join(','))].join('\n') +

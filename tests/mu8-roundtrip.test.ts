@@ -12,6 +12,7 @@ import { readMu7Bundle } from '../src/server/mu7-core';
 import { mu7SqlData } from '../src/server/mu7';
 import { MU7_SYNTHETIC_TRAINING } from '../src/lib/mu7-synthetic';
 import { mu7RegistrationPayload } from '../src/lib/mu7-export';
+import { verifyMu7Bundle } from '../scripts/verify-mu7-bundle';
 import {
   ATT,
   signedOffPilot,
@@ -303,7 +304,10 @@ async function runScenario(
               ? { diabetes_subtype: i === 0 ? 'TYPE_2_STATED' : 'TYPE_2_NOT_STATED' }
               : {}),
             ...(answer === 'DISAGREE'
-              ? { reason_code: 'NOT_THE_CONDITION_STUDIED', note: 'Synthetic disagreement only.' }
+              ? {
+                  reason_code: 'NOT_THE_CONDITION_STUDIED',
+                  note: 'Synthetic disagreement only.\rAdditional fictional context.',
+                }
               : {}),
             uncertain: index === 0,
           }),
@@ -619,12 +623,16 @@ for (const overlap of ['ALLOW', 'ONE_PER_TRIAL'] as const)
     `v8.1 bound probability and subtype database-to-analysis roundtrip: ${overlap}`,
     { timeout: 120_000 },
     async () => {
-      const { bundle } = await runScenario(overlap, undefined, true);
-      if (!python) return;
+      const { bundle, pilot } = await runScenario(overlap, undefined, true);
       const dir = mkdtempSync(join(tmpdir(), 'verify-v81-'));
       try {
         const path = join(dir, 'bundle');
         fileWrite(bundle, path);
+        const pilotPath = join(dir, 'pilot');
+        fileWrite(pilot, pilotPath);
+        assert.deepEqual(verifyMu7Bundle(path, bundle.manifestSha256).problems, []);
+        assert.deepEqual(verifyMu7Bundle(pilotPath, pilot.manifestSha256).problems, []);
+        if (!python) return;
         const args = [
           'analysis/v8/performance_analysis_v8.py',
           '--bundle',
