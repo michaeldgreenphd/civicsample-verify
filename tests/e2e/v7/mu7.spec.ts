@@ -273,7 +273,13 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     ).toHaveJSProperty('disabled', true);
     // Saving on mobile persists the answer; changing the mobile picker loads the right case.
     await aPage.getByLabel(/not sure/).uncheck();
-    await aPage.getByRole('button', { name: 'Save answer' }).click();
+    await aPage.getByRole('button', { name: 'Save and next', exact: true }).click();
+    await expect(aPage.getByTestId('mu7-brief-title')).toBeFocused();
+    await expect(aPage.getByTestId('mu7-unit-id')).not.toHaveText(disagreeUnit.unitId);
+    await expect(
+      aPage.getByRole('radiogroup', { name: 'Answer', exact: true }).locator('input:checked'),
+    ).toHaveCount(0);
+    await aPage.getByLabel('Choose a practice case').selectOption(disagreeUnit.assignmentId);
     await expect(aPage.getByTestId('mu7-own-answer')).toContainText(
       'Your answer on record: Disagree',
     );

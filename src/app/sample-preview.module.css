@@ -45,6 +45,9 @@
   gap: 1rem;
   padding-block: 0.65rem;
 }
+.answers > p + div {
+  margin-top: 1rem;
+}
 .answers dt {
   font-weight: 650;
 }
