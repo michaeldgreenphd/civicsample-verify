@@ -165,9 +165,9 @@ function Packet({ packet }: { packet: Tlv5TrialPacket }) {
         <dd>{t.brief_title}</dd>
         <dt>Official title</dt>
         <dd>{t.official_title}</dd>
-        <dt>Registered conditions</dt>
+        <dt>Conditions entered by the study team</dt>
         <dd>{t.conditions_registered.join('; ')}</dd>
-        <dt>Condition MeSH headings</dt>
+        <dt>Standardized MeSH terms from ClinicalTrials.gov</dt>
         <dd>{t.condition_mesh_headings.join('; ')}</dd>
         <dt>Brief summary</dt>
         <dd className="evidence-text">{t.brief_summary}</dd>

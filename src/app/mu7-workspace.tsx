@@ -221,11 +221,11 @@ function Packet({
         )}
         <dl className="metadata-list">
           <div>
-            <dt>Registered conditions</dt>
+            <dt>Conditions entered by the study team</dt>
             <dd>{t.conditions_registered?.join('; ') || 'None registered'}</dd>
           </div>
           <div>
-            <dt>Condition MeSH headings</dt>
+            <dt>Standardized MeSH terms from ClinicalTrials.gov</dt>
             <dd>{t.condition_mesh_headings?.join('; ') || 'None'}</dd>
           </div>
           <div>
