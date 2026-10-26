@@ -1,0 +1,60 @@
+name: Private exploratory label pilot
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: 'dry-run plans; preflight counts free; run pays for exploratory label proposals'
+        type: choice
+        options: [dry-run, preflight, run]
+        default: dry-run
+        required: true
+      usd_cap:
+        description: 'Pilot sub-cap, at most 20 USD; prior comparison costs also count against the overall 95 USD ceiling'
+        type: string
+        default: '20'
+        required: true
+      approval_ref:
+        description: 'Non-sensitive spending authorization reference (required for run)'
+        type: string
+        required: false
+permissions:
+  contents: read
+# Same group as the original comparison: neither workflow can race the private ledger.
+concurrency:
+  group: private-ai-mapping-review
+  cancel-in-progress: false
+jobs:
+  propose:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: ai-mapping-review
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check both runners offline
+        run: python -m unittest discover -s scripts/ai-mapping-review -p 'test_*.py' -q
+      - name: Run only the requested operation
+        env:
+          REQUESTED_COMMAND: ${{ inputs.command }}
+          REQUESTED_CAP: ${{ inputs.usd_cap }}
+          REQUESTED_APPROVAL: ${{ inputs.approval_ref }}
+          ANTHROPIC_API_KEY: ${{ (inputs.command == 'preflight' || inputs.command == 'run') && secrets.ANTHROPIC_API_KEY || '' }}
+          PRIVATE_STORE_REPO: ${{ vars.PRIVATE_STORE_REPO }}
+          PRIVATE_STORE_TOKEN: ${{ secrets.PRIVATE_STORE_TOKEN }}
+          AI_LABEL_STORE_REF: ${{ secrets.AI_LABEL_STORE_REF }}
+          AI_LABEL_INPUT_SHA256: ${{ secrets.AI_LABEL_INPUT_SHA256 }}
+        # Fixed status/count/cost output only. No public artifacts, packets or answers.
+        run: |
+          set -eu
+          umask 077
+          case "$REQUESTED_COMMAND" in
+            dry-run) python scripts/ai-mapping-review/label_pilot.py dry-run --private-store ;;
+            preflight) python scripts/ai-mapping-review/label_pilot.py preflight --private-store ;;
+            run) python scripts/ai-mapping-review/label_pilot.py run --private-store --execute-paid --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
+            *) exit 2 ;;
+          esac
