@@ -53,11 +53,46 @@ reported as unknown (`null`), not zero. This inspection authorizes no mutation.
 
 Generate and review a schema plan only after verifying the new destination.
 Account creation is a separate operation: the generic provisioning command
-generates passwords for new identities, so it must not be used unchanged where
-the investigator has requested preservation of existing passwords. Likewise,
-the requested read-only investigator restriction and separate pilot identities
-need their own verified account plan before access is issued. Keep the practice
+generates passwords for new identities unless an explicitly reviewed private
+password source is supplied, as described below. The read-only investigator
+restriction and separate pilot identities need their own verified account plan
+before access is issued. Keep the practice
 deployment connected to its existing database during preparation.
+
+### New-account passwords and restricted investigators
+
+For a new project whose users should keep their existing passwords, provide
+`--credentials-in /absolute/private/account-passwords.json` to **both** `plan`
+and `accounts --apply`. The JSON object contains `projectRef` and an `accounts`
+array; each entry has exactly `username` and `password`. It must name the exact
+destination and contain every configured account once, with no other accounts.
+The entire source is validated before any remote request. Like the admin
+configuration, it must be owner-only, under 64 KiB and outside every Git
+repository, including through symlinks. Never commit it or put it in web-app
+configuration. Passwords need at least 12 characters, at most 128 UTF-8 bytes,
+and no whitespace or control characters.
+
+The plan binds a digest of the validated source, not its plaintext. Changing or
+omitting the source invalidates the reviewed plan. The file is used only for
+new Auth users: a retry links an existing Auth identity without resetting its
+password, even if the supplied password differs. Each new password is written
+to the separate owner-only `--credentials-out` journal before creation, so a
+partial run remains recoverable. The input is not accepted by `reset-password`,
+`lock`, `unlock` or `apply-schema`.
+
+An investigator roster entry can specify `practiceReadOnly: true`. This flag is
+part of the plan and is included in the first application-row insert; the
+account never temporarily receives unrestricted investigator access. Existing
+rows must match the reviewed restriction. Provisioning refuses a mismatch and
+cannot remove or add a restriction on an existing account. A concurrent change
+to the restriction also prevents display-name reconciliation.
+
+This uses the existing `PRACTICE_OBSERVER` role: synthetic practice completion
+and training only, without investigator editing, gate approval, exports or
+formal results. It does not grant a new formal-study observer capability or
+disable MFA for investigators with editing access. The database must include
+migration 0031. Generate a new plan with this tool version; earlier hashes do
+not include the restriction and are deliberately invalidated.
 
 The privileged tool accepts only the staging references recorded in `APPROVED_STAGING_PROJECT_REFS` (`scripts/supabase-identity-tools.mjs`); a configuration naming any other project is refused before any request, whatever it calls itself. Changing that list requires a reviewed commit. Every mutation also needs `VERIFY_SUPABASE_ADMIN_APPLY=1`, `--apply` (never together with `--dry-run`), `--confirm-project <ref>` and `--plan-sha256` of the plan generated for the same configuration; the plan binds every provisioned field (username, internal address, role, a digest of the display name). Credentials are appended to the private file before each remote creation, so a failure after creation never loses a password; a rerun reconciles an Auth user that lacks its application row and never regenerates a delivered password. `apply-schema` plans against the `app_schema_version` markers of every non-repeatable file (schema.sql through the latest migration; the frozen-trial preflight is the only repeatable file), skips applied files, refuses a partially applied, out-of-order or unknown lineage before writing, and refuses a database destination that differs from the reviewed plan. The credentials path is resolved through real paths, so a symlinked directory inside a repository is refused.
 
@@ -79,7 +114,7 @@ local sign-in state without claiming that other sessions were revoked.
 Live verification helpers revoke only the session created by that test.
 
 An authorized `accounts --apply` now checks every linked application's identity,
-role, immutable pilot flag and active state. It may reconcile the reviewed
+role, immutable pilot flag, read-only restriction and active state. It may reconcile the reviewed
 display name only, reporting `UPDATED_DISPLAY_NAME`; it does not reset a password,
 reactivate an account or change its study role. Interrupted Auth creation can be
 resumed without overwriting a different application identity. The plan hashes

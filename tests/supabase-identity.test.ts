@@ -24,10 +24,12 @@ import {
   HOSTED_SCHEMA_FILES,
   internalEmail,
   planSha256,
+  readProvidedCredentials,
   SCHEMA_FILE_MARKERS,
   SupabaseIdentityError,
   validateAdminConfig,
   validateDatabaseDestination,
+  validateProvidedCredentials,
 } from '../scripts/supabase-identity-tools.mjs';
 import { parse, privateOutputPath } from '../scripts/supabase-admin.mjs';
 
@@ -403,6 +405,168 @@ test('apply guards: environment opt-in, typed project reference and the reviewed
     ),
     'PROJECT_NOT_APPROVED',
   );
+});
+
+test('provided passwords and read-only restrictions are bound into the reviewed plan without disclosure', () => {
+  const c = config();
+  const source = {
+    projectRef: APPROVED,
+    accounts: c.accounts.map((a, index) => ({
+      username: a.username,
+      password: `Synthetic-private-password-${index + 42}`,
+    })),
+  };
+  const plan = buildBootstrapPlan(c, root, undefined, undefined, source);
+  const text = JSON.stringify(plan);
+  for (const entry of source.accounts) assert.ok(!text.includes(entry.password));
+  assert.equal(plan.accountCredentials?.mode, 'PROVIDED_FOR_NEW_ACCOUNTS');
+  const guard = (supplied: typeof source | null, candidate = c) =>
+    code(() =>
+      assertApplyAuthorized({
+        env: { VERIFY_SUPABASE_ADMIN_APPLY: '1' },
+        confirmProject: APPROVED,
+        planHash: planSha256(plan),
+        config: candidate,
+        repositoryRoot: root,
+        providedCredentials: supplied,
+      }),
+    );
+  assert.equal(guard(source), null);
+  assert.equal(guard(null), 'PLAN_HASH', 'cannot drop the reviewed password source');
+  const changed = structuredClone(source);
+  changed.accounts[0].password = 'Synthetic-changed-password-42';
+  assert.equal(guard(changed), 'PLAN_HASH');
+  const restricted = config({
+    accounts: c.accounts.map((a) => ({ ...a, practiceReadOnly: a.role === 'INVESTIGATOR' })),
+  });
+  assert.equal(guard(source, restricted), 'PLAN_HASH');
+  const restrictedPlan = buildBootstrapPlan(restricted, root, undefined, undefined, source);
+  assert.equal(restrictedPlan.accounts[0].practiceReadOnly, true);
+  assert.equal(
+    code(() =>
+      validateAdminConfig(
+        config({ accounts: c.accounts.map((a) => ({ ...a, practiceReadOnly: true })) }),
+      ),
+    ),
+    'ROSTER_OBSERVER_FLAG',
+  );
+  assert.equal(
+    code(() =>
+      validateAdminConfig(
+        config({ accounts: c.accounts.map((a) => ({ ...a, practiceReadOnly: 'true' })) }),
+      ),
+    ),
+    'ROSTER_OBSERVER_FLAG',
+  );
+});
+
+test('private password source requires the complete exact roster and refuses malformed input without echoing it', () => {
+  const c = config();
+  const source = {
+    projectRef: APPROVED,
+    accounts: c.accounts.map((a) => ({
+      username: a.username,
+      password: 'Synthetic-private-password-42',
+    })),
+  };
+  assert.equal(validateProvidedCredentials(source, c), source);
+  for (const invalid of [
+    null,
+    { ...source, projectRef: 'elsewhere' },
+    { ...source, extra: true },
+    { ...source, accounts: source.accounts.slice(1) },
+    { ...source, accounts: [...source.accounts, source.accounts[0]] },
+    {
+      ...source,
+      accounts: [
+        ...source.accounts,
+        { username: 'syn-unknown', password: 'Synthetic-private-password-43' },
+      ],
+    },
+    ...[
+      'short',
+      'Synthetic password 42',
+      'Synthetic-password-\u000142',
+      'Synthetic-password-\u007f42',
+      'é'.repeat(65),
+    ].map((password) => ({
+      ...source,
+      accounts: source.accounts.map((a) => ({ ...a, password })),
+    })),
+  ])
+    assert.equal(
+      code(() => validateProvidedCredentials(invalid, c)),
+      'CREDENTIAL_SOURCE',
+    );
+  const secret = 'Synthetic-private-password-42';
+  try {
+    validateProvidedCredentials(
+      { ...source, accounts: [{ username: secret, password: 'bad' }] },
+      c,
+    );
+  } catch (e) {
+    assert.ok(!String(e).includes(secret));
+  }
+});
+
+test('password files are owner-only and outside repositories; the CLI plans without revealing them', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'verify-provided-credentials-'));
+  try {
+    const c = config();
+    const source = {
+      projectRef: APPROVED,
+      accounts: c.accounts.map((a) => ({
+        username: a.username,
+        password: 'Synthetic-private-password-42',
+      })),
+    };
+    const cfg = join(dir, 'admin.json');
+    const input = join(dir, 'credentials.json');
+    writeFileSync(cfg, JSON.stringify(c), { mode: 0o600 });
+    writeFileSync(input, JSON.stringify(source), { mode: 0o600 });
+    assert.deepEqual(readProvidedCredentials(input, root, c), source);
+    chmodSync(input, 0o644);
+    assert.throws(() => readProvidedCredentials(input, root, c));
+    chmodSync(input, 0o600);
+    const dry = spawnSync(
+      process.execPath,
+      [
+        'scripts/supabase-admin.mjs',
+        'accounts',
+        '--config',
+        cfg,
+        '--credentials-in',
+        input,
+        '--dry-run',
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(dry.status, 0, dry.stderr);
+    const report = JSON.parse(dry.stdout);
+    assert.equal(report.mutationsPerformed, false);
+    assert.equal(report.plan.accountCredentials.mode, 'PROVIDED_FOR_NEW_ACCOUNTS');
+    assert.ok(!dry.stdout.includes(source.accounts[0].password));
+    assert.ok(!dry.stdout.includes(serviceKey));
+    const reset = spawnSync(
+      process.execPath,
+      [
+        'scripts/supabase-admin.mjs',
+        'reset-password',
+        '--config',
+        cfg,
+        '--credentials-in',
+        input,
+        '--dry-run',
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.equal(reset.status, 1);
+    assert.match(reset.stderr, /CREDENTIAL_SOURCE_COMMAND/);
+    mkdirSync(join(dir, '.git'));
+    assert.throws(() => readProvidedCredentials(input, root, c));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('CLI parsing refuses --dry-run together with --apply, and output paths resolve symlinked parents', () => {
