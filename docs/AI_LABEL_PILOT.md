@@ -140,3 +140,34 @@ archive. A second recovery is refused.
 After review and merge, dispatch `recover-evidence`, inspect its result, then dispatch
 `run` separately. The resumed run skips the recovered request. Recovery does not
 reset the budget, rewrite the original comparison, or approve any study action.
+
+## Bounded retry of an invalid model response
+
+A completed provider response can still fail the answer contract; for example, it
+may contain only one assessment instead of all twenty. Such a response stays
+`unreconciled` and stops the run. It is never filled in, edited, or counted as a
+completed trial. A later invalid response can be retried **once per model/trial
+request**, without rerunning completed trials or changing the prompt.
+
+After inspecting the failure, dispatch `prepare-retry` (CLI requires
+`--archive-rejected-response`). This operation has no provider key and makes no
+model call. It requires a saved response with a verified model, usage receipt,
+actual charge, reservation and request hash, and reproduces the recorded answer
+validation failure. Missing or uncertain billing, transport failures, a model
+mismatch, a valid answer marked failed, or a second retry of the same request are
+refused. The input, prior comparison, preflight, spending cap and authorization
+reference must still match.
+
+Preparation creates ledger format 1.2 and moves the unchanged failed receipt into
+`rejected_attempts`. Each entry binds the previous ledger hash, its completed
+prefix length, the old format, the source commit and time. Resume reconstructs and
+hash-checks every previous ledger; earlier evidence recovery remains intact.
+Rejected receipts contribute their actual charges to both the $20 pilot sub-cap
+and $95 cumulative ceiling. They never contribute clinical assessments or select
+audit cases. Older runners refuse format 1.2.
+
+Inspect the preparation result, then dispatch `run` separately. It sends the same
+request for the missing answer, validates the new response normally, and preserves
+both receipts and charges. Another invalid response stops again. This is a retry
+for invalid output, not a way to replace a valid classification or select a
+preferred answer. No automatic paid retry is introduced.
