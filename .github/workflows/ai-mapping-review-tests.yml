@@ -5,12 +5,14 @@ on:
       - 'scripts/ai-mapping-review/**'
       - 'tests/ai-mapping-review.test.ts'
       - '.github/workflows/ai-mapping-review*.yml'
+      - '.github/workflows/ai-label-pilot.yml'
   push:
     branches: ['codex/ai-mapping-comparison', main]
     paths:
       - 'scripts/ai-mapping-review/**'
       - 'tests/ai-mapping-review.test.ts'
       - '.github/workflows/ai-mapping-review*.yml'
+      - '.github/workflows/ai-label-pilot.yml'
 permissions:
   contents: read
 jobs:
