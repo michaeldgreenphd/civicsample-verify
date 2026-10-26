@@ -28,6 +28,11 @@ Both models receive the same source evidence and original labels, with no previo
 AI responses or human judgments. The original Sonnet 5 results remain preserved;
 this follow-up does not repeat that arm.
 
+A screen that exhausts its one invalid-output retry can be explicitly recorded as
+missing. Such a trial is also required in the independent audit. Missing output is
+not an assessment, uncertainty flag, or negative membership. This extends audit
+coverage only; packets, prompts, categories and the predetermined controls do not change.
+
 Proposals are research leads, not automatic corrections or clinical validation.
 Opus agreement does not establish accuracy. Audit selection is enriched for problems,
 so its agreement rate cannot be presented as performance across all trials. Report
@@ -171,3 +176,39 @@ request for the missing answer, validates the new response normally, and preserv
 both receipts and charges. Another invalid response stops again. This is a retry
 for invalid output, not a way to replace a valid classification or select a
 preferred answer. No automatic paid retry is introduced.
+
+## Recording an exhausted output as missing
+
+After both attempts return a known, billed response that fails the output contract,
+an operator may dispatch `record-missing` (CLI requires `--record-missing-output`).
+This operation makes no provider request and has no API key. It verifies the prior
+rejection, the unchanged request, both usage receipts, the remaining caps, and the
+second response's reproducible validation failure. It refuses first-attempt failures,
+unknown charges or transport outcomes, wrong models, valid answers marked failed,
+and repeated closure. The one-retry limit and all evidence validators stay intact.
+
+Ledger format 1.3 leaves the second failed receipt **unchanged** in `records`, without
+an `answer`. A `closed_failures` entry binds its record index and SHA-256, the complete
+pre-closure ledger hash, prior format, source commit and time. The first failed
+receipt remains in `rejected_attempts`. Resume validates both histories and charges;
+neither failed attempt contributes an assessment. Old runners refuse format 1.3.
+
+The operator inspects the no-charge closure result before separately dispatching
+`run`. It skips the exhausted request permanently, continues the remaining trials,
+and includes a missing Sonnet screen in the Opus audit without giving Opus either
+failed answer. An exhausted Opus output can likewise be recorded as missing; it
+cannot alter the Sonnet answer. New failures still halt for inspection, and neither
+closure nor paid retry happens automatically.
+
+If all scheduled trials have either a validated answer or a verified missing-output
+record, the summary reports `complete_with_missing_outputs` when anything is missing.
+It separately reports `screened_trials`, `screen_missing_trials`, `audited_trials`,
+`audit_missing_trials`, and `audit_required_trials`. Consumers must not equate workflow
+success with 100 valid screens or a complete paired analysis. Use only validated
+answers in proposal counts, disclose missing denominators, and restrict paired counts
+to trials with both valid answers. A failed screen followed by a valid audit supplies
+only a single-model result. A genuinely complete run still reports `complete`.
+
+Regression tests cover interleaved retries and closures, screen and audit failures,
+mandatory audits outside the controls, no third attempt, missing-count reporting,
+immutable receipts and earlier recovery, tamper refusal, and both spending ceilings.

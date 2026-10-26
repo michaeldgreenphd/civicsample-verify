@@ -14,6 +14,7 @@ FORMAT = 'civicsample-ai-label-pilot-input-1.0'
 LEDGER_FORMAT = 'civicsample-ai-label-pilot-ledger-1.0'
 RECOVERED_LEDGER_FORMAT = 'civicsample-ai-label-pilot-ledger-1.1'
 RETRIED_LEDGER_FORMAT = 'civicsample-ai-label-pilot-ledger-1.2'
+MISSING_LEDGER_FORMAT = 'civicsample-ai-label-pilot-ledger-1.3'
 RETRYABLE_OUTPUT_FAILURES = frozenset(('invalid_answer', 'invalid_input', 'invalid_evidence',
     'missing_change_evidence', 'invalid_response', 'incomplete_response'))
 PREFLIGHT_FORMAT = 'civicsample-ai-label-pilot-preflight-1.0'
@@ -236,8 +237,10 @@ def audit_ids(b: dict, digest: str, records: list[dict]) -> list[str]:
     selected = set(audit_controls(b, digest))
     by_id = {u['unit_id']: u for u in units(b)}
     for record in records:
-        if record['model'] == SCREEN and any(action(a, by_id[record['unit_id']]) in
-                ('PROPOSE_ADD', 'PROPOSE_REMOVE', 'REVIEW') for a in record['answer']['assessments']):
+        # Callers validate the ledger first. A closed failed screen is explicitly
+        # missing, never a negative judgment, and must receive an independent audit.
+        if record['model'] == SCREEN and (record['status'] == 'unreconciled' or any(action(a, by_id[record['unit_id']]) in
+                ('PROPOSE_ADD', 'PROPOSE_REMOVE', 'REVIEW') for a in record['answer']['assessments'])):
             selected.add(record['unit_id'])
     return sorted(selected)
 
@@ -274,13 +277,17 @@ def validate_state(b: dict, digest: str, state: dict, baseline_cost: int, cap: i
     R.require(isinstance(state, dict), 'invalid_ledger')
     recovered = 'evidence_recovery' in state
     retried = 'rejected_attempts' in state
+    closed = 'closed_failures' in state
     R.require(set(state) == set(expected) | ({'evidence_recovery'} if recovered else set())
-              | ({'rejected_attempts'} if retried else set()), 'invalid_ledger')
-    required_format = RETRIED_LEDGER_FORMAT if retried else (RECOVERED_LEDGER_FORMAT if recovered else LEDGER_FORMAT)
+              | ({'rejected_attempts'} if retried else set())
+              | ({'closed_failures'} if closed else set()), 'invalid_ledger')
+    required_format = MISSING_LEDGER_FORMAT if closed else (RETRIED_LEDGER_FORMAT if retried
+                      else (RECOVERED_LEDGER_FORMAT if recovered else LEDGER_FORMAT))
     R.require(state.get('format') == required_format, 'invalid_ledger')
     R.require(all(state[k] == v for k, v in expected.items() if k not in ('format', 'created_at', 'records')), 'ledger_binding_mismatch')
     if recovered:
         validate_evidence_recovery(b, digest, state, baseline_cost, cap, approval_ref)
+    closed_indices = validate_closed_failures(b, state) if closed else set()
     if retried:
         validate_rejected_attempts(b, state)
     R.text(state['created_at'], 100)
@@ -288,8 +295,9 @@ def validate_state(b: dict, digest: str, state: dict, baseline_cost: int, cap: i
     R.require(isinstance(records, list) and len(records) <= 200, 'invalid_ledger')
     seen = set()
     by_id = {u['unit_id']: u for u in units(b)}
-    for r in records:
-        R.require(isinstance(r, dict) and r.get('status') == 'complete', 'unreconciled_request')
+    for index, r in enumerate(records):
+        R.require(isinstance(r, dict) and (r.get('status') == 'complete' or index in closed_indices),
+                  'unreconciled_request')
         model, uid = r.get('model'), r.get('unit_id')
         R.require(model in MODELS and uid in by_id and (model, uid) not in seen, 'invalid_ledger')
         if model == SCREEN:
@@ -298,7 +306,8 @@ def validate_state(b: dict, digest: str, state: dict, baseline_cost: int, cap: i
             R.require(sum(m == SCREEN for m, _ in seen) == 100, 'invalid_ledger')
         seen.add((model, uid))
         validate_receipt(b, r, by_id[uid])
-        R.require(validate_response(r.get('response', {}), model, by_id[uid]) == r.get('answer'), 'invalid_ledger')
+        if index not in closed_indices:
+            R.require(validate_response(r.get('response', {}), model, by_id[uid]) == r.get('answer'), 'invalid_ledger')
     selected = audit_ids(b, digest, records)
     R.require(all(uid in selected for model, uid in seen if model == AUDIT), 'invalid_ledger')
     spent = pilot_cost(state)
@@ -315,7 +324,7 @@ def validate_evidence_recovery(b: dict, digest: str, state: dict, baseline_cost:
     R.require(isinstance(previous, dict) and 'evidence_recovery' not in previous and
               previous.get('format') == LEDGER_FORMAT, 'invalid_recovery')
     R.require(R.sha(R.encode(previous)) == recovery['previous_ledger_sha256'], 'invalid_recovery')
-    R.require(set(previous) == set(state) - {'evidence_recovery', 'rejected_attempts'} and
+    R.require(set(previous) == set(state) - {'evidence_recovery', 'rejected_attempts', 'closed_failures'} and
               all(value == state[key] for key, value in previous.items() if key not in ('format', 'records')),
               'invalid_recovery')
     old_records = previous.get('records')
@@ -408,13 +417,18 @@ def validate_rejected_attempts(b: dict, state: dict) -> None:
         prior = copy.deepcopy(state)
         prior['format'] = entry['previous_format']
         prior['records'] = copy.deepcopy(records[:prefix]) + [copy.deepcopy(record)]
+        closures = [c for c in state.get('closed_failures', []) if c['record_index'] < prefix]
+        if closures:
+            prior['closed_failures'] = copy.deepcopy(closures)
+        else:
+            prior.pop('closed_failures', None)
         if index:
-            R.require(prior['format'] == RETRIED_LEDGER_FORMAT, 'invalid_retry')
             prior['rejected_attempts'] = copy.deepcopy(attempts[:index])
         else:
             del prior['rejected_attempts']
-            R.require(prior['format'] == (RECOVERED_LEDGER_FORMAT if 'evidence_recovery' in prior
-                                          else LEDGER_FORMAT), 'invalid_retry')
+        required_format = MISSING_LEDGER_FORMAT if closures else (RETRIED_LEDGER_FORMAT if index else
+                          (RECOVERED_LEDGER_FORMAT if 'evidence_recovery' in prior else LEDGER_FORMAT))
+        R.require(prior['format'] == required_format, 'invalid_retry')
         R.require(R.sha(R.encode(prior)) == entry['previous_ledger_sha256'], 'invalid_retry')
         if model == SCREEN:
             R.require(not any(r.get('model') == AUDIT for r in records[:prefix]), 'invalid_retry')
@@ -423,11 +437,87 @@ def validate_rejected_attempts(b: dict, state: dict) -> None:
                       uid in audit_ids(b, state['input_sha256'], records[:prefix]), 'invalid_retry')
 
 
+def validate_closed_failures(b: dict, state: dict) -> set[int]:
+    closures, records, attempts = state['closed_failures'], state.get('records'), state.get('rejected_attempts')
+    R.require(isinstance(closures, list) and 0 < len(closures) <= 200 and
+              isinstance(records, list) and isinstance(attempts, list) and attempts and
+              all(isinstance(a, dict) and isinstance(a.get('record'), dict) and
+                  type(a.get('completed_prefix_length')) is int for a in attempts),
+              'invalid_missing_output')
+    by_id = {u['unit_id']: u for u in units(b)}
+    indices = set()
+    for position, entry in enumerate(closures):
+        R.keys(entry, {'kind', 'record_index', 'record_sha256', 'previous_format',
+                       'previous_ledger_sha256', 'source_commit', 'recorded_at'})
+        index = entry['record_index']
+        R.require(entry['kind'] == 'OUTPUT_RETRY_EXHAUSTED' and type(index) is int and
+                  0 <= index < len(records) and (not indices or index > max(indices)) and
+                  R.COMMIT.fullmatch(str(entry['source_commit'])), 'invalid_missing_output')
+        R.text(entry['recorded_at'], 100)
+        indices.add(index)
+        record = R.keys(records[index], {'model', 'unit_id', 'status', 'request_sha256',
+            'reserved_micro_usd', 'reserved_at', 'response', 'charged_micro_usd', 'usage', 'failure_category'})
+        model, uid = record['model'], record['unit_id']
+        R.require(isinstance(model, str) and model in MODELS and isinstance(uid, str) and uid in by_id and
+                  record['status'] == 'unreconciled' and record['failure_category'] in RETRYABLE_OUTPUT_FAILURES,
+                  'invalid_missing_output')
+        R.require(R.sha(R.encode(record)) == entry['record_sha256'], 'invalid_missing_output')
+        matching = [a for a in attempts if (a.get('record', {}).get('model'),
+                    a.get('record', {}).get('unit_id')) == (model, uid)]
+        R.require(len(matching) == 1 and matching[0]['completed_prefix_length'] == index,
+                  'retry_not_exhausted')
+        validate_receipt(b, record, by_id[uid])
+        try:
+            validate_response(record['response'], model, by_id[uid])
+        except R.Refused as error:
+            R.require(str(error) == record['failure_category'], 'invalid_missing_output')
+        else:
+            raise R.Refused('invalid_missing_output')
+        # The failed receipt remains byte-for-byte in records. The closure binds
+        # the entire pre-closure history, including the first rejected attempt.
+        prior = copy.deepcopy(state)
+        prior['format'] = entry['previous_format']
+        prior['records'] = copy.deepcopy(records[:index + 1])
+        prior['rejected_attempts'] = copy.deepcopy([a for a in attempts if a['completed_prefix_length'] <= index])
+        if position:
+            R.require(prior['format'] == MISSING_LEDGER_FORMAT, 'invalid_missing_output')
+            prior['closed_failures'] = copy.deepcopy(closures[:position])
+        else:
+            R.require(prior['format'] == RETRIED_LEDGER_FORMAT, 'invalid_missing_output')
+            del prior['closed_failures']
+        R.require(R.sha(R.encode(prior)) == entry['previous_ledger_sha256'], 'invalid_missing_output')
+    return indices
+
+
+def record_missing_output(b: dict, digest: str, state: dict, baseline_cost: int,
+                          cap: int, approval_ref: str, source_commit: str) -> dict:
+    R.require(isinstance(state, dict) and isinstance(state.get('records'), list) and
+              0 < len(state['records']) <= 200, 'invalid_missing_output')
+    index = len(state['records']) - 1
+    record = state['records'][index]
+    R.require(isinstance(record, dict) and record.get('status') == 'unreconciled' and
+              not any(c.get('record_index') == index for c in state.get('closed_failures', [])),
+              'invalid_missing_output')
+    prefix = copy.deepcopy(state)
+    prefix['records'].pop()
+    validate_state(b, digest, prefix, baseline_cost, cap, approval_ref)
+    candidate = copy.deepcopy(state)
+    candidate['format'] = MISSING_LEDGER_FORMAT
+    candidate.setdefault('closed_failures', []).append({'kind': 'OUTPUT_RETRY_EXHAUSTED',
+        'record_index': index, 'record_sha256': R.sha(R.encode(record)),
+        'previous_format': state['format'], 'previous_ledger_sha256': R.sha(R.encode(state)),
+        'source_commit': source_commit, 'recorded_at': R.now()})
+    validate_state(b, digest, candidate, baseline_cost, cap, approval_ref)
+    return candidate
+
+
 def prepare_retry(b: dict, digest: str, state: dict, baseline_cost: int,
                   cap: int, approval_ref: str, source_commit: str) -> dict:
     R.require(isinstance(state, dict) and isinstance(state.get('records'), list)
               and 0 < len(state['records']) <= 200, 'invalid_retry')
     record = state['records'][-1]
+    R.require(not any(c.get('record_index') == len(state['records']) - 1
+                      for c in state.get('closed_failures', [])), 'retry_limit_reached')
     R.require(isinstance(record, dict) and record.get('status') == 'unreconciled' and
               record.get('failure_category') in RETRYABLE_OUTPUT_FAILURES, 'invalid_retry')
     previous_format = state.get('format')
@@ -435,7 +525,7 @@ def prepare_retry(b: dict, digest: str, state: dict, baseline_cost: int,
     candidate['records'].pop()
     # Validate the complete prefix and any earlier recovery before moving anything.
     validate_state(b, digest, candidate, baseline_cost, cap, approval_ref)
-    candidate['format'] = RETRIED_LEDGER_FORMAT
+    candidate['format'] = MISSING_LEDGER_FORMAT if 'closed_failures' in candidate else RETRIED_LEDGER_FORMAT
     candidate.setdefault('rejected_attempts', []).append({'kind': 'REJECTED_MODEL_OUTPUT',
         'record': copy.deepcopy(record), 'previous_format': previous_format,
         'previous_ledger_sha256': R.sha(R.encode(state)),
@@ -448,9 +538,16 @@ def prepare_retry(b: dict, digest: str, state: dict, baseline_cost: int,
 def summary(b: dict, digest: str, state: dict) -> dict:
     screen = [r for r in state['records'] if r['model'] == SCREEN and r['status'] == 'complete']
     audit = [r for r in state['records'] if r['model'] == AUDIT and r['status'] == 'complete']
-    complete = len(screen) == 100 and len(audit) == len(audit_ids(b, digest, screen))
-    return {'status': 'complete' if complete else 'incomplete', 'trials': 100, 'labels_per_trial': 20,
+    missing = [state['records'][c['record_index']] for c in state.get('closed_failures', [])]
+    screen_missing = sum(r['model'] == SCREEN for r in missing)
+    audit_missing = len(missing) - screen_missing
+    required_audits = len(audit_ids(b, digest, state['records']))
+    finished = len(screen) + screen_missing == 100 and len(audit) + audit_missing == required_audits
+    status = ('complete_with_missing_outputs' if missing else 'complete') if finished else 'incomplete'
+    return {'status': status, 'trials': 100, 'labels_per_trial': 20,
             'screened_trials': len(screen), 'audited_trials': len(audit),
+            'screen_missing_trials': screen_missing, 'audit_missing_trials': audit_missing,
+            'audit_required_trials': required_audits,
             'pilot_accounted_usd': pilot_cost(state) / 1_000_000,
             'combined_accounted_usd': (state['baseline_accounted_micro_usd'] + pilot_cost(state)) / 1_000_000,
             'rejected_attempts': len(state.get('rejected_attempts', [])),
@@ -587,19 +684,21 @@ def dry_run(b: dict) -> dict:
 
 def main() -> None:
     parser = R.QuietParser(description='Private exploratory label proposals; never edits clinical data.')
-    parser.add_argument('command', choices=('dry-run', 'preflight', 'recover-evidence', 'prepare-retry', 'run'))
+    parser.add_argument('command', choices=('dry-run', 'preflight', 'recover-evidence', 'prepare-retry', 'record-missing', 'run'))
     parser.add_argument('--input')
     parser.add_argument('--input-sha256')
     parser.add_argument('--private-store', action='store_true')
     parser.add_argument('--execute-paid', action='store_true')
     parser.add_argument('--reconcile-stored-response', action='store_true')
     parser.add_argument('--archive-rejected-response', action='store_true')
+    parser.add_argument('--record-missing-output', action='store_true')
     parser.add_argument('--usd-cap', default='20')
     parser.add_argument('--approval-ref')
     args = parser.parse_args()
     R.require(args.execute_paid == (args.command == 'run'), 'paid_authorization_missing')
     R.require(args.reconcile_stored_response == (args.command == 'recover-evidence'), 'invalid_command')
     R.require(args.archive_rejected_response == (args.command == 'prepare-retry'), 'invalid_command')
+    R.require(args.record_missing_output == (args.command == 'record-missing'), 'invalid_command')
     with tempfile.TemporaryDirectory(prefix='civic-label-private-') as directory:
         os.chmod(directory, 0o700)
         store = None
@@ -627,16 +726,19 @@ def main() -> None:
             cap = R.cap_micro(args.usd_cap)
             R.require(cap <= PILOT_MAX and args.approval_ref, 'paid_authorization_missing')
             validate_preflight(b, digest, store.load_preflight())
-            if args.command in ('recover-evidence', 'prepare-retry'):
+            if args.command in ('recover-evidence', 'prepare-retry', 'record-missing'):
                 state = store.load()
                 R.require(state is not None, 'invalid_recovery')
-                repair = recover_short_condition if args.command == 'recover-evidence' else prepare_retry
+                repair = {'recover-evidence': recover_short_condition, 'prepare-retry': prepare_retry,
+                          'record-missing': record_missing_output}[args.command]
                 candidate = repair(b, digest, state, baseline_cost, cap, args.approval_ref,
                                    os.environ.get('GITHUB_SHA', ''))
                 store.persist(candidate)
-                result = {'status': 'stored_response_revalidated' if args.command == 'recover-evidence'
-                          else 'rejected_response_archived', 'paid_requests': 0,
-                          'completed_requests': len(candidate['records']),
+                result = {'status': {'recover-evidence': 'stored_response_revalidated',
+                          'prepare-retry': 'rejected_response_archived', 'record-missing': 'missing_output_recorded'}[args.command],
+                          'paid_requests': 0,
+                          'completed_requests': sum(r['status'] == 'complete' for r in candidate['records']),
+                          'missing_outputs': len(candidate.get('closed_failures', [])),
                           'rejected_attempts': len(candidate.get('rejected_attempts', [])),
                           'pilot_accounted_usd': pilot_cost(candidate) / 1_000_000}
             else:

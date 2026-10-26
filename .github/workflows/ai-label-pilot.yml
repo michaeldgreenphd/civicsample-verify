@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'Plan, count tokens, revalidate evidence, prepare a bounded retry, or run paid exploratory proposals'
+        description: 'Plan, preflight, reconcile a saved reply, record exhausted output as missing, or run paid proposals'
         type: choice
-        options: [dry-run, preflight, recover-evidence, prepare-retry, run]
+        options: [dry-run, preflight, recover-evidence, prepare-retry, record-missing, run]
         default: dry-run
         required: true
       usd_cap:
@@ -57,6 +57,7 @@ jobs:
             preflight) python scripts/ai-mapping-review/label_pilot.py preflight --private-store ;;
             recover-evidence) python scripts/ai-mapping-review/label_pilot.py recover-evidence --private-store --reconcile-stored-response --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
             prepare-retry) python scripts/ai-mapping-review/label_pilot.py prepare-retry --private-store --archive-rejected-response --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
+            record-missing) python scripts/ai-mapping-review/label_pilot.py record-missing --private-store --record-missing-output --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
             run) python scripts/ai-mapping-review/label_pilot.py run --private-store --execute-paid --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
             *) exit 2 ;;
           esac
