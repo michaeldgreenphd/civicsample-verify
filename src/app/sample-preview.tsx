@@ -5,6 +5,7 @@ import { MU81_SUBTYPE_TEXT } from '../lib/mu7-types';
 import type { PreviewUnit, SamplePreviewIndex } from '../lib/sample-preview';
 import { reasonLabel } from '../lib/mu7-display';
 import { ReviewGuide } from './practice-sections';
+import { ReviewTarget } from './review-target';
 import styles from './sample-preview.module.css';
 
 async function read<T>(path: string, signal: AbortSignal): Promise<T> {
@@ -139,6 +140,11 @@ export function ProposedSamplePreview({
                     <section className={styles.answers} aria-label="Answer choices preview">
                       <h3>How reviewers will answer</h3>
                       <p>These choices are shown for inspection only.</p>
+                      <ReviewTarget
+                        unit={unit.packet.unit}
+                        profileId={index.guide.profile_id}
+                        id="mu7-preview-target"
+                      />
                       <dl>
                         {unit.answer_options.map((a) => (
                           <div key={a.code}>

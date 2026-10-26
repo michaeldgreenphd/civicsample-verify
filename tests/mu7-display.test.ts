@@ -11,8 +11,45 @@ import {
 } from '../src/lib/mu7-display';
 import { MU7_ANSWER_TEXT, MU7_REASON_MEANING, type Mu7UnitBlock } from '../src/lib/mu7-types';
 import PILOT from './handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json';
+import { reviewTarget } from '../src/lib/mu7-review-target';
 
 const units = PILOT.units.map((entry) => entry.import.packet.unit as Mu7UnitBlock);
+
+test('answer targets distinguish an area judgment from a condition-group judgment', () => {
+  const area = units.find((u) => u.mapping_label.startsWith('Therapeutic area: Cardiovascular'))!;
+  const row = units.find(
+    (u) => u.family === 'ROW' && u.mapping_label.endsWith('Diabetes Mellitus'),
+  )!;
+  assert.equal(reviewTarget(area).title, 'Therapeutic area — Cardiovascular');
+  assert.match(reviewTarget(area).meaning, /does not also confirm a condition group/);
+  assert.equal(reviewTarget(row).title, 'Condition group — Diabetes Mellitus');
+  assert.match(reviewTarget(row).meaning, /does not also confirm a therapeutic area/);
+  const mental = units.find((u) => u.mapping_label.startsWith('Therapeutic area: Mental health'))!;
+  assert.equal(reviewTarget(mental).title, 'Therapeutic area — Mental health');
+  assert.match(unitDisplay(mental).title, /Depression/, 'the full packet explanation is retained');
+});
+
+test('answer targets confirm the displayed inclusion/exclusion without reversing removal answers', () => {
+  for (const unit of units.filter((u) => u.family === 'SG')) {
+    const before = structuredClone(unit);
+    const target = reviewTarget(unit, PLAIN_LANGUAGE_PROFILE);
+    if (unit.assignment_code.includes('_REMOVE_')) {
+      assert.match(target.title, /^Exclusion check — /);
+      assert.match(target.meaning, /^Agree confirms the exclusion\. Disagree means .* included\.$/);
+    } else {
+      assert.match(target.title, /^Inclusion check — /);
+      assert.match(target.meaning, /^Agree confirms the inclusion\. Disagree means .* excluded\.$/);
+    }
+    assert.deepEqual(unit, before);
+  }
+});
+
+test('answer targets retain historical assertions rather than reinterpreting old judgments', () => {
+  const old = units.find((u) => u.assignment_code === 'K_KEEP_MALIGNANT_COMPATIBLE')!;
+  assert.equal(reviewTarget(old).title, 'Neoplasm inclusion check');
+  assert.match(reviewTarget(old).meaning, /malignant neoplasm, counted in the Neoplasms row/);
+  assert.doesNotMatch(reviewTarget(old).meaning, /Agree confirms the inclusion/);
+});
 
 test('displayed inclusion/exclusion questions preserve polarity for every synthetic packet', () => {
   for (const unit of units) {

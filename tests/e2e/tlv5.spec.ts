@@ -18,6 +18,22 @@ const ROWS = ['CAN_ALL', 'DIAB', 'DEP', 'OBE', 'AST', 'COPD', 'COV', 'SCZ', 'HTN
 // such as "enrollment" appear legitimately in the rubric's list of what reviewers will not see.
 const hidden =
   /label_primary|label_secondary|label_informational|tier0_|tier1_|curated_v|stratum_v|variance_stratum|selection_probability|sampling_weight|dev_linked|frame_stratum|clinicaltrials\.gov|request\.jwt|service_role|NCT\d{8}/i;
+// The static source label is plain text, not a registry link. Exempt only its exact dt markup
+// in rendered HTML; API bodies, evidence, attributes, links and all hidden-field checks stay intact.
+const sourceLabel = '<dt>Standardized MeSH terms from ClinicalTrials.gov</dt>';
+const pageContentForLeakCheck = (html: string) => html.replaceAll(sourceLabel, '');
+
+test('the registry-source label exception does not hide links, evidence or private fields', () => {
+  expect(pageContentForLeakCheck(sourceLabel)).not.toMatch(hidden);
+  for (const html of [
+    '<a href="https://clinicaltrials.gov/">Registry record</a>',
+    '<dt><a href="https://clinicaltrials.gov/">Standardized MeSH terms from ClinicalTrials.gov</a></dt>',
+    '<dd>Standardized MeSH terms from ClinicalTrials.gov</dd>',
+    '<dt>Standardized MeSH terms from ClinicalTrials.gov with additional evidence</dt>',
+    `${sourceLabel}<div data-field="tier1_synthetic">Hidden output</div>`,
+  ])
+    expect(pageContentForLeakCheck(html)).toMatch(hidden);
+});
 async function signIn(page: Page, account: string) {
   await page.goto('/');
   await page.getByLabel('Pilot account').selectOption(account);
@@ -113,7 +129,7 @@ test('design v5 synthetic pilot: browser form, blinding, adjudication, lock, exp
     await expect(
       aPage.getByRole('heading', { name: /Fictional once-weekly agent SYN-101/ }),
     ).toBeVisible();
-    expect(await aPage.content()).not.toMatch(hidden);
+    expect(pageContentForLeakCheck(await aPage.content())).not.toMatch(hidden);
     await expect(aPage.getByLabel('Answer (SG_DIABETES_TYPE)')).toHaveCount(0);
     for (const area of AREAS)
       await aPage
@@ -202,7 +218,7 @@ test('design v5 synthetic pilot: browser form, blinding, adjudication, lock, exp
     await expect(
       adjPage.getByRole('heading', { name: /Fictional anticoagulant SYN-303/ }),
     ).toBeVisible();
-    expect(await adjPage.content()).not.toMatch(hidden);
+    expect(pageContentForLeakCheck(await adjPage.content())).not.toMatch(hidden);
     await adjPage.getByLabel('Item').selectOption('AREA_NEUROLOGICAL');
     await adjPage.getByLabel('Status').selectOption('DISCORDANT_RESOLVED');
     await adjPage.getByLabel('Decision').selectOption('NO');

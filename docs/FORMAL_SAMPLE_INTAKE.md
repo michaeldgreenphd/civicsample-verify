@@ -34,6 +34,8 @@ In **Mapping units → Connect the prepared sample**, check the package and dest
 
 The queue plan is checked and hashed, but **no queue is assigned**. No reviewer is enrolled, no phase is opened, no gate is approved and no judgment is written. Reviewers and the adjudicator cannot retrieve the unassigned units. Errors returned to the browser omit database diagnostics and evidence.
 
+After intake succeeds, the preparation summary refreshes to show the recorded count and the investigator's tab becomes **Study preparation**. Synthetic pilot controls are shown only for practice designs. If that status refresh fails, the success message still confirms the completed intake and asks for a page refresh. A failed status refresh does not undo a successful import.
+
 ## Before clinicians receive actual cases
 
 The remaining work is explicit: approve the outstanding study requirements as investigator actions; verify the required pilot sign-off; freeze and verify the selected manifest; assign the two reviewers to the same frozen 100-unit queue; and open the formal phase. Those actions need separate implementation/release verification and authorization. They cannot be inferred from a successful intake or AI results.

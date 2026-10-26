@@ -29,6 +29,7 @@ import { PracticeSections, ReviewGuide } from './practice-sections';
 import { FormalPreparation } from './formal-preparation';
 import { FormalSampleIntake } from './formal-intake';
 import { ProposedSamplePreview } from './sample-preview';
+import { ReviewTarget } from './review-target';
 import {
   answerMeaning,
   reasonLabel,
@@ -94,8 +95,17 @@ export function Mu7Panel({ user }: { user: Actor }) {
   if (workspace.kind === 'investigator')
     return (
       <PracticeSections
-        workLabel="Practice setup"
-        description="Manage the synthetic practice and return to the worked examples at any time."
+        reviewMode={workspace.design?.designVersion === 'review-design-v8.1.0'}
+        workLabel={
+          workspace.design?.designVersion === 'review-design-v8.1.0'
+            ? 'Study preparation'
+            : 'Practice setup'
+        }
+        description={
+          workspace.design?.designVersion === 'review-design-v8.1.0'
+            ? 'Inspect the recorded sample and guide. Clinical review remains closed.'
+            : 'Manage the synthetic practice and return to the worked examples at any time.'
+        }
         exampleCount={workspace.training.length}
         examples={
           <Training
@@ -144,7 +154,7 @@ function Banner() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The packet: our assignment, then the trial as registered
+// The packet: trial evidence first, then the assignment being assessed.
 // ---------------------------------------------------------------------------------------------
 function Packet({
   packet,
@@ -158,6 +168,9 @@ function Packet({
   const u = packet.unit;
   const t = packet.trial;
   const display = unitDisplay(u, profileId);
+  const repeatsMembership =
+    (u.family === 'AREA' && display.assertion === 'in this area') ||
+    (u.family === 'ROW' && display.assertion === 'in this row');
   const tid = (name: string) => (ids ? name : undefined);
   return (
     <section className="panel" aria-label="Unit under review">
@@ -180,42 +193,10 @@ function Packet({
               )}
           </p>
         ))}
-        <div className={styles.assignmentSummary}>
-          <p className={styles.assignmentTitle} data-testid={tid('mu7-mapping-label')}>
-            <strong>{display.title}</strong>
-            {display.context && <span className={styles.mappingContext}> {display.context}</span>}
-          </p>
-          {display.parent_row_label && (
-            <p>
-              Condition group: <strong>{display.parent_row_label}</strong>
-            </p>
-          )}
-          <p data-testid={tid('mu7-display-text')}>
-            <span className={styles.assignmentLabel}>Our classification</span>
-            <strong>{display.assertion}</strong>
-          </p>
-          {u.display_decision && (
-            <p data-testid={tid('mu7-display-decision')}>
-              <strong>{display.decision}</strong>
-            </p>
-          )}
-          <p>
-            <span className={styles.assignmentLabel}>Why it was classified this way</span>
-            {display.basis}
-          </p>
-          {display.note && (
-            <p className="form-hint" data-testid={tid('mu7-display-note')}>
-              {display.note}
-            </p>
-          )}
-          <div className={styles.reviewQuestion}>
-            <span className={styles.assignmentLabel}>Your question</span>
-            <p>{display.question}</p>
-            {display.polarity && <p className="form-hint">{display.polarity}</p>}
-          </div>
-        </div>
-        <span className="form-label">Trial</span>
-        <p>
+        <h3 className={styles.trialTitle} data-testid={tid('mu7-brief-title')}>
+          {t.brief_title}
+        </h3>
+        <p className="muted">
           <span className="mono">{t.nct_id}</span>
           {t.registry_url && (
             <>
@@ -226,17 +207,26 @@ function Packet({
             </>
           )}
         </p>
-        <p data-testid={tid('mu7-brief-title')}>
-          <strong>{t.brief_title}</strong>
-        </p>
         {t.official_title && <p className="muted">{t.official_title}</p>}
+        <div className={styles.trialSummary}>
+          <span className="form-label">Brief summary</span>
+          <p data-testid={tid('mu7-brief-summary')}>
+            {t.brief_summary || 'No brief summary registered.'}
+          </p>
+        </div>
+        {t.detailed_description && (
+          <details>
+            <summary>Detailed description</summary>
+            <p>{t.detailed_description}</p>
+          </details>
+        )}
         <dl className="metadata-list">
           <div>
-            <dt>Registered conditions</dt>
+            <dt>Conditions entered by the study team</dt>
             <dd>{t.conditions_registered?.join('; ') || 'None registered'}</dd>
           </div>
           <div>
-            <dt>Condition MeSH headings</dt>
+            <dt>Standardized MeSH terms from ClinicalTrials.gov</dt>
             <dd>{t.condition_mesh_headings?.join('; ') || 'None'}</dd>
           </div>
           <div>
@@ -258,20 +248,47 @@ function Packet({
             </dd>
           </div>
         </dl>
-        <div className="section-divider" />
-        <span className="form-label">Brief summary</span>
-        <p data-testid={tid('mu7-brief-summary')}>
-          {t.brief_summary || 'No brief summary registered.'}
-        </p>
-        {t.detailed_description && (
-          <details>
-            <summary>Detailed description</summary>
-            <p>{t.detailed_description}</p>
-          </details>
-        )}
         <p className="privacy-note">
           Registry text is shown as registered, even when it names another trial.
         </p>
+        <div className={styles.assignmentSummary}>
+          <p className={styles.assignmentTitle} data-testid={tid('mu7-mapping-label')}>
+            <strong>{display.title}</strong>
+            {display.context && <span className={styles.mappingContext}> {display.context}</span>}
+          </p>
+          {display.parent_row_label && (
+            <p>
+              Condition group: <strong>{display.parent_row_label}</strong>
+            </p>
+          )}
+          {!repeatsMembership && (
+            <p data-testid={tid('mu7-display-text')}>
+              <span className={styles.assignmentLabel}>Our classification</span>
+              <strong>{display.assertion}</strong>
+            </p>
+          )}
+          {u.display_decision && (
+            <p data-testid={tid('mu7-display-decision')}>
+              <strong>{display.decision}</strong>
+            </p>
+          )}
+          {u.family === 'SG' && (
+            <p>
+              <span className={styles.assignmentLabel}>Why it was classified this way</span>
+              {display.basis}
+            </p>
+          )}
+          {display.note && (
+            <p className="form-hint" data-testid={tid('mu7-display-note')}>
+              {display.note}
+            </p>
+          )}
+          <div className={styles.reviewQuestion}>
+            <span className={styles.assignmentLabel}>Your question</span>
+            <p>{display.question}</p>
+            {display.polarity && <p className="form-hint">{display.polarity}</p>}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -578,7 +595,17 @@ function Reviewer({
                       )}
                     </p>
                   )}
-                  <div className="decision-list" role="radiogroup" aria-label="Answer">
+                  <ReviewTarget
+                    unit={shown.packet.unit}
+                    profileId={profileId}
+                    id="mu7-review-target"
+                  />
+                  <div
+                    className="decision-list"
+                    role="radiogroup"
+                    aria-label="Answer"
+                    aria-describedby="mu7-review-target"
+                  >
                     {MU7_ANSWERS.map((a) => (
                       <label
                         key={a}
@@ -869,7 +896,17 @@ function Adjudicator({
                     <p className="muted">The reference is locked.</p>
                   ) : (
                     <>
-                      <div className="decision-list" role="radiogroup" aria-label="Outcome">
+                      <ReviewTarget
+                        unit={shown.packet.unit}
+                        profileId={profileId}
+                        id="mu7-adjudication-target"
+                      />
+                      <div
+                        className="decision-list"
+                        role="radiogroup"
+                        aria-label="Outcome"
+                        aria-describedby="mu7-adjudication-target"
+                      >
                         <label
                           aria-label="Resolve"
                           className={`decision-option${form.status === 'DISCORDANT_RESOLVED' ? ' chosen' : ''}`}
@@ -914,6 +951,7 @@ function Adjudicator({
                           <label className="field">
                             <span className="form-label">Decision</span>
                             <select
+                              aria-describedby="mu7-adjudication-target"
                               value={form.decision ?? 'AGREE'}
                               onChange={(e) => {
                                 const decision = e.target.value as 'AGREE' | 'DISAGREE';
@@ -1046,6 +1084,7 @@ function Investigator({
     }
   }
   const w = workspace;
+  const formalPreparation = w.design?.designVersion === 'review-design-v8.1.0';
   const attested = attestation.trim().length >= 20;
   const registered =
     bundle !== null && w.exports.some((x) => x.manifestSha256 === bundle.manifestSha256);
@@ -1072,181 +1111,184 @@ function Investigator({
           {error}
         </div>
       )}
-      <Banner />
+      {!formalPreparation && <Banner />}
       <FormalPreparation workspace={w} />
-      <FormalSampleIntake />
+      <FormalSampleIntake onRecorded={onRefresh} />
       <ProposedSamplePreview
         renderPacket={(packet, profileId) => <Packet packet={packet} profileId={profileId} />}
       />
-      <section className="panel" aria-label="Synthetic pilot">
-        <div className="panel-header">
-          <span className="section-label">Synthetic pilot</span>
-          <span className="header-phase" data-testid="mu7-phase">
-            {w.pilotLock
-              ? `Pilot locked (${w.pilotLock.nUnitsLocked} units)`
-              : w.design
-                ? 'Pilot open'
-                : 'No design recorded'}
-          </span>
-        </div>
-        <div className="panel-body">
-          <div className="stat-strip">
-            <div className="stat">
-              <span className="stat-value">{w.counts.pilotUnits}</span>
-              <span className="stat-label">Synthetic pilot units</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{w.counts.trainingUnits}</span>
-              <span className="stat-label">Worked examples, outside every total</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{w.counts.pilotQueue}</span>
-              <span className="stat-label">Pilot assignments</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{w.counts.formalUnits}</span>
-              <span className="stat-label">Formal units</span>
-            </div>
+      {!formalPreparation && (
+        <section className="panel" aria-label="Synthetic pilot">
+          <div className="panel-header">
+            <span className="section-label">Synthetic pilot</span>
+            <span className="header-phase" data-testid="mu7-phase">
+              {w.pilotLock
+                ? `Pilot locked (${w.pilotLock.nUnitsLocked} units)`
+                : w.design
+                  ? 'Pilot open'
+                  : 'No design recorded'}
+            </span>
           </div>
-          {!w.design && (
-            <div className="step">
-              <h3>Record the design</h3>
-              <p>
-                Records a synthetic local design ({'SYN-7-SYNTHETIC-PILOT'}). The study’s own design
-                values wait for the investigator’s decisions.
-              </p>
-              {AttestationField}
-              <div className="button-row">
-                <button
-                  className="button"
-                  disabled={busy || !attested}
-                  onClick={() => act({ action: 'record-design', attestation })}
-                >
-                  Record the synthetic design
-                </button>
-                {w.canCreateProfilePilot && (
+          <div className="panel-body">
+            <div className="stat-strip">
+              <div className="stat">
+                <span className="stat-value">{w.counts.pilotUnits}</span>
+                <span className="stat-label">Synthetic pilot units</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{w.counts.trainingUnits}</span>
+                <span className="stat-label">Worked examples, outside every total</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{w.counts.pilotQueue}</span>
+                <span className="stat-label">Pilot assignments</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{w.counts.formalUnits}</span>
+                <span className="stat-label">Formal units</span>
+              </div>
+            </div>
+            {!w.design && (
+              <div className="step">
+                <h3>Record the design</h3>
+                <p>
+                  Records a synthetic local design ({'SYN-7-SYNTHETIC-PILOT'}). The study’s own
+                  design values wait for the investigator’s decisions.
+                </p>
+                {AttestationField}
+                <div className="button-row">
+                  <button
+                    className="button"
+                    disabled={busy || !attested}
+                    onClick={() => act({ action: 'record-design', attestation })}
+                  >
+                    Record the synthetic design
+                  </button>
+                  {w.canCreateProfilePilot && (
+                    <button
+                      className="button secondary"
+                      disabled={busy || !attested}
+                      onClick={() => act({ action: 'record-profile-design', attestation })}
+                    >
+                      Start practice with the revised guide
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {w.design && !w.pilotLock && (
+              <div className="step">
+                <h3>Prepare the pilot</h3>
+                <p>
+                  Import the 12 synthetic units and the three synthetic worked examples, then assign
+                  every unit to both pilot reviewers: primary units first, subgroup units last.
+                </p>
+                <div className="toolbar">
                   <button
                     className="button secondary"
-                    disabled={busy || !attested}
-                    onClick={() => act({ action: 'record-profile-design', attestation })}
+                    disabled={busy || w.counts.pilotUnits > 0}
+                    onClick={() => act({ action: 'import-pilot' })}
                   >
-                    Start practice with the revised guide
+                    {w.counts.pilotUnits
+                      ? 'Pilot units imported'
+                      : 'Import the synthetic pilot units'}
                   </button>
-                )}
+                  <button
+                    className="button secondary"
+                    disabled={busy || w.counts.trainingUnits > 0}
+                    onClick={() => act({ action: 'import-training' })}
+                  >
+                    {w.counts.trainingUnits
+                      ? 'Worked examples imported'
+                      : 'Import the worked examples'}
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={busy || w.counts.pilotUnits === 0 || w.counts.pilotQueue > 0}
+                    onClick={() => act({ action: 'assign-pilot' })}
+                  >
+                    {w.counts.pilotQueue ? 'Both queues assigned' : 'Assign both pilot queues'}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {w.design && !w.pilotLock && (
-            <div className="step">
-              <h3>Prepare the pilot</h3>
-              <p>
-                Import the 12 synthetic units and the three synthetic worked examples, then assign
-                every unit to both pilot reviewers: primary units first, subgroup units last.
-              </p>
-              <div className="toolbar">
-                <button
-                  className="button secondary"
-                  disabled={busy || w.counts.pilotUnits > 0}
-                  onClick={() => act({ action: 'import-pilot' })}
-                >
-                  {w.counts.pilotUnits
-                    ? 'Pilot units imported'
-                    : 'Import the synthetic pilot units'}
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy || w.counts.trainingUnits > 0}
-                  onClick={() => act({ action: 'import-training' })}
-                >
-                  {w.counts.trainingUnits
-                    ? 'Worked examples imported'
-                    : 'Import the worked examples'}
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy || w.counts.pilotUnits === 0 || w.counts.pilotQueue > 0}
-                  onClick={() => act({ action: 'assign-pilot' })}
-                >
-                  {w.counts.pilotQueue ? 'Both queues assigned' : 'Assign both pilot queues'}
-                </button>
+            )}
+            {w.design && !w.pilotLock && w.counts.pilotQueue > 0 && (
+              <div className="step">
+                <h3>Lock the pilot reference</h3>
+                <p>
+                  Possible once both reviewers have answered every unit and every routed unit has
+                  its tie-break. The lock fixes the pilot inventory; nothing can be added or
+                  answered afterwards.
+                </p>
+                {AttestationField}
+                <div className="button-row">
+                  <button
+                    className="button"
+                    disabled={busy || !attested}
+                    onClick={() => act({ action: 'lock-pilot', attestation })}
+                  >
+                    Lock the pilot reference
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {w.design && !w.pilotLock && w.counts.pilotQueue > 0 && (
-            <div className="step">
-              <h3>Lock the pilot reference</h3>
-              <p>
-                Possible once both reviewers have answered every unit and every routed unit has its
-                tie-break. The lock fixes the pilot inventory; nothing can be added or answered
-                afterwards.
-              </p>
-              {AttestationField}
-              <div className="button-row">
-                <button
-                  className="button"
-                  disabled={busy || !attested}
-                  onClick={() => act({ action: 'lock-pilot', attestation })}
-                >
-                  Lock the pilot reference
-                </button>
+            )}
+            {w.pilotLock && (
+              <div className="step">
+                <h3>Export the locked pilot</h3>
+                <p>
+                  Build the locked pilot bundle, check its manifest, then register its hashes. The
+                  bundle is marked synthetic; the analysis reads formal bundles only.
+                </p>
+                <div className="button-row">
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setBusy(true);
+                      api<BundleSummary>('/api/mu7/admin/export/PILOT')
+                        .then((b) => {
+                          setBundle(b);
+                          setError('');
+                        })
+                        .catch((e) => setError(e.message))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    Build export
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={busy || bundle === null || registered}
+                    onClick={() => act({ action: 'register-pilot-export' })}
+                  >
+                    {registered ? 'Export registered' : 'Register export'}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {w.pilotLock && (
-            <div className="step">
-              <h3>Export the locked pilot</h3>
-              <p>
-                Build the locked pilot bundle, check its manifest, then register its hashes. The
-                bundle is marked synthetic; the analysis reads formal bundles only.
-              </p>
-              <div className="button-row">
-                <button
-                  className="button"
-                  disabled={busy}
-                  onClick={() => {
-                    setBusy(true);
-                    api<BundleSummary>('/api/mu7/admin/export/PILOT')
-                      .then((b) => {
-                        setBundle(b);
-                        setError('');
-                      })
-                      .catch((e) => setError(e.message))
-                      .finally(() => setBusy(false));
-                  }}
-                >
-                  Build export
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy || bundle === null || registered}
-                  onClick={() => act({ action: 'register-pilot-export' })}
-                >
-                  {registered ? 'Export registered' : 'Register export'}
-                </button>
-              </div>
-            </div>
-          )}
-          {bundle && (
-            <div className="notice" data-testid="mu7-bundle">
-              <strong>
-                Bundle {String(bundle.manifest.bundle_format_version)}, {readable(bundle.mode)} mode
-              </strong>
-              {String(bundle.manifest.status)}. Manifest{' '}
-              <span className="mono">{bundle.manifestSha256.slice(0, 12)}…</span>
-              <ul>
-                <li>
-                  <a href="/api/mu7/admin/export/PILOT/manifest.json">manifest.json</a>
-                </li>
-                {bundle.files.map((f) => (
-                  <li key={f.name}>
-                    <a href={`/api/mu7/admin/export/PILOT/${f.name}`}>{f.name}</a> ({f.rows} rows)
+            )}
+            {bundle && (
+              <div className="notice" data-testid="mu7-bundle">
+                <strong>
+                  Bundle {String(bundle.manifest.bundle_format_version)}, {readable(bundle.mode)}{' '}
+                  mode
+                </strong>
+                {String(bundle.manifest.status)}. Manifest{' '}
+                <span className="mono">{bundle.manifestSha256.slice(0, 12)}…</span>
+                <ul>
+                  <li>
+                    <a href="/api/mu7/admin/export/PILOT/manifest.json">manifest.json</a>
                   </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      </section>
+                  {bundle.files.map((f) => (
+                    <li key={f.name}>
+                      <a href={`/api/mu7/admin/export/PILOT/${f.name}`}>{f.name}</a> ({f.rows} rows)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="panel" aria-label="Progress">
         <div className="panel-header">
@@ -1272,7 +1314,7 @@ function Investigator({
               {!w.completion.length && (
                 <tr>
                   <td colSpan={3} className="muted">
-                    No pilot queue yet.
+                    {formalPreparation ? 'No reviewers assigned.' : 'No pilot queue yet.'}
                   </td>
                 </tr>
               )}

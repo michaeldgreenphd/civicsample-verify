@@ -22,6 +22,11 @@ test('hosted name chooser submits only the selected username and password (mock 
   });
   await page.goto('/');
   await page.getByLabel('Your name').selectOption({ label: 'Synthetic Person' });
+  await expect(page.locator('.environment-banner')).toContainText('REVIEW WORKSPACE');
+  await expect(page.locator('.auth-note')).toHaveText(
+    'Sign in to your assigned workspace. Study access is controlled by the investigator.',
+  );
+  await expect(page.getByText('Fabricated evidence only.', { exact: false })).toHaveCount(0);
   await page.getByLabel('Password', { exact: true }).fill('fictional-wrong-password');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('form [role="alert"]')).toContainText(
@@ -53,7 +58,28 @@ test('hosted navigation opens Mapping units by default (mock session, no remote 
   );
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Mapping units Design v7' })).toHaveClass('active');
-  await expect(page.getByRole('heading', { name: 'Clinical review practice' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Clinical classification review' })).toBeVisible();
+  await expect(page.locator('.environment-banner')).toContainText('REVIEW WORKSPACE');
+});
+
+test('workspace wording waits for session context and retains the local synthetic warning', async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/session', async (route) => {
+    await pending;
+    await route.fulfill({ json: { user: null, environment: 'synthetic' } });
+  });
+  await page.goto('/');
+  await expect(page.locator('.environment-banner')).toContainText('CONNECTING');
+  await expect(page.locator('.environment-banner')).not.toContainText('SYNTHETIC PILOT');
+  release();
+  await expect(page.locator('.environment-banner')).toContainText('SYNTHETIC PILOT');
+  await expect(page.locator('.environment-banner')).toContainText('Fabricated evidence only.');
+  await expect(page.getByLabel('Pilot account')).toBeVisible();
 });
 
 test('served page hydrates under nonce CSP and refuses an injected unnonced script', async ({

@@ -112,7 +112,25 @@ test('revised guide, unsaved subtype answer and accessible mobile reference navi
     await page.getByRole('button', { name: /^Unit 1:/ }).click();
     await expect(page.getByTestId('mu7-mapping-label')).toHaveText('Diabetes inclusion check');
     await expect(page.getByText('Why it was classified this way', { exact: true })).toBeVisible();
-    await expect(page.getByText(/Agree confirms the inclusion/)).toBeVisible();
+    const titleBox = await page.getByTestId('mu7-brief-title').boundingBox();
+    const summaryBox = await page.getByTestId('mu7-brief-summary').boundingBox();
+    const mappingBox = await page.getByTestId('mu7-mapping-label').boundingBox();
+    expect(titleBox!.y + titleBox!.height).toBeLessThan(summaryBox!.y);
+    expect(summaryBox!.y + summaryBox!.height).toBeLessThan(mappingBox!.y);
+    await expect(page.getByTestId('mu7-display-text')).toContainText(
+      'diabetes, type not stated in the registry headings',
+    );
+    await expect(page.getByTestId('mu7-display-decision')).toHaveText(
+      'Included in the Diabetes Mellitus group',
+    );
+    const answerPanel = page.getByRole('region', { name: 'Your answer', exact: true });
+    await expect(answerPanel.getByRole('heading')).toHaveText(
+      'Inclusion check — Diabetes mellitus',
+    );
+    await expect(answerPanel.getByText(/Agree confirms the inclusion/)).toBeVisible();
+    await expect(
+      answerPanel.getByRole('radiogroup', { name: 'Answer', exact: true }),
+    ).toHaveAttribute('aria-describedby', 'mu7-review-target');
     await page.getByRole('radio', { name: 'Agree', exact: true }).check();
     await expect(page.getByRole('button', { name: 'Save answer', exact: true })).toBeDisabled();
     await page.getByRole('radio', { name: 'Type 2 diabetes is not stated', exact: true }).check();

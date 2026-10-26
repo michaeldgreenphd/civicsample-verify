@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export const metadata: Metadata = {
   title: 'CivicSample Verify',
   description:
-    'A synthetic-only workspace for independent human review of clinical research evidence.',
+    'A permissioned workspace for independent human review of clinical research classifications.',
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

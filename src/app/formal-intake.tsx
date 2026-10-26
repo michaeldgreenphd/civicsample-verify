@@ -3,7 +3,7 @@ import { useState } from 'react';
 import type { FormalIntakePlan } from '../lib/formal-intake';
 import styles from './formal-intake.module.css';
 
-export function FormalSampleIntake() {
+export function FormalSampleIntake({ onRecorded }: { onRecorded: () => Promise<unknown> }) {
   const [plan, setPlan] = useState<FormalIntakePlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [attestation, setAttestation] = useState('');
@@ -30,6 +30,13 @@ export function FormalSampleIntake() {
         );
         setPlan(null);
         setAttestation('');
+        try {
+          await onRecorded();
+        } catch {
+          setMessage(
+            'The 100 mappings are recorded and review remains closed. Refresh the page to update the preparation status.',
+          );
+        }
       } else setPlan(result);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : 'Sample intake could not be checked.');
