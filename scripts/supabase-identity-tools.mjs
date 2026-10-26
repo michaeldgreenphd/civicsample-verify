@@ -81,8 +81,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0036_v81_judgment_history.sql',
   'migrations/0037_v81_reviewer_profile.sql',
   'migrations/0038_v81_reviewer_guide_r4.sql',
+  'migrations/0039_v81_prepared_sample_intake.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '8.1.3-reviewer-guide-r4';
+export const EXPECTED_SCHEMA_VERSION = '8.1.4-prepared-sample-intake';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -131,6 +132,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0036_v81_judgment_history.sql': ['8.1.1-judgment-history'],
   'migrations/0037_v81_reviewer_profile.sql': ['8.1.2-reviewer-profile'],
   'migrations/0038_v81_reviewer_guide_r4.sql': ['8.1.3-reviewer-guide-r4'],
+  'migrations/0039_v81_prepared_sample_intake.sql': ['8.1.4-prepared-sample-intake'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([

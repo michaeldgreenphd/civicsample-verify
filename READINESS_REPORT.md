@@ -1,5 +1,9 @@
 # CivicSample Verify readiness — 2026-10-22
 
+## Current preparation increment — 2026-10-26
+
+The [prepared-sample intake](docs/FORMAL_SAMPLE_INTAKE.md) implements an atomic, investigator-only load of 100 mappings into an empty review workspace. It preserves the guide and probability binding, verifies the planned 200 queue positions and creates no approvals, freeze, assignments or judgments. Existing practice campaigns are refused. Formal opening remains disabled. [Current commands and limits](docs/test_runs/FORMAL_SAMPLE_INTAKE.md) supersede older import-availability statements below; historical results retain their original scope.
+
 Latest offline import compatibility check: [revision-2 results](docs/test_runs/V81_OFFLINE_IMPORT_CHECK.md). Both existing candidates passed in disposable databases only. The investigator requests a new proposed sample matching the final model; neither candidate is selected or approved.
 
 Latest export-history engineering increment: [bundle 8.2 verification record](docs/test_runs/V82_HISTORY_VERIFICATION.md). This is synthetic/local evidence only; migration 0036 has not been applied to Supabase and does not authorize formal review. Historical evidence below remains scoped to its stated commits.

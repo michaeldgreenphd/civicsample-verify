@@ -133,6 +133,10 @@ async function mu7Route(
     );
   }
   if (path.startsWith('/api/mu7/admin/')) requireRole('INVESTIGATOR', 'an investigator account');
+  if (path === '/api/mu7/admin/intake' && request.method === 'GET')
+    return respond(await api.getFormalIntakePlan(actor));
+  if (path === '/api/mu7/admin/intake' && request.method === 'POST')
+    return respond(await api.stageFormalSample(actor, await body(request)));
   const preview = /^\/api\/mu7\/admin\/preview(?:\/(\d{1,3}))?$/.exec(path);
   if (preview && request.method === 'GET')
     return respond(await getSamplePreview(actor, preview[1] ? Number(preview[1]) : undefined));

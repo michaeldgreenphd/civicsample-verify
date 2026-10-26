@@ -1,6 +1,8 @@
 # CivicSample Verify
 
-An investigator-operated synthetic pilot for blinded clinical classification review. Two independent reviewers assess the same fictional evidence, a separate adjudicator records the reference assessment, and the investigator locks and exports the audit record. **Formal clinical review and real study import remain disabled.**
+A clinical review application with independent reviewer accounts and a separate adjudicator. The current **Mapping units** workflow asks two reviewers to confirm the same 100 displayed trial-to-category assignments. They cannot see each other's answers. Local demos use fictional data.
+
+**Formal review remains closed.** The new [prepared-sample intake](docs/FORMAL_SAMPLE_INTAKE.md) can verify and record a private 100-mapping package in a separately authorized, empty workspace. It creates no approvals, freeze, reviewer assignments or clinical answers. The practice workspace is preserved. See [the current verification record](docs/test_runs/FORMAL_SAMPLE_INTAKE.md) for executed checks and remaining live acceptance work. Older workflow sections below describe preserved modules, not alternative approvals for the current study.
 
 ## Start locally
 
@@ -52,7 +54,7 @@ This public repository must never contain private research handoffs, real cases 
 
 The local pilot supports independent review, adjudication, immutable export, and synthetic case authoring with a complete evidence preview. The separate synthetic v4 adapter reads database views and integrity RPCs, writes CSV, and feeds the Python validator and paired analysis. Its build SHA and ontology/rubric provenance must come from the actual export build and registered frozen case versions.
 
-The production platform remains incomplete: verified invited Supabase authentication/MFA, formal campaign/import/freeze screens, multi-project management, and operational acceptance are outstanding. Local testing is the current phase. A forthcoming approval record must be received and checked before any scientific choice changes state; the software has not approved the Tier version, formal sample, rubric, adjudicator, or analysis plan.
+Supabase username authentication, investigator MFA and user-token PostgREST access are implemented. The prepared-sample intake is available for an empty destination. Formal freeze/opening controls, the approved study requirements and acceptance of the exact deployed build remain necessary before clinician collection. This is a single-design application; it does not replace an existing practice campaign with a formal one. The software never supplies scientific approval.
 
 This is a Next.js server application. GitHub Pages cannot host its authentication, APIs, or persistent database. A future approved deployment can use managed Next.js hosting plus Supabase; running the pilot does not authorize that deployment.
 
