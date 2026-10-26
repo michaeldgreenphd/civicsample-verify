@@ -1,6 +1,6 @@
 # Supabase identity and staging bootstrap (prepared, not applied)
 
-Status: **prepared with synthetic tests only.** No account was created, no schema was applied, no invitation was sent and no credential exists in this repository. The staging project `civicsample-verify-staging` (reference `xmuiduugdrqvhssmeacz`) is the only remote target the tooling accepts, and only when a private configuration names it.
+The tooling accepts only the explicitly listed projects below, each through its own private configuration. The completed pilot and practice projects have separate historical verification records. Adding a project to the allowlist prepares a connection; it does not apply a schema, provision accounts, import cases or authorize clinical review. No credentials belong in this repository.
 
 ## Requirements (investigator, 2026-10-22)
 
@@ -35,6 +35,29 @@ its database destination, and its roster; allowing the practice project does
 not permit mixing its credentials or database URL with the completed pilot.
 The original pilot records remain unchanged. Adding this target is preparation,
 not authorization to run migrations or create accounts.
+
+On 2026-10-26 the investigator supplied `jsuthraousvtgjpgixdz` as a new, separate
+destination for formal-review preparation. It is now explicitly allowlisted,
+without changing either earlier target. The configuration still calls this a
+`staging` environment until the separate clinical opening is authorized. The
+database URI must identify this exact project; a URI for either practice project
+is refused. A successful Auth settings check is not evidence that the database
+is empty, migrated or ready for review.
+
+`scripts/supabase-readonly-inspect.mjs` also supports a fresh project without
+`app_schema_version`. In a read-only transaction it counts non-extension
+application objects, Auth accounts and Storage objects, then rolls back. A
+missing version marker alone never establishes emptiness: leftover objects are
+reported as `UNVERSIONED_OBJECTS_PRESENT`; an absent Auth or Storage table is
+reported as unknown (`null`), not zero. This inspection authorizes no mutation.
+
+Generate and review a schema plan only after verifying the new destination.
+Account creation is a separate operation: the generic provisioning command
+generates passwords for new identities, so it must not be used unchanged where
+the investigator has requested preservation of existing passwords. Likewise,
+the requested read-only investigator restriction and separate pilot identities
+need their own verified account plan before access is issued. Keep the practice
+deployment connected to its existing database during preparation.
 
 The privileged tool accepts only the staging references recorded in `APPROVED_STAGING_PROJECT_REFS` (`scripts/supabase-identity-tools.mjs`); a configuration naming any other project is refused before any request, whatever it calls itself. Changing that list requires a reviewed commit. Every mutation also needs `VERIFY_SUPABASE_ADMIN_APPLY=1`, `--apply` (never together with `--dry-run`), `--confirm-project <ref>` and `--plan-sha256` of the plan generated for the same configuration; the plan binds every provisioned field (username, internal address, role, a digest of the display name). Credentials are appended to the private file before each remote creation, so a failure after creation never loses a password; a rerun reconciles an Auth user that lacks its application row and never regenerates a delivered password. `apply-schema` plans against the `app_schema_version` markers of every non-repeatable file (schema.sql through the latest migration; the frozen-trial preflight is the only repeatable file), skips applied files, refuses a partially applied, out-of-order or unknown lineage before writing, and refuses a database destination that differs from the reviewed plan. The credentials path is resolved through real paths, so a symlinked directory inside a repository is refused.
 

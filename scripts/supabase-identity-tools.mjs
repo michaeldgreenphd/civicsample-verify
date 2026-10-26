@@ -30,6 +30,7 @@ const exactKeys = (value, keys) =>
 export const APPROVED_STAGING_PROJECT_REFS = Object.freeze([
   'xmuiduugdrqvhssmeacz', // Completed pilot; preserve its records.
   'wjntsoeifbelasidssmv', // Separate synthetic practice project selected by the investigator.
+  'jsuthraousvtgjpgixdz', // Separate formal preparation target; no clinical opening authorized.
 ]);
 export const ROLES = ['INVESTIGATOR', 'REVIEWER', 'ADJUDICATOR'];
 export const USERNAME = /^[a-z][a-z0-9._-]{2,31}$/;

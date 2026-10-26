@@ -8,12 +8,75 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { PGlite } from '@electric-sql/pglite';
 import { inspectWith, READ_ONLY_STATEMENT } from '../scripts/supabase-readonly-inspect.mjs';
 import { snapshotWith } from '../scripts/supabase-readonly-snapshot.mjs';
 import { verifyMu7Bundle } from '../scripts/verify-mu7-bundle';
 import { readMu7Bundle } from '../src/server/mu7-core';
 import { mu7SqlData } from '../src/server/mu7';
 import { as, newDatabase, signedOffPilot } from './mu7-fixture';
+
+test('fresh inspection preserves empty, occupied and unavailable states without creating tables', async () => {
+  const db = new PGlite();
+  const sent: string[] = [];
+  const inspect = async () => {
+    sent.length = 0;
+    const report = await inspectWith((sql: string) => {
+      sent.push(sql);
+      return db.query(sql);
+    });
+    assert.equal(sent[0], 'begin transaction isolation level repeatable read read only');
+    assert.equal(sent.at(-1), 'rollback');
+    assert.ok(sent.every((sql) => READ_ONLY_STATEMENT.test(sql)));
+    assert.ok(report.server);
+    assert.ok(report.bootstrap);
+    assert.equal(report.server.transactionReadOnly, 'on');
+    assert.deepEqual(report.schemaVersions, []);
+    assert.equal(
+      (
+        await db.query<{ table: string | null }>(
+          "select to_regclass('public.app_schema_version')::text as table",
+        )
+      ).rows[0].table,
+      null,
+    );
+    return { ...report, bootstrap: report.bootstrap };
+  };
+  try {
+    let report = await inspect();
+    assert.equal(report.bootstrap.state, 'NO_APPLICATION_OBJECTS');
+    assert.equal(report.bootstrap.userObjects, 0);
+    assert.equal(
+      report.bootstrap.authUsers,
+      null,
+      'missing Auth schema must not be reported as zero users',
+    );
+    assert.equal(report.bootstrap.storageObjects, null);
+    await db.exec(`create schema auth; create table auth.users (id int);
+      create schema storage; create table storage.objects (id int);`);
+    report = await inspect();
+    assert.equal(report.bootstrap.authUsers, 0);
+    assert.equal(report.bootstrap.storageObjects, 0);
+    await db.exec(`insert into auth.users values (1); insert into storage.objects values (1);
+      create schema private; create table private.synthetic_existing (id int);
+      insert into private.synthetic_existing values (1);
+      create function public.synthetic_existing() returns int language sql as 'select 1';
+      create type public.synthetic_existing_type as enum ('PRESENT');
+      create type public.synthetic_existing_composite as (value int);`);
+    report = await inspect();
+    assert.equal(report.bootstrap.state, 'UNVERSIONED_OBJECTS_PRESENT');
+    assert.equal(report.bootstrap.userObjects, 4);
+    assert.equal(report.bootstrap.authUsers, 1);
+    assert.equal(report.bootstrap.storageObjects, 1);
+    assert.equal(
+      (await db.query<{ n: number }>('select count(*)::int as n from private.synthetic_existing'))
+        .rows[0].n,
+      1,
+    );
+  } finally {
+    await db.close();
+  }
+});
 
 test('inspection and snapshot send only reads, inside one read-only transaction, rolled back', async () => {
   const db = await newDatabase();

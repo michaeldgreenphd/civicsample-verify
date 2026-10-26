@@ -42,6 +42,19 @@ test('public startup fails closed on local auth, insecure origin, privileged con
     assert.throws(() => hostedSettings(env, build));
 });
 
+test('the separate formal preparation project is accepted without changing the existing target', () => {
+  const project = 'jsuthraousvtgjpgixdz';
+  const prepared = hostedSettings(
+    { ...env, VERIFY_SUPABASE_URL: `https://${project}.supabase.co` },
+    commit,
+  );
+  assert.equal(prepared.env.VERIFY_SUPABASE_ACCOUNT_DOMAIN_REF, project);
+  assert.equal(
+    hostedSettings(env, commit).env.VERIFY_SUPABASE_ACCOUNT_DOMAIN_REF,
+    APPROVED_STAGING_PROJECT_REFS[0],
+  );
+});
+
 test('startup confirms closed registration, refuses unavailable or enabled settings, and does not follow redirects', async () => {
   let calls = 0;
   const fake = (async (_url: unknown, options: RequestInit) => {
