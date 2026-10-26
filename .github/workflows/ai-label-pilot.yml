@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       command:
-        description: 'dry-run plans; preflight counts free; run pays for exploratory label proposals'
+        description: 'dry-run plans; preflight counts free; recover-evidence validates a saved receipt; run pays for exploratory label proposals'
         type: choice
-        options: [dry-run, preflight, run]
+        options: [dry-run, preflight, recover-evidence, run]
         default: dry-run
         required: true
       usd_cap:
@@ -14,7 +14,7 @@ on:
         default: '20'
         required: true
       approval_ref:
-        description: 'Non-sensitive spending authorization reference (required for run)'
+        description: 'Non-sensitive spending authorization reference (required for run and recover-evidence)'
         type: string
         required: false
 permissions:
@@ -55,6 +55,7 @@ jobs:
           case "$REQUESTED_COMMAND" in
             dry-run) python scripts/ai-mapping-review/label_pilot.py dry-run --private-store ;;
             preflight) python scripts/ai-mapping-review/label_pilot.py preflight --private-store ;;
+            recover-evidence) python scripts/ai-mapping-review/label_pilot.py recover-evidence --private-store --reconcile-stored-response --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
             run) python scripts/ai-mapping-review/label_pilot.py run --private-store --execute-paid --usd-cap "$REQUESTED_CAP" --approval-ref "$REQUESTED_APPROVAL" ;;
             *) exit 2 ;;
           esac

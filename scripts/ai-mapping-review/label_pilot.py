@@ -1,7 +1,9 @@
 """Exploratory, private label proposals. No study record is changed and no call runs on import."""
 from __future__ import annotations
 
+import copy
 import json
+import re
 import os
 from pathlib import Path
 import tempfile
@@ -10,6 +12,7 @@ import runner as R
 
 FORMAT = 'civicsample-ai-label-pilot-input-1.0'
 LEDGER_FORMAT = 'civicsample-ai-label-pilot-ledger-1.0'
+RECOVERED_LEDGER_FORMAT = 'civicsample-ai-label-pilot-ledger-1.1'
 PREFLIGHT_FORMAT = 'civicsample-ai-label-pilot-preflight-1.0'
 SCREEN = 'claude-sonnet-5-5'
 AUDIT = 'claude-opus-5-5'
@@ -158,7 +161,14 @@ def action(assessment: dict, unit: dict) -> str:
     return 'PROPOSE_REMOVE' if assigned else 'NO_CHANGE'
 
 
-def validate_response(response: dict, model: str, unit: dict) -> dict:
+def short_condition_quote(field: str, value: str, fields: dict) -> bool:
+    # An entire short registered condition is evidence, not a truncated fragment.
+    # Other fields still require eight characters, and all quotes remain verbatim.
+    return (re.fullmatch(r'conditions_registered\.\d+', field) is not None
+            and 2 <= len(value.strip()) < 8 and fields.get(field) == value)
+
+
+def validate_response(response: dict, model: str, unit: dict, *, legacy_evidence: bool = False) -> dict:
     R.require(response.get('model') == model, 'model_mismatch')
     R.require(response.get('stop_reason') == 'end_turn' and not response.get('stop_details'), 'incomplete_response')
     content = response.get('content')
@@ -183,7 +193,8 @@ def validate_response(response: dict, model: str, unit: dict) -> dict:
             R.keys(quote, {'field', 'quote'})
             field = R.text(quote['field'], 100)
             value = R.text(quote['quote'], 360)
-            R.require(len(value.strip()) >= 8 and field in fields and value in fields[field], 'invalid_evidence')
+            length_ok = len(value.strip()) >= 8 or (not legacy_evidence and short_condition_quote(field, value, fields))
+            R.require(length_ok and field in fields and value in fields[field], 'invalid_evidence')
         changed = (a['decision'] == 'SUPPORTED' and a['id'] not in unit['original_labels']) or (
             a['decision'] == 'NOT_SUPPORTED' and a['id'] in unit['original_labels'])
         R.require(not changed or bool(a['evidence']), 'missing_change_evidence')
@@ -243,8 +254,13 @@ def pilot_cost(state: dict) -> int:
 
 def validate_state(b: dict, digest: str, state: dict, baseline_cost: int, cap: int, approval_ref: str) -> None:
     expected = new_state(digest, baseline_cost, cap, approval_ref)
-    R.require(isinstance(state, dict) and set(state) == set(expected), 'invalid_ledger')
-    R.require(all(state[k] == v for k, v in expected.items() if k not in ('created_at', 'records')), 'ledger_binding_mismatch')
+    R.require(isinstance(state, dict), 'invalid_ledger')
+    recovered = 'evidence_recovery' in state
+    R.require(set(state) == set(expected) | ({'evidence_recovery'} if recovered else set()), 'invalid_ledger')
+    R.require(state.get('format') == (RECOVERED_LEDGER_FORMAT if recovered else LEDGER_FORMAT), 'invalid_ledger')
+    R.require(all(state[k] == v for k, v in expected.items() if k not in ('format', 'created_at', 'records')), 'ledger_binding_mismatch')
+    if recovered:
+        validate_evidence_recovery(b, digest, state, baseline_cost, cap, approval_ref)
     R.text(state['created_at'], 100)
     records = state['records']
     R.require(isinstance(records, list) and len(records) <= 200, 'invalid_ledger')
@@ -271,6 +287,70 @@ def validate_state(b: dict, digest: str, state: dict, baseline_cost: int, cap: i
     R.require(all(uid in selected for model, uid in seen if model == AUDIT), 'invalid_ledger')
     spent = pilot_cost(state)
     R.require(spent <= cap and baseline_cost + spent <= R.MAX_CAP_MICRO_USD, 'budget_exhausted')
+
+
+def validate_evidence_recovery(b: dict, digest: str, state: dict, baseline_cost: int, cap: int, approval_ref: str) -> None:
+    recovery = R.keys(state['evidence_recovery'], {'kind', 'previous_ledger', 'previous_ledger_sha256',
+                                                 'source_commit', 'recorded_at'})
+    R.require(recovery['kind'] == 'WHOLE_SHORT_REGISTERED_CONDITION', 'invalid_recovery')
+    R.require(R.COMMIT.fullmatch(str(recovery['source_commit'])), 'invalid_recovery')
+    R.text(recovery['recorded_at'], 100)
+    previous = recovery['previous_ledger']
+    R.require(isinstance(previous, dict) and 'evidence_recovery' not in previous and
+              previous.get('format') == LEDGER_FORMAT, 'invalid_recovery')
+    R.require(R.sha(R.encode(previous)) == recovery['previous_ledger_sha256'], 'invalid_recovery')
+    R.require(set(previous) == set(state) - {'evidence_recovery'} and
+              all(value == state[key] for key, value in previous.items() if key not in ('format', 'records')),
+              'invalid_recovery')
+    old_records = previous.get('records')
+    R.require(isinstance(old_records, list) and 0 < len(old_records) <= 200, 'invalid_recovery')
+    failed = R.keys(old_records[-1], {'model', 'unit_id', 'status', 'request_sha256', 'reserved_micro_usd',
+                    'reserved_at', 'response', 'charged_micro_usd', 'usage', 'failure_category'})
+    R.require(failed['status'] == 'unreconciled' and failed['failure_category'] == 'invalid_evidence', 'invalid_recovery')
+    by_id = {u['unit_id']: u for u in units(b)}
+    R.require(failed['model'] in MODELS and failed['unit_id'] in by_id, 'invalid_recovery')
+    prefix = copy.deepcopy(previous)
+    prefix['records'] = prefix['records'][:-1]
+    validate_state(b, digest, prefix, baseline_cost, cap, approval_ref)
+    for record in prefix['records']:
+        validate_response(record['response'], record['model'], by_id[record['unit_id']], legacy_evidence=True)
+    try:
+        validate_response(failed['response'], failed['model'], by_id[failed['unit_id']], legacy_evidence=True)
+    except R.Refused as error:
+        R.require(str(error) == 'invalid_evidence', 'invalid_recovery')
+    else:
+        raise R.Refused('invalid_recovery')
+    # Revalidate the whole answer with the single corrected rule; neither a quote
+    # nor a decision is edited, and every other response guard still applies.
+    answer = validate_response(failed['response'], failed['model'], by_id[failed['unit_id']])
+    repaired = copy.deepcopy(failed)
+    repaired.update(status='complete', answer=answer, completed_at=recovery['recorded_at'])
+    R.require(isinstance(state['records'], list) and
+              state['records'][:len(old_records)] == old_records[:-1] + [repaired], 'invalid_recovery')
+    # The outer validate_state also checks every reconstructed request, reservation,
+    # usage receipt, model, answer, budget and any newly appended records.
+
+
+def recover_short_condition(b: dict, digest: str, state: dict, baseline_cost: int,
+                            cap: int, approval_ref: str, source_commit: str) -> dict:
+    R.require(isinstance(state, dict) and 'evidence_recovery' not in state, 'recovery_already_recorded')
+    R.require(state.get('format') == LEDGER_FORMAT and isinstance(state.get('records'), list)
+              and 0 < len(state['records']) <= 200, 'invalid_recovery')
+    failed = state['records'][-1]
+    R.require(isinstance(failed, dict) and failed.get('status') == 'unreconciled'
+              and failed.get('failure_category') == 'invalid_evidence', 'invalid_recovery')
+    by_id = {u['unit_id']: u for u in units(b)}
+    R.require(failed.get('unit_id') in by_id and failed.get('model') in MODELS, 'invalid_recovery')
+    candidate = copy.deepcopy(state)
+    candidate['format'] = RECOVERED_LEDGER_FORMAT
+    candidate['evidence_recovery'] = {'kind': 'WHOLE_SHORT_REGISTERED_CONDITION',
+        'previous_ledger': copy.deepcopy(state), 'previous_ledger_sha256': R.sha(R.encode(state)),
+        'source_commit': source_commit, 'recorded_at': R.now()}
+    candidate['records'][-1].update(status='complete',
+        answer=validate_response(failed['response'], failed['model'], by_id[failed['unit_id']]),
+        completed_at=candidate['evidence_recovery']['recorded_at'])
+    validate_state(b, digest, candidate, baseline_cost, cap, approval_ref)
+    return candidate
 
 
 def summary(b: dict, digest: str, state: dict) -> dict:
@@ -414,15 +494,17 @@ def dry_run(b: dict) -> dict:
 
 def main() -> None:
     parser = R.QuietParser(description='Private exploratory label proposals; never edits clinical data.')
-    parser.add_argument('command', choices=('dry-run', 'preflight', 'run'))
+    parser.add_argument('command', choices=('dry-run', 'preflight', 'recover-evidence', 'run'))
     parser.add_argument('--input')
     parser.add_argument('--input-sha256')
     parser.add_argument('--private-store', action='store_true')
     parser.add_argument('--execute-paid', action='store_true')
+    parser.add_argument('--reconcile-stored-response', action='store_true')
     parser.add_argument('--usd-cap', default='20')
     parser.add_argument('--approval-ref')
     args = parser.parse_args()
     R.require(args.execute_paid == (args.command == 'run'), 'paid_authorization_missing')
+    R.require(args.reconcile_stored_response == (args.command == 'recover-evidence'), 'invalid_command')
     with tempfile.TemporaryDirectory(prefix='civic-label-private-') as directory:
         os.chmod(directory, 0o700)
         store = None
@@ -443,15 +525,26 @@ def main() -> None:
             return
         R.require(store is not None, 'private_store_required')
         baseline_cost = verify_baseline(b, store.baseline_bytes())
-        provider = R.Provider(os.environ.get('ANTHROPIC_API_KEY', ''))
         if args.command == 'preflight':
+            provider = R.Provider(os.environ.get('ANTHROPIC_API_KEY', ''))
             result = preflight(b, digest, provider, store.persist_preflight)
         else:
             cap = R.cap_micro(args.usd_cap)
             R.require(cap <= PILOT_MAX and args.approval_ref, 'paid_authorization_missing')
             validate_preflight(b, digest, store.load_preflight())
-            state = store.load() or new_state(digest, baseline_cost, cap, args.approval_ref)
-            result = run(b, digest, state, baseline_cost, cap, args.approval_ref, provider, store.persist)
+            if args.command == 'recover-evidence':
+                state = store.load()
+                R.require(state is not None, 'invalid_recovery')
+                candidate = recover_short_condition(b, digest, state, baseline_cost, cap, args.approval_ref,
+                                                    os.environ.get('GITHUB_SHA', ''))
+                store.persist(candidate)
+                result = {'status': 'stored_response_revalidated', 'paid_requests': 0,
+                          'completed_requests': len(candidate['records']),
+                          'pilot_accounted_usd': pilot_cost(candidate) / 1_000_000}
+            else:
+                state = store.load() or new_state(digest, baseline_cost, cap, args.approval_ref)
+                provider = R.Provider(os.environ.get('ANTHROPIC_API_KEY', ''))
+                result = run(b, digest, state, baseline_cost, cap, args.approval_ref, provider, store.persist)
         print(json.dumps(result, sort_keys=True))
 
 

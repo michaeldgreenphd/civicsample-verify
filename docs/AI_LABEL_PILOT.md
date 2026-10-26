@@ -107,3 +107,36 @@ controls, resumability, durable reservations, both budget ceilings, preflight bi
 fixed private paths, and the manual-only workflow. They do not establish that live
 model generation, GitHub approval, or private checkpointing will succeed; those are
 reported separately for an actual run.
+
+## Revalidating a whole short registered condition
+
+The first live pilot exposed a validation bug: an entire registered condition name
+can be shorter than the eight-character quotation minimum. The corrected validator
+accepts a 2–7-character quotation only when it equals the **entire** named
+`conditions_registered.<index>` field, character for character. Short fragments,
+other fields, case changes, invented text, empty strings, and single characters do
+not qualify. All existing quotation-length and source checks remain for other text.
+The prompts, catalog, rubric, original labels, request hashes, and audit selection
+stay unchanged. This is a source-validation correction, not a changed clinical rule.
+
+A halted run is never silently resumed. The manual `recover-evidence` operation,
+with `--reconcile-stored-response` in the CLI, revalidates the already-paid saved
+response without an API key or another model call. It requires the existing cap,
+authorization reference, pinned inputs/baseline, and successful preflight. Only one
+final `invalid_evidence` receipt that fails the old eight-character rule and passes
+every corrected response check can be reconciled. Unknown charges, transport
+failures, fabricated quotations, other invalid responses, and changed billing or
+request records remain refused.
+
+Recovery creates ledger format 1.1. Its `evidence_recovery` archive holds the complete
+unchanged previous ledger, its SHA-256, the recovery source commit and time. All
+previously completed records remain identical. The repaired receipt retains the raw
+model response, original failure category, reservation and actual charge; its answer
+is extracted unchanged from that response, and `completed_at` records the revalidation
+time. Resume verifies both the archive and the repaired prefix, then validates every
+later completion normally. Older runners refuse this format rather than ignoring the
+archive. A second recovery is refused.
+
+After review and merge, dispatch `recover-evidence`, inspect its result, then dispatch
+`run` separately. The resumed run skips the recovered request. Recovery does not
+reset the budget, rewrite the original comparison, or approve any study action.
