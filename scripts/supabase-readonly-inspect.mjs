@@ -30,6 +30,13 @@ export async function inspectWith(query) {
   };
   const present = async (name) => (await q(regclass(name)))[0].present === true;
   const count = async (sql) => Number((await q(sql))[0]?.n ?? 0);
+  /** @type {{
+   * readOnly: boolean,
+   * server?: {versionNum: number, databaseBytes: number, transactionReadOnly: string},
+   * schemaVersions?: string[],
+   * bootstrap?: {state: string, userObjects: number, authUsers: number | null, storageObjects: number | null, note: string},
+   * [key: string]: unknown
+   * }} */
   const report = { readOnly: true };
   await q('begin transaction isolation level repeatable read read only');
   try {

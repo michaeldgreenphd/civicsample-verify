@@ -28,6 +28,8 @@ test('fresh inspection preserves empty, occupied and unavailable states without 
     assert.equal(sent[0], 'begin transaction isolation level repeatable read read only');
     assert.equal(sent.at(-1), 'rollback');
     assert.ok(sent.every((sql) => READ_ONLY_STATEMENT.test(sql)));
+    assert.ok(report.server);
+    assert.ok(report.bootstrap);
     assert.equal(report.server.transactionReadOnly, 'on');
     assert.deepEqual(report.schemaVersions, []);
     assert.equal(
@@ -38,7 +40,7 @@ test('fresh inspection preserves empty, occupied and unavailable states without 
       ).rows[0].table,
       null,
     );
-    return report;
+    return { ...report, bootstrap: report.bootstrap };
   };
   try {
     let report = await inspect();
