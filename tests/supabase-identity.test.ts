@@ -91,6 +91,41 @@ test('practice project is independently allowlisted and cannot use the completed
   );
 });
 
+test('formal preparation target is explicit and cannot use either practice database', () => {
+  const ref = 'jsuthraousvtgjpgixdz';
+  const formal = config({
+    project: {
+      ...config().project,
+      stagingProjectRef: ref,
+      projectUrl: `https://${ref}.supabase.co`,
+    },
+    databaseUrl: `postgresql://postgres.${ref}:synthetic@aws-0-us-east-1.pooler.supabase.com:5432/postgres`,
+  });
+  assert.equal(
+    code(() => validateAdminConfig(formal)),
+    null,
+  );
+  for (const other of ['xmuiduugdrqvhssmeacz', 'wjntsoeifbelasidssmv']) {
+    assert.equal(
+      code(() =>
+        validateAdminConfig({
+          ...formal,
+          databaseUrl: `postgresql://postgres.${other}:synthetic@aws-0-us-east-1.pooler.supabase.com:5432/postgres`,
+        }),
+      ),
+      'DATABASE_DESTINATION',
+    );
+  }
+  assert.equal(
+    code(() => validateAdminConfig(formal, [APPROVED])),
+    'PROJECT_NOT_APPROVED',
+  );
+  const plan = buildBootstrapPlan(formal, root);
+  assert.equal(plan.generatedFor.projectRef, ref);
+  assert.equal(plan.mutationsPerformed, false);
+  assert.notEqual(planSha256(plan), planSha256(buildBootstrapPlan(config(), root)));
+});
+
 test('admin configuration: staging only, service-role key required, usernames instead of e-mail', () => {
   assert.equal(
     code(() => validateAdminConfig(config())),

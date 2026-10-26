@@ -47,6 +47,46 @@ export async function inspectWith(query) {
     report.extensions = await q(
       "select e.extname as name, n.nspname as schema, e.extversion as version from pg_extension e join pg_namespace n on n.oid = e.extnamespace where e.extname in ('pgcrypto', 'pg_graphql', 'pgjwt', 'uuid-ossp') order by 1",
     );
+    // A newly created project has no application schema. Inspect its catalogs rather than
+    // querying nonexistent tables or treating a missing version marker as proof of emptiness.
+    if (!(await present('public.app_schema_version'))) {
+      report.schemaVersions = [];
+      const userObjects = await count(`
+        select count(*)::int as n from (
+          select 'pg_class'::regclass as classid, c.oid as objid
+          from pg_class c join pg_namespace n on n.oid = c.relnamespace
+          where n.nspname in ('public', 'private') and c.relkind in ('r', 'p', 'v', 'm', 'S', 'f')
+          union all
+          select 'pg_proc'::regclass, p.oid
+          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname in ('public', 'private')
+          union all
+          select 'pg_type'::regclass, t.oid
+          from pg_type t join pg_namespace n on n.oid = t.typnamespace
+          where n.nspname in ('public', 'private') and (
+            t.typtype in ('d', 'e', 'r', 'm') or (
+              t.typtype = 'c' and exists (
+                select 1 from pg_class c where c.oid = t.typrelid and c.relkind = 'c'
+              )
+            )
+          )
+        ) objects where not exists (
+          select 1 from pg_depend d where d.classid = objects.classid
+          and d.objid = objects.objid and d.deptype = 'e'
+        )`);
+      report.bootstrap = {
+        state: userObjects === 0 ? 'NO_APPLICATION_OBJECTS' : 'UNVERSIONED_OBJECTS_PRESENT',
+        userObjects,
+        authUsers: (await present('auth.users'))
+          ? await count('select count(*)::int as n from auth.users')
+          : null,
+        storageObjects: (await present('storage.objects'))
+          ? await count('select count(*)::int as n from storage.objects')
+          : null,
+        note: 'Read-only observation, not authorization to initialize or replace anything.',
+      };
+      return report;
+    }
     report.schemaVersions = (
       await q('select version from public.app_schema_version order by applied_at')
     ).map((r) => r.version);
