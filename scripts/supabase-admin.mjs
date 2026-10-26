@@ -10,7 +10,8 @@
 // The default is a dry run: the plan is printed and no remote request is made. Every mutation needs
 // VERIFY_SUPABASE_ADMIN_APPLY=1, the staging reference typed back, and the SHA-256 of the plan
 // generated for the same private configuration; the configuration must name the approved staging
-// project. --dry-run together with --apply is refused. Passwords are generated here, appended to
+// project. --dry-run together with --apply is refused. Passwords are generated here (or read from
+// --credentials-in for new accounts only; the same source must be used in plan and apply), appended to
 // the private credentials file (mode 600, outside every repository, resolved through real paths)
 // before the account is created, and never printed.
 import {
@@ -33,10 +34,12 @@ import {
   internalEmail,
   planSha256,
   readAdminConfig,
+  readProvidedCredentials,
   REPEATABLE_SCHEMA_FILES,
   SCHEMA_FILE_MARKERS,
   SupabaseIdentityError,
   validateDatabaseDestination,
+  validateProvidedCredentials,
 } from './supabase-identity-tools.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -75,7 +78,14 @@ export function parse(argv) {
     const name = arg.slice(2);
     if (['dry-run', 'apply', 'help'].includes(name)) options.flags.add(name);
     else if (
-      ['config', 'username', 'confirm-project', 'plan-sha256', 'credentials-out'].includes(name)
+      [
+        'config',
+        'username',
+        'confirm-project',
+        'plan-sha256',
+        'credentials-out',
+        'credentials-in',
+      ].includes(name)
     ) {
       if (i + 1 >= rest.length)
         throw new SupabaseIdentityError('USAGE', `--${name} needs a value.`);
@@ -154,8 +164,18 @@ class CredentialsFile {
 }
 
 /** Called only after main's explicit apply guards; exported for synthetic recovery tests. */
-export async function provisionAccounts(client, config, credentials, result) {
+export async function provisionAccounts(
+  client,
+  config,
+  credentials,
+  result,
+  providedCredentials = /** @type {unknown} */ (null),
+) {
   const ref = config.project.stagingProjectRef;
+  if (providedCredentials !== null) validateProvidedCredentials(providedCredentials, config);
+  const supplied = new Map(
+    providedCredentials?.accounts.map((entry) => [entry.username, entry.password]) ?? [],
+  );
   for (const account of config.accounts) {
     const email = internalEmail(account.username, ref);
     const existing = await client.findAuthUserByEmail(email);
@@ -171,6 +191,7 @@ export async function provisionAccounts(client, config, credentials, result) {
           account.displayName,
           account.role,
           account.isPilotTestAccount === true,
+          account.practiceReadOnly === true,
         );
         result.actions.push({
           username: account.username,
@@ -185,6 +206,7 @@ export async function provisionAccounts(client, config, credentials, result) {
           account.displayName,
           account.role,
           account.isPilotTestAccount === true,
+          account.practiceReadOnly === true,
         );
         result.actions.push({
           username: account.username,
@@ -196,7 +218,8 @@ export async function provisionAccounts(client, config, credentials, result) {
       }
       continue;
     }
-    const password = generatePassword();
+    const password =
+      providedCredentials === null ? generatePassword() : supplied.get(account.username);
     credentials.record({
       username: account.username,
       role: account.role,
@@ -211,6 +234,7 @@ export async function provisionAccounts(client, config, credentials, result) {
       account.displayName,
       account.role,
       account.isPilotTestAccount === true,
+      account.practiceReadOnly === true,
     );
     credentials.record({ username: account.username, appUserId: userId, status: 'LINKED' });
     result.actions.push({
@@ -357,7 +381,15 @@ export async function main(argv, env) {
     return 2;
   }
   const config = readAdminConfig(configPath, root);
-  const plan = buildBootstrapPlan(config, root);
+  if (values['credentials-in'] && !['plan', 'accounts'].includes(command))
+    throw new SupabaseIdentityError(
+      'CREDENTIAL_SOURCE_COMMAND',
+      '--credentials-in is only for planning or creating accounts; it never resets an existing password.',
+    );
+  const providedCredentials = values['credentials-in']
+    ? readProvidedCredentials(values['credentials-in'], root, config)
+    : null;
+  const plan = buildBootstrapPlan(config, root, undefined, undefined, providedCredentials);
   const hash = planSha256(plan);
   if (command === 'plan' || !flags.has('apply')) {
     console.log(
@@ -375,6 +407,7 @@ export async function main(argv, env) {
     planHash: values['plan-sha256'],
     config,
     repositoryRoot: root,
+    providedCredentials,
   });
   const client = adminClient(config);
   const ref = config.project.stagingProjectRef;
@@ -390,7 +423,7 @@ export async function main(argv, env) {
   if (command === 'accounts') {
     const credentials = new CredentialsFile(privateOutputPath(values['credentials-out']));
     try {
-      await provisionAccounts(client, config, credentials, result);
+      await provisionAccounts(client, config, credentials, result, providedCredentials);
     } finally {
       credentials.close();
     }

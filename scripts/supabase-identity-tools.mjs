@@ -194,12 +194,20 @@ export function validateRoster(accounts) {
   const counts = { INVESTIGATOR: 0, REVIEWER: 0, ADJUDICATOR: 0 };
   for (const account of accounts) {
     if (
-      !exactKeys(account, ['username', 'displayName', 'role']) &&
-      !exactKeys(account, ['username', 'displayName', 'role', 'isPilotTestAccount'])
+      !account ||
+      typeof account !== 'object' ||
+      Array.isArray(account) ||
+      !['username', 'displayName', 'role'].every((key) => Object.hasOwn(account, key)) ||
+      Object.keys(account).some(
+        (key) =>
+          !['username', 'displayName', 'role', 'isPilotTestAccount', 'practiceReadOnly'].includes(
+            key,
+          ),
+      )
     )
       refuse(
         'ROSTER_FIELDS',
-        'Each account has username, displayName, role and optionally isPilotTestAccount; no e-mail addresses.',
+        'Each account has username, displayName, role and optionally isPilotTestAccount and practiceReadOnly; no e-mail addresses.',
       );
     if (
       account.isPilotTestAccount !== undefined &&
@@ -212,6 +220,10 @@ export function validateRoster(accounts) {
         'ROSTER_PILOT_FLAG',
         'Only a REVIEWER account can be a pilot test account (it takes synthetic pilot mappings; schema rule).',
       );
+    if (account.practiceReadOnly !== undefined && typeof account.practiceReadOnly !== 'boolean')
+      refuse('ROSTER_OBSERVER_FLAG', 'practiceReadOnly is true or false.');
+    if (account.practiceReadOnly === true && account.role !== 'INVESTIGATOR')
+      refuse('ROSTER_OBSERVER_FLAG', 'Only an investigator can have restricted read-only access.');
     if (typeof account.username !== 'string' || !USERNAME.test(account.username))
       refuse(
         'ROSTER_USERNAME',
@@ -242,6 +254,54 @@ export function validateRoster(accounts) {
       'At least one investigator account is required to bootstrap the application roster.',
     );
   return counts;
+}
+
+/** Explicitly supplied passwords are private inputs for new accounts only. Validate the whole
+ * file before any request; neither these values nor a reversible representation enter a plan. */
+export function validateProvidedCredentials(source, config) {
+  if (
+    !exactKeys(source, ['projectRef', 'accounts']) ||
+    source.projectRef !== config.project.stagingProjectRef ||
+    !Array.isArray(source.accounts)
+  )
+    refuse(
+      'CREDENTIAL_SOURCE',
+      'The private credentials must name the exact destination and account list.',
+    );
+  const expected = new Set(config.accounts.map((account) => account.username));
+  const found = new Set();
+  for (const entry of source.accounts) {
+    if (
+      !exactKeys(entry, ['username', 'password']) ||
+      !expected.has(entry.username) ||
+      found.has(entry.username)
+    )
+      refuse(
+        'CREDENTIAL_SOURCE',
+        'Each configured account needs exactly one private credential; unknown or duplicate accounts are refused.',
+      );
+    if (
+      typeof entry.password !== 'string' ||
+      entry.password.length < 12 ||
+      Buffer.byteLength(entry.password, 'utf8') > 128 ||
+      /\s/.test(entry.password) ||
+      Array.from(entry.password).some(
+        (char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127,
+      )
+    )
+      refuse(
+        'CREDENTIAL_SOURCE',
+        'Supplied passwords must have at least 12 characters, at most 128 UTF-8 bytes and no whitespace or control characters.',
+      );
+    found.add(entry.username);
+  }
+  if (found.size !== expected.size)
+    refuse('CREDENTIAL_SOURCE', 'A private credential is required for every configured account.');
+  return source;
+}
+
+export function readProvidedCredentials(path, repositoryRoot, config) {
+  return validateProvidedCredentials(readPrivateJson(path, repositoryRoot), config);
 }
 /** The private admin configuration: project declaration, service-role key, optional database URL
  *  and the username roster. Refused unless it names the staging project exactly. */
@@ -348,8 +408,10 @@ export function buildBootstrapPlan(
   repositoryRoot,
   readFile = (p) => readFileSync(`${repositoryRoot}/${p}`, 'utf8'),
   approvedRefs = APPROVED_STAGING_PROJECT_REFS,
+  providedCredentials = /** @type {unknown} */ (null),
 ) {
   validateAdminConfig(config, approvedRefs);
+  if (providedCredentials !== null) validateProvidedCredentials(providedCredentials, config);
   const files = HOSTED_SCHEMA_FILES.map((path) => {
     const text = readFile(path);
     if (
@@ -399,11 +461,23 @@ export function buildBootstrapPlan(
       // A pilot test account (REVIEWER only) is enrolled with PILOT scope and takes synthetic
       // pilot mappings; the flag is immutable in public.users, so it is bound into the plan.
       isPilotTestAccount: a.isPilotTestAccount === true,
+      practiceReadOnly: a.practiceReadOnly === true,
       authUser:
-        'created with email_confirm: true and a generated password written only to the private credentials file',
+        providedCredentials === null
+          ? 'created with email_confirm: true and a generated password written only to the private credentials file'
+          : 'new accounts use the supplied private password; existing Auth accounts are never reset',
       applicationUser:
         'link public.users by auth_uid; reconcile only display_name on matching active identities; refuse role or pilot-status conflicts; no invitation e-mail',
     })),
+    ...(providedCredentials === null
+      ? {}
+      : {
+          accountCredentials: {
+            mode: 'PROVIDED_FOR_NEW_ACCOUNTS',
+            sha256: sha256(JSON.stringify(providedCredentials)),
+            accountCount: providedCredentials.accounts.length,
+          },
+        }),
     // The exact destination (non-secret identity) is bound into the reviewed hash; apply-schema
     // refuses a configuration whose destination differs from the plan.
     database:
@@ -422,8 +496,9 @@ export const planSha256 = (plan) => sha256(JSON.stringify(plan));
 // ---------------------------------------------------------------------------------------------
 export function adminClient(config, fetchImpl = fetch) {
   const origin = config.project.projectUrl;
-  const appUserColumns = 'user_id,auth_uid,email,display_name,role,is_pilot_test_account,is_active';
-  function requireAppIdentity(row, authUid, email, role, pilot, allowUnlinked = false) {
+  const appUserColumns =
+    'user_id,auth_uid,email,display_name,role,is_pilot_test_account,is_active,practice_read_only';
+  function requireAppIdentity(row, authUid, email, role, pilot, observer, allowUnlinked = false) {
     if (!row || typeof row.user_id !== 'string' || typeof row.display_name !== 'string')
       refuse('APP_USER', 'The application identity was not returned completely.');
     if (row.role !== role)
@@ -432,6 +507,11 @@ export function adminClient(config, fetchImpl = fetch) {
       refuse(
         'PILOT_STATUS_CONFLICT',
         'The existing immutable pilot status differs from the reviewed plan.',
+      );
+    if (row.practice_read_only !== observer)
+      refuse(
+        'OBSERVER_STATUS_CONFLICT',
+        'The existing read-only restriction differs from the reviewed plan; account provisioning cannot change it.',
       );
     if (row.is_active !== true)
       refuse('INACTIVE_APP_USER', 'The application account is inactive; it cannot be reactivated.');
@@ -457,7 +537,7 @@ export function adminClient(config, fetchImpl = fetch) {
     return oneAppUser(
       await call(
         'PATCH',
-        `/rest/v1/users?user_id=eq.${encodeURIComponent(row.user_id)}&auth_uid=${authFilter}&is_active=eq.true`,
+        `/rest/v1/users?user_id=eq.${encodeURIComponent(row.user_id)}&auth_uid=${authFilter}&is_active=eq.true&practice_read_only=eq.${row.practice_read_only}`,
         body,
         { Prefer: 'return=representation' },
       ),
@@ -627,20 +707,30 @@ export function adminClient(config, fetchImpl = fetch) {
       displayName,
       role,
       isPilotTestAccount = false,
+      practiceReadOnly = false,
     ) {
       const pilot = isPilotTestAccount === true;
-      requireAppIdentity(row, authUid, email, role, pilot);
+      const observer = practiceReadOnly === true;
+      requireAppIdentity(row, authUid, email, role, pilot, observer);
       if (row.display_name === displayName)
         return { userId: row.user_id, displayNameUpdated: false };
       const updated = await updateAppUser(row, { display_name: displayName });
-      requireAppIdentity(updated, authUid, email, role, pilot);
+      requireAppIdentity(updated, authUid, email, role, pilot, observer);
       if (updated.display_name !== displayName)
         refuse('APP_USER', 'The reviewed display name was not confirmed.');
       return { userId: updated.user_id, displayNameUpdated: true };
     },
     /** Application roster row, linked by auth_uid so no claim-by-e-mail step is needed. */
-    async upsertAppUser(authUid, email, displayName, role, isPilotTestAccount = false) {
+    async upsertAppUser(
+      authUid,
+      email,
+      displayName,
+      role,
+      isPilotTestAccount = false,
+      practiceReadOnly = false,
+    ) {
       const pilot = isPilotTestAccount === true;
+      const observer = practiceReadOnly === true;
       const existing = oneAppUser(
         await call(
           'GET',
@@ -649,14 +739,22 @@ export function adminClient(config, fetchImpl = fetch) {
         true,
       );
       if (existing) {
-        requireAppIdentity(existing, authUid, email, role, pilot, true);
+        requireAppIdentity(existing, authUid, email, role, pilot, observer, true);
         if (existing.auth_uid === authUid)
-          return this.reconcileLinkedAppUser(existing, authUid, email, displayName, role, pilot);
+          return this.reconcileLinkedAppUser(
+            existing,
+            authUid,
+            email,
+            displayName,
+            role,
+            pilot,
+            observer,
+          );
         const linked = await updateAppUser(existing, {
           auth_uid: authUid,
           display_name: displayName,
         });
-        requireAppIdentity(linked, authUid, email, role, pilot);
+        requireAppIdentity(linked, authUid, email, role, pilot, observer);
         if (linked.display_name !== displayName)
           refuse('APP_USER', 'The reviewed display name was not confirmed.');
         return { userId: linked.user_id };
@@ -671,6 +769,7 @@ export function adminClient(config, fetchImpl = fetch) {
             display_name: displayName,
             role,
             is_pilot_test_account: pilot,
+            practice_read_only: observer,
           },
         ],
         // A concurrent account insertion is not authority to overwrite that identity. Refuse
@@ -678,7 +777,7 @@ export function adminClient(config, fetchImpl = fetch) {
         { Prefer: 'resolution=ignore-duplicates,return=representation' },
       );
       const inserted = oneAppUser(rows);
-      requireAppIdentity(inserted, authUid, email, role, pilot);
+      requireAppIdentity(inserted, authUid, email, role, pilot, observer);
       if (inserted.display_name !== displayName)
         refuse('APP_USER', 'The reviewed display name was not confirmed.');
       return { userId: inserted.user_id };
@@ -702,6 +801,7 @@ export function assertApplyAuthorized({
   config,
   repositoryRoot,
   approvedRefs = APPROVED_STAGING_PROJECT_REFS,
+  providedCredentials = /** @type {unknown} */ (null),
 }) {
   validateAdminConfig(config, approvedRefs);
   if (env.VERIFY_SUPABASE_ADMIN_APPLY !== '1')
@@ -714,7 +814,9 @@ export function assertApplyAuthorized({
       'CONFIRM_PROJECT',
       'Pass --confirm-project with the exact staging project reference. Nothing was changed.',
     );
-  const expected = planSha256(buildBootstrapPlan(config, repositoryRoot, undefined, approvedRefs));
+  const expected = planSha256(
+    buildBootstrapPlan(config, repositoryRoot, undefined, approvedRefs, providedCredentials),
+  );
   if (typeof planHash !== 'string' || planHash.toLowerCase() !== expected)
     refuse(
       'PLAN_HASH',

@@ -39,6 +39,7 @@ const linkedRow = (changes: Row = {}): Row => ({
   display_name: account.displayName,
   role: account.role,
   is_pilot_test_account: account.isPilotTestAccount,
+  practice_read_only: false,
   is_active: true,
   ...changes,
 });
@@ -50,13 +51,23 @@ function gateway(
     failAppWrites?: number;
     deactivateBeforePatch?: boolean;
     concurrentInsert?: Row;
+    restrictBeforePatch?: boolean;
+    account?: {
+      username: string;
+      displayName: string;
+      role: string;
+      isPilotTestAccount?: boolean;
+      practiceReadOnly?: boolean;
+    };
   } = {},
 ) {
+  const person = options.account ?? account;
+  const configuration = { ...config, accounts: [person] };
   const appRows = options.appRows ?? [];
   const authRows: Row[] =
     options.authExists === false
       ? []
-      : [{ id: authId, email: internalEmail(account.username, ref) }];
+      : [{ id: authId, email: internalEmail(person.username, ref) }];
   const calls: Call[] = [];
   const records: Row[] = [];
   let remainingWriteFailures = options.failAppWrites ?? 0;
@@ -92,6 +103,7 @@ function gateway(
         result = appRows.filter(matches);
       } else if (method === 'PATCH') {
         if (options.deactivateBeforePatch) appRows[0].is_active = false;
+        if (options.restrictBeforePatch) appRows[0].practice_read_only = true;
         const rows = appRows.filter(matches);
         for (const row of rows) Object.assign(row, body);
         result = rows;
@@ -117,13 +129,14 @@ function gateway(
     authRows,
     calls,
     records,
-    async provision() {
+    async provision(providedCredentials: unknown = null) {
       const result = { actions: [] as Row[] };
       await provisionAccounts(
-        adminClient(config, fetchMock as typeof fetch),
-        config,
+        adminClient(configuration, fetchMock as typeof fetch),
+        configuration,
         { record: (entry: Row) => records.push(entry) },
         result,
+        providedCredentials,
       );
       return result.actions;
     },
@@ -150,6 +163,7 @@ test('account apply refuses immutable pilot status, role, deactivation and ident
     [{ role: 'ADJUDICATOR' }, 'ROLE_CONFLICT'],
     [{ is_active: false }, 'INACTIVE_APP_USER'],
     [{ email: 'syn-other@accounts.invalid' }, 'IDENTITY_CONFLICT'],
+    [{ practice_read_only: true }, 'OBSERVER_STATUS_CONFLICT'],
   ] as [Row, string][]) {
     const row = linkedRow(changes);
     const state = gateway({ appRows: [row] });
@@ -161,6 +175,94 @@ test('account apply refuses immutable pilot status, role, deactivation and ident
     assert.deepEqual(state.appRows[0], linkedRow(changes), code);
     assert.equal(state.records.length, 0, code);
   }
+});
+
+test('provided credentials survive interrupted creation and are never used to reset existing accounts', async () => {
+  const supplied = {
+    projectRef: ref,
+    accounts: [{ username: account.username, password: 'Synthetic-supplied-password-42' }],
+  };
+  const state = gateway({ authExists: false, failAppWrites: 1 });
+  await assert.rejects(state.provision(supplied), /HTTP 503/);
+  assert.equal(state.authRows[0].password, supplied.accounts[0].password);
+  assert.equal(state.records[0].password, supplied.accounts[0].password);
+  const alternate = {
+    ...supplied,
+    accounts: [{ ...supplied.accounts[0], password: 'Synthetic-alternative-password-43' }],
+  };
+  assert.equal((await state.provision(alternate))[0].action, 'LINKED_EXISTING_AUTH_USER');
+  assert.equal(state.authRows[0].password, supplied.accounts[0].password);
+  assert.equal(
+    state.calls.filter((c) => c.url.pathname.startsWith('/auth/') && c.method !== 'GET').length,
+    1,
+  );
+  assert.equal((await state.provision(supplied))[0].action, 'EXISTS_LINKED');
+});
+
+test('missing or malformed supplied credentials fail before any remote call or credential output', async () => {
+  const state = gateway({ authExists: false });
+  for (const supplied of [
+    { projectRef: 'wrong-project', accounts: [] },
+    { projectRef: ref, accounts: [] },
+    { projectRef: ref, accounts: [{ username: account.username, password: 'short' }] },
+    {
+      projectRef: ref,
+      accounts: [
+        { username: account.username, password: 'Synthetic-valid-password-42' },
+        { username: 'unknown', password: 'Synthetic-valid-password-43' },
+      ],
+    },
+  ])
+    await assert.rejects(
+      state.provision(supplied),
+      (e) => e instanceof SupabaseIdentityError && e.code === 'CREDENTIAL_SOURCE',
+    );
+  assert.equal(state.calls.length, 0);
+  assert.equal(state.records.length, 0);
+});
+
+test('a new read-only investigator is restricted in its first application insert and cannot be elevated by a rerun', async () => {
+  const person = {
+    username: 'syn-observer',
+    displayName: 'Synthetic observer',
+    role: 'INVESTIGATOR',
+    isPilotTestAccount: false,
+    practiceReadOnly: true,
+  };
+  const state = gateway({ authExists: false, account: person });
+  await state.provision({
+    projectRef: ref,
+    accounts: [{ username: person.username, password: 'Synthetic-observer-password-44' }],
+  });
+  const writes = state.mutations().filter((c) => c.url.pathname === '/rest/v1/users');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].method, 'POST');
+  assert.equal((writes[0].body as Row[])[0].practice_read_only, true);
+  assert.equal(state.appRows[0].practice_read_only, true);
+  assert.equal((await state.provision())[0].action, 'EXISTS_LINKED');
+  const wrongPlan = gateway({
+    appRows: state.appRows,
+    account: { ...person, practiceReadOnly: false },
+  });
+  await assert.rejects(
+    wrongPlan.provision(),
+    (e) => e instanceof SupabaseIdentityError && e.code === 'OBSERVER_STATUS_CONFLICT',
+  );
+  assert.equal(wrongPlan.mutations().length, 0);
+  assert.equal(state.appRows[0].practice_read_only, true);
+});
+
+test('display-name writes cannot erase a concurrently imposed read-only restriction', async () => {
+  const state = gateway({
+    appRows: [linkedRow({ display_name: 'Earlier synthetic name' })],
+    restrictBeforePatch: true,
+  });
+  await assert.rejects(
+    state.provision(),
+    (e) => e instanceof SupabaseIdentityError && e.code === 'APP_USER',
+  );
+  assert.equal(state.appRows[0].display_name, 'Earlier synthetic name');
+  assert.equal(state.appRows[0].practice_read_only, true);
 });
 
 test('an exactly reconciled linked account is a no-op and remains idempotent', async () => {
