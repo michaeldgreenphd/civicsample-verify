@@ -153,7 +153,7 @@ function Banner() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The packet: our assignment, then the trial as registered
+// The packet: trial evidence first, then the assignment being assessed.
 // ---------------------------------------------------------------------------------------------
 function Packet({
   packet,
@@ -167,6 +167,9 @@ function Packet({
   const u = packet.unit;
   const t = packet.trial;
   const display = unitDisplay(u, profileId);
+  const repeatsMembership =
+    (u.family === 'AREA' && display.assertion === 'in this area') ||
+    (u.family === 'ROW' && display.assertion === 'in this row');
   const tid = (name: string) => (ids ? name : undefined);
   return (
     <section className="panel" aria-label="Unit under review">
@@ -189,42 +192,10 @@ function Packet({
               )}
           </p>
         ))}
-        <div className={styles.assignmentSummary}>
-          <p className={styles.assignmentTitle} data-testid={tid('mu7-mapping-label')}>
-            <strong>{display.title}</strong>
-            {display.context && <span className={styles.mappingContext}> {display.context}</span>}
-          </p>
-          {display.parent_row_label && (
-            <p>
-              Condition group: <strong>{display.parent_row_label}</strong>
-            </p>
-          )}
-          <p data-testid={tid('mu7-display-text')}>
-            <span className={styles.assignmentLabel}>Our classification</span>
-            <strong>{display.assertion}</strong>
-          </p>
-          {u.display_decision && (
-            <p data-testid={tid('mu7-display-decision')}>
-              <strong>{display.decision}</strong>
-            </p>
-          )}
-          <p>
-            <span className={styles.assignmentLabel}>Why it was classified this way</span>
-            {display.basis}
-          </p>
-          {display.note && (
-            <p className="form-hint" data-testid={tid('mu7-display-note')}>
-              {display.note}
-            </p>
-          )}
-          <div className={styles.reviewQuestion}>
-            <span className={styles.assignmentLabel}>Your question</span>
-            <p>{display.question}</p>
-            {display.polarity && <p className="form-hint">{display.polarity}</p>}
-          </div>
-        </div>
-        <span className="form-label">Trial</span>
-        <p>
+        <h3 className={styles.trialTitle} data-testid={tid('mu7-brief-title')}>
+          {t.brief_title}
+        </h3>
+        <p className="muted">
           <span className="mono">{t.nct_id}</span>
           {t.registry_url && (
             <>
@@ -235,10 +206,19 @@ function Packet({
             </>
           )}
         </p>
-        <p data-testid={tid('mu7-brief-title')}>
-          <strong>{t.brief_title}</strong>
-        </p>
         {t.official_title && <p className="muted">{t.official_title}</p>}
+        <div className={styles.trialSummary}>
+          <span className="form-label">Brief summary</span>
+          <p data-testid={tid('mu7-brief-summary')}>
+            {t.brief_summary || 'No brief summary registered.'}
+          </p>
+        </div>
+        {t.detailed_description && (
+          <details>
+            <summary>Detailed description</summary>
+            <p>{t.detailed_description}</p>
+          </details>
+        )}
         <dl className="metadata-list">
           <div>
             <dt>Registered conditions</dt>
@@ -267,20 +247,47 @@ function Packet({
             </dd>
           </div>
         </dl>
-        <div className="section-divider" />
-        <span className="form-label">Brief summary</span>
-        <p data-testid={tid('mu7-brief-summary')}>
-          {t.brief_summary || 'No brief summary registered.'}
-        </p>
-        {t.detailed_description && (
-          <details>
-            <summary>Detailed description</summary>
-            <p>{t.detailed_description}</p>
-          </details>
-        )}
         <p className="privacy-note">
           Registry text is shown as registered, even when it names another trial.
         </p>
+        <div className={styles.assignmentSummary}>
+          <p className={styles.assignmentTitle} data-testid={tid('mu7-mapping-label')}>
+            <strong>{display.title}</strong>
+            {display.context && <span className={styles.mappingContext}> {display.context}</span>}
+          </p>
+          {display.parent_row_label && (
+            <p>
+              Condition group: <strong>{display.parent_row_label}</strong>
+            </p>
+          )}
+          {!repeatsMembership && (
+            <p data-testid={tid('mu7-display-text')}>
+              <span className={styles.assignmentLabel}>Our classification</span>
+              <strong>{display.assertion}</strong>
+            </p>
+          )}
+          {u.display_decision && (
+            <p data-testid={tid('mu7-display-decision')}>
+              <strong>{display.decision}</strong>
+            </p>
+          )}
+          {u.family === 'SG' && (
+            <p>
+              <span className={styles.assignmentLabel}>Why it was classified this way</span>
+              {display.basis}
+            </p>
+          )}
+          {display.note && (
+            <p className="form-hint" data-testid={tid('mu7-display-note')}>
+              {display.note}
+            </p>
+          )}
+          <div className={styles.reviewQuestion}>
+            <span className={styles.assignmentLabel}>Your question</span>
+            <p>{display.question}</p>
+            {display.polarity && <p className="form-hint">{display.polarity}</p>}
+          </div>
+        </div>
       </div>
     </section>
   );

@@ -139,10 +139,18 @@
   line-height: 1.6;
   margin-bottom: 24px;
 }
+.trialTitle {
+  font-size: 20px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.trialSummary {
+  max-width: 85ch;
+  overflow-wrap: anywhere;
+}
 .assignmentSummary {
-  padding-bottom: 24px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--practice-line);
+  padding-top: 24px;
+  border-top: 1px solid var(--practice-line);
 }
 .assignmentTitle {
   font-size: 18px;
