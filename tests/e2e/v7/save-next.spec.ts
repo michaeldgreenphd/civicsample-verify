@@ -171,6 +171,13 @@ test('save and next waits for persistence, unlocks the next check and finishes w
     expect(b!.height).toBeGreaterThanOrEqual(48);
     if (width < 600) expect(b!.y - (a!.y + a!.height)).toBeGreaterThanOrEqual(12);
     else expect(b!.x - (a!.x + a!.width)).toBeGreaterThanOrEqual(12);
+    const hint = await page
+      .getByText('Save answer keeps this case open.', { exact: true })
+      .boundingBox();
+    const bounds = await panel.boundingBox();
+    expect(hint!.y).toBeGreaterThanOrEqual(b!.y + b!.height + 12);
+    expect(hint!.x).toBeGreaterThanOrEqual(bounds!.x);
+    expect(hint!.x + hint!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );

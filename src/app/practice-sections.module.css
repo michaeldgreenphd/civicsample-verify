@@ -268,8 +268,9 @@
 }
 @media (max-width: 600px) {
   .saveActions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
-    flex-direction: column;
   }
   .saveActions :global(.button) {
     width: 100%;
