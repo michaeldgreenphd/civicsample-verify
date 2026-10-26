@@ -186,6 +186,26 @@
 .reviewQuestion > p + p {
   margin-top: 8px;
 }
+.answerTarget {
+  margin-bottom: 20px;
+  max-width: 75ch;
+  overflow-wrap: anywhere;
+}
+.answerTarget .answerTargetLabel {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+.answerTarget h3 {
+  font-size: 18px;
+  line-height: 1.5;
+  margin: 0 0 8px;
+}
+.answerTarget p {
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+}
 .guideIntro {
   display: flex;
   align-items: center;

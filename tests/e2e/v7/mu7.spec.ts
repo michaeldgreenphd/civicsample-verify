@@ -168,6 +168,35 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await expect(adjPage.getByTestId('mu7-slot-1')).toHaveCount(0);
     await adjPage.getByRole('tab', { name: 'Adjudication', exact: true }).click();
     const aQueue = await queueOf(a);
+    const answerPanel = aPage.getByRole('region', { name: 'Your answer', exact: true });
+    // Both registry condition lists remain evidence. Only the named assignment is answered.
+    for (const [id, title, other] of [
+      ['SYN7-AREA-CARDIOVASCULAR-001', 'Therapeutic area — Cardiovascular', 'condition group'],
+      ['SYN7-ROW-DIAB-001', 'Condition group — Diabetes Mellitus', 'therapeutic area'],
+    ]) {
+      const position = aQueue.findIndex((q) => q.unitId === id) + 1;
+      await aPage.getByRole('button', { name: new RegExp(`^Unit ${position}:`) }).click();
+      await expect(answerPanel.getByRole('heading')).toHaveText(title);
+      const choices = answerPanel.getByRole('radiogroup', { name: 'Answer', exact: true });
+      await expect(choices).toHaveAccessibleDescription(
+        new RegExp(`You are judging.*${title}.*does not also confirm a ${other}`),
+      );
+      await expect(choices.getByRole('radio')).toHaveCount(3);
+      await expect(choices.locator('input:checked')).toHaveCount(0);
+      if (id.includes('CARDIOVASCULAR')) {
+        for (const width of [1280, 390, 320]) {
+          await aPage.setViewportSize({ width, height: 900 });
+          expect(
+            await aPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+          ).toBe(true);
+          if (width !== 320)
+            await answerPanel.screenshot({
+              path: `test-results/review-target-answer-${width}.png`,
+            });
+        }
+        await aPage.setViewportSize({ width: 1280, height: 900 });
+      }
+    }
     const disagreeUnit = aQueue.find(
       (q) => q.unitRole === 'PRIMARY' && planted(q.unitId, 1).answer === 'DISAGREE',
     )!;
@@ -350,6 +379,10 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     await adjPage.getByRole('button', { name: new RegExp(`^${ROUTED[0]}`) }).click();
     await expect(adjPage.getByTestId('mu7-slot-1')).toBeVisible();
     await expect(adjPage.getByTestId('mu7-slot-2')).toBeVisible();
+    await expect(adjPage.locator('#mu7-adjudication-target').getByRole('heading')).not.toBeEmpty();
+    await expect(adjPage.getByRole('radiogroup', { name: 'Outcome' })).toHaveAccessibleDescription(
+      /You are judging/,
+    );
     expect(await adjPage.content()).not.toMatch(hidden);
     await adjPage.getByRole('radio', { name: 'Mark unresolved' }).check();
     await adjPage.getByLabel('Rationale').fill('Synthetic: the registry text does not settle it.');

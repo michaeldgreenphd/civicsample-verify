@@ -10,6 +10,7 @@ test('investigator browses all 100 proposed packets without recording answers at
   for (const i of [0, 56]) {
     const packet = data.units[i].packet;
     packet.unit.display_text = i === 0 ? 'in this area' : 'in this row';
+    if (i === 56) packet.unit.mapping_label = 'Figure 2 condition row: Diabetes Mellitus';
     if (i === 0) {
       packet.unit.mapping_label =
         'Therapeutic area: Pathological conditions, signs and symptoms (parent MeSH category C23 Pathological Conditions, Signs and Symptoms)';
@@ -59,6 +60,11 @@ test('investigator browses all 100 proposed packets without recording answers at
   await expect(panel.getByRole('status')).toContainText('Mapping 1 of 100');
   await expect(panel.getByLabel('Choose a proposed mapping').locator('option')).toHaveCount(100);
   const packet = panel.getByRole('region', { name: 'Unit under review' });
+  const answers = panel.getByRole('region', { name: 'Answer choices preview' });
+  await expect(answers.getByRole('heading', { name: /^Therapeutic area —/ })).toHaveText(
+    'Therapeutic area — Pathological conditions, signs and symptoms',
+  );
+  await expect(answers).toContainText('It does not also confirm a condition group.');
   await expect(packet.getByText('Our classification', { exact: true })).toHaveCount(0);
   await expect(packet.getByText('Why it was classified this way')).toHaveCount(0);
   await expect(packet).not.toContainText('The original sorting used');
@@ -83,13 +89,20 @@ test('investigator browses all 100 proposed packets without recording answers at
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    if (width !== 320)
+    if (width !== 320) {
       await packet.screenshot({ path: `test-results/evidence-first-packet-${width}.png` });
+      await answers.screenshot({ path: `test-results/review-target-preview-${width}.png` });
+    }
   }
   await packet.getByText('Detailed description', { exact: true }).click();
   await expect(packet).toContainText('Additional fictional registry evidence.');
   await panel.getByLabel('Choose a proposed mapping').selectOption('57');
   await expect(panel.getByRole('status')).toContainText('Mapping 57 of 100');
+  await expect(answers.getByRole('heading', { name: /^Condition group —/ })).toHaveText(
+    'Condition group — Diabetes Mellitus',
+  );
+  await expect(answers).toContainText('It does not also confirm a therapeutic area.');
+  await expect(answers.getByRole('heading', { name: /^Therapeutic area —/ })).toHaveCount(0);
   await expect(packet.getByText('Our classification', { exact: true })).toHaveCount(0);
   await expect(packet.getByText('Why it was classified this way')).toHaveCount(0);
   await panel.getByLabel('Choose a proposed mapping').selectOption('100');

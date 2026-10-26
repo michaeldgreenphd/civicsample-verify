@@ -123,7 +123,14 @@ test('revised guide, unsaved subtype answer and accessible mobile reference navi
     await expect(page.getByTestId('mu7-display-decision')).toHaveText(
       'Included in the Diabetes Mellitus group',
     );
-    await expect(page.getByText(/Agree confirms the inclusion/)).toBeVisible();
+    const answerPanel = page.getByRole('region', { name: 'Your answer', exact: true });
+    await expect(answerPanel.getByRole('heading')).toHaveText(
+      'Inclusion check — Diabetes mellitus',
+    );
+    await expect(answerPanel.getByText(/Agree confirms the inclusion/)).toBeVisible();
+    await expect(
+      answerPanel.getByRole('radiogroup', { name: 'Answer', exact: true }),
+    ).toHaveAttribute('aria-describedby', 'mu7-review-target');
     await page.getByRole('radio', { name: 'Agree', exact: true }).check();
     await expect(page.getByRole('button', { name: 'Save answer', exact: true })).toBeDisabled();
     await page.getByRole('radio', { name: 'Type 2 diabetes is not stated', exact: true }).check();

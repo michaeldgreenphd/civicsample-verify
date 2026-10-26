@@ -29,6 +29,7 @@ import { PracticeSections, ReviewGuide } from './practice-sections';
 import { FormalPreparation } from './formal-preparation';
 import { FormalSampleIntake } from './formal-intake';
 import { ProposedSamplePreview } from './sample-preview';
+import { ReviewTarget } from './review-target';
 import {
   answerMeaning,
   reasonLabel,
@@ -594,7 +595,17 @@ function Reviewer({
                       )}
                     </p>
                   )}
-                  <div className="decision-list" role="radiogroup" aria-label="Answer">
+                  <ReviewTarget
+                    unit={shown.packet.unit}
+                    profileId={profileId}
+                    id="mu7-review-target"
+                  />
+                  <div
+                    className="decision-list"
+                    role="radiogroup"
+                    aria-label="Answer"
+                    aria-describedby="mu7-review-target"
+                  >
                     {MU7_ANSWERS.map((a) => (
                       <label
                         key={a}
@@ -885,7 +896,17 @@ function Adjudicator({
                     <p className="muted">The reference is locked.</p>
                   ) : (
                     <>
-                      <div className="decision-list" role="radiogroup" aria-label="Outcome">
+                      <ReviewTarget
+                        unit={shown.packet.unit}
+                        profileId={profileId}
+                        id="mu7-adjudication-target"
+                      />
+                      <div
+                        className="decision-list"
+                        role="radiogroup"
+                        aria-label="Outcome"
+                        aria-describedby="mu7-adjudication-target"
+                      >
                         <label
                           aria-label="Resolve"
                           className={`decision-option${form.status === 'DISCORDANT_RESOLVED' ? ' chosen' : ''}`}
@@ -930,6 +951,7 @@ function Adjudicator({
                           <label className="field">
                             <span className="form-label">Decision</span>
                             <select
+                              aria-describedby="mu7-adjudication-target"
                               value={form.decision ?? 'AGREE'}
                               onChange={(e) => {
                                 const decision = e.target.value as 'AGREE' | 'DISAGREE';
