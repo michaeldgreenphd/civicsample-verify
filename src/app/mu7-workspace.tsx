@@ -94,8 +94,17 @@ export function Mu7Panel({ user }: { user: Actor }) {
   if (workspace.kind === 'investigator')
     return (
       <PracticeSections
-        workLabel="Practice setup"
-        description="Manage the synthetic practice and return to the worked examples at any time."
+        reviewMode={workspace.design?.designVersion === 'review-design-v8.1.0'}
+        workLabel={
+          workspace.design?.designVersion === 'review-design-v8.1.0'
+            ? 'Study preparation'
+            : 'Practice setup'
+        }
+        description={
+          workspace.design?.designVersion === 'review-design-v8.1.0'
+            ? 'Inspect the recorded sample and guide. Clinical review remains closed.'
+            : 'Manage the synthetic practice and return to the worked examples at any time.'
+        }
         exampleCount={workspace.training.length}
         examples={
           <Training
@@ -1046,6 +1055,7 @@ function Investigator({
     }
   }
   const w = workspace;
+  const formalPreparation = w.design?.designVersion === 'review-design-v8.1.0';
   const attested = attestation.trim().length >= 20;
   const registered =
     bundle !== null && w.exports.some((x) => x.manifestSha256 === bundle.manifestSha256);
@@ -1072,181 +1082,184 @@ function Investigator({
           {error}
         </div>
       )}
-      <Banner />
+      {!formalPreparation && <Banner />}
       <FormalPreparation workspace={w} />
-      <FormalSampleIntake />
+      <FormalSampleIntake onRecorded={onRefresh} />
       <ProposedSamplePreview
         renderPacket={(packet, profileId) => <Packet packet={packet} profileId={profileId} />}
       />
-      <section className="panel" aria-label="Synthetic pilot">
-        <div className="panel-header">
-          <span className="section-label">Synthetic pilot</span>
-          <span className="header-phase" data-testid="mu7-phase">
-            {w.pilotLock
-              ? `Pilot locked (${w.pilotLock.nUnitsLocked} units)`
-              : w.design
-                ? 'Pilot open'
-                : 'No design recorded'}
-          </span>
-        </div>
-        <div className="panel-body">
-          <div className="stat-strip">
-            <div className="stat">
-              <span className="stat-value">{w.counts.pilotUnits}</span>
-              <span className="stat-label">Synthetic pilot units</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{w.counts.trainingUnits}</span>
-              <span className="stat-label">Worked examples, outside every total</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{w.counts.pilotQueue}</span>
-              <span className="stat-label">Pilot assignments</span>
-            </div>
-            <div className="stat">
-              <span className="stat-value">{w.counts.formalUnits}</span>
-              <span className="stat-label">Formal units</span>
-            </div>
+      {!formalPreparation && (
+        <section className="panel" aria-label="Synthetic pilot">
+          <div className="panel-header">
+            <span className="section-label">Synthetic pilot</span>
+            <span className="header-phase" data-testid="mu7-phase">
+              {w.pilotLock
+                ? `Pilot locked (${w.pilotLock.nUnitsLocked} units)`
+                : w.design
+                  ? 'Pilot open'
+                  : 'No design recorded'}
+            </span>
           </div>
-          {!w.design && (
-            <div className="step">
-              <h3>Record the design</h3>
-              <p>
-                Records a synthetic local design ({'SYN-7-SYNTHETIC-PILOT'}). The study’s own design
-                values wait for the investigator’s decisions.
-              </p>
-              {AttestationField}
-              <div className="button-row">
-                <button
-                  className="button"
-                  disabled={busy || !attested}
-                  onClick={() => act({ action: 'record-design', attestation })}
-                >
-                  Record the synthetic design
-                </button>
-                {w.canCreateProfilePilot && (
+          <div className="panel-body">
+            <div className="stat-strip">
+              <div className="stat">
+                <span className="stat-value">{w.counts.pilotUnits}</span>
+                <span className="stat-label">Synthetic pilot units</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{w.counts.trainingUnits}</span>
+                <span className="stat-label">Worked examples, outside every total</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{w.counts.pilotQueue}</span>
+                <span className="stat-label">Pilot assignments</span>
+              </div>
+              <div className="stat">
+                <span className="stat-value">{w.counts.formalUnits}</span>
+                <span className="stat-label">Formal units</span>
+              </div>
+            </div>
+            {!w.design && (
+              <div className="step">
+                <h3>Record the design</h3>
+                <p>
+                  Records a synthetic local design ({'SYN-7-SYNTHETIC-PILOT'}). The study’s own
+                  design values wait for the investigator’s decisions.
+                </p>
+                {AttestationField}
+                <div className="button-row">
+                  <button
+                    className="button"
+                    disabled={busy || !attested}
+                    onClick={() => act({ action: 'record-design', attestation })}
+                  >
+                    Record the synthetic design
+                  </button>
+                  {w.canCreateProfilePilot && (
+                    <button
+                      className="button secondary"
+                      disabled={busy || !attested}
+                      onClick={() => act({ action: 'record-profile-design', attestation })}
+                    >
+                      Start practice with the revised guide
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {w.design && !w.pilotLock && (
+              <div className="step">
+                <h3>Prepare the pilot</h3>
+                <p>
+                  Import the 12 synthetic units and the three synthetic worked examples, then assign
+                  every unit to both pilot reviewers: primary units first, subgroup units last.
+                </p>
+                <div className="toolbar">
                   <button
                     className="button secondary"
-                    disabled={busy || !attested}
-                    onClick={() => act({ action: 'record-profile-design', attestation })}
+                    disabled={busy || w.counts.pilotUnits > 0}
+                    onClick={() => act({ action: 'import-pilot' })}
                   >
-                    Start practice with the revised guide
+                    {w.counts.pilotUnits
+                      ? 'Pilot units imported'
+                      : 'Import the synthetic pilot units'}
                   </button>
-                )}
+                  <button
+                    className="button secondary"
+                    disabled={busy || w.counts.trainingUnits > 0}
+                    onClick={() => act({ action: 'import-training' })}
+                  >
+                    {w.counts.trainingUnits
+                      ? 'Worked examples imported'
+                      : 'Import the worked examples'}
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={busy || w.counts.pilotUnits === 0 || w.counts.pilotQueue > 0}
+                    onClick={() => act({ action: 'assign-pilot' })}
+                  >
+                    {w.counts.pilotQueue ? 'Both queues assigned' : 'Assign both pilot queues'}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {w.design && !w.pilotLock && (
-            <div className="step">
-              <h3>Prepare the pilot</h3>
-              <p>
-                Import the 12 synthetic units and the three synthetic worked examples, then assign
-                every unit to both pilot reviewers: primary units first, subgroup units last.
-              </p>
-              <div className="toolbar">
-                <button
-                  className="button secondary"
-                  disabled={busy || w.counts.pilotUnits > 0}
-                  onClick={() => act({ action: 'import-pilot' })}
-                >
-                  {w.counts.pilotUnits
-                    ? 'Pilot units imported'
-                    : 'Import the synthetic pilot units'}
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy || w.counts.trainingUnits > 0}
-                  onClick={() => act({ action: 'import-training' })}
-                >
-                  {w.counts.trainingUnits
-                    ? 'Worked examples imported'
-                    : 'Import the worked examples'}
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy || w.counts.pilotUnits === 0 || w.counts.pilotQueue > 0}
-                  onClick={() => act({ action: 'assign-pilot' })}
-                >
-                  {w.counts.pilotQueue ? 'Both queues assigned' : 'Assign both pilot queues'}
-                </button>
+            )}
+            {w.design && !w.pilotLock && w.counts.pilotQueue > 0 && (
+              <div className="step">
+                <h3>Lock the pilot reference</h3>
+                <p>
+                  Possible once both reviewers have answered every unit and every routed unit has
+                  its tie-break. The lock fixes the pilot inventory; nothing can be added or
+                  answered afterwards.
+                </p>
+                {AttestationField}
+                <div className="button-row">
+                  <button
+                    className="button"
+                    disabled={busy || !attested}
+                    onClick={() => act({ action: 'lock-pilot', attestation })}
+                  >
+                    Lock the pilot reference
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {w.design && !w.pilotLock && w.counts.pilotQueue > 0 && (
-            <div className="step">
-              <h3>Lock the pilot reference</h3>
-              <p>
-                Possible once both reviewers have answered every unit and every routed unit has its
-                tie-break. The lock fixes the pilot inventory; nothing can be added or answered
-                afterwards.
-              </p>
-              {AttestationField}
-              <div className="button-row">
-                <button
-                  className="button"
-                  disabled={busy || !attested}
-                  onClick={() => act({ action: 'lock-pilot', attestation })}
-                >
-                  Lock the pilot reference
-                </button>
+            )}
+            {w.pilotLock && (
+              <div className="step">
+                <h3>Export the locked pilot</h3>
+                <p>
+                  Build the locked pilot bundle, check its manifest, then register its hashes. The
+                  bundle is marked synthetic; the analysis reads formal bundles only.
+                </p>
+                <div className="button-row">
+                  <button
+                    className="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setBusy(true);
+                      api<BundleSummary>('/api/mu7/admin/export/PILOT')
+                        .then((b) => {
+                          setBundle(b);
+                          setError('');
+                        })
+                        .catch((e) => setError(e.message))
+                        .finally(() => setBusy(false));
+                    }}
+                  >
+                    Build export
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={busy || bundle === null || registered}
+                    onClick={() => act({ action: 'register-pilot-export' })}
+                  >
+                    {registered ? 'Export registered' : 'Register export'}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-          {w.pilotLock && (
-            <div className="step">
-              <h3>Export the locked pilot</h3>
-              <p>
-                Build the locked pilot bundle, check its manifest, then register its hashes. The
-                bundle is marked synthetic; the analysis reads formal bundles only.
-              </p>
-              <div className="button-row">
-                <button
-                  className="button"
-                  disabled={busy}
-                  onClick={() => {
-                    setBusy(true);
-                    api<BundleSummary>('/api/mu7/admin/export/PILOT')
-                      .then((b) => {
-                        setBundle(b);
-                        setError('');
-                      })
-                      .catch((e) => setError(e.message))
-                      .finally(() => setBusy(false));
-                  }}
-                >
-                  Build export
-                </button>
-                <button
-                  className="button secondary"
-                  disabled={busy || bundle === null || registered}
-                  onClick={() => act({ action: 'register-pilot-export' })}
-                >
-                  {registered ? 'Export registered' : 'Register export'}
-                </button>
-              </div>
-            </div>
-          )}
-          {bundle && (
-            <div className="notice" data-testid="mu7-bundle">
-              <strong>
-                Bundle {String(bundle.manifest.bundle_format_version)}, {readable(bundle.mode)} mode
-              </strong>
-              {String(bundle.manifest.status)}. Manifest{' '}
-              <span className="mono">{bundle.manifestSha256.slice(0, 12)}…</span>
-              <ul>
-                <li>
-                  <a href="/api/mu7/admin/export/PILOT/manifest.json">manifest.json</a>
-                </li>
-                {bundle.files.map((f) => (
-                  <li key={f.name}>
-                    <a href={`/api/mu7/admin/export/PILOT/${f.name}`}>{f.name}</a> ({f.rows} rows)
+            )}
+            {bundle && (
+              <div className="notice" data-testid="mu7-bundle">
+                <strong>
+                  Bundle {String(bundle.manifest.bundle_format_version)}, {readable(bundle.mode)}{' '}
+                  mode
+                </strong>
+                {String(bundle.manifest.status)}. Manifest{' '}
+                <span className="mono">{bundle.manifestSha256.slice(0, 12)}…</span>
+                <ul>
+                  <li>
+                    <a href="/api/mu7/admin/export/PILOT/manifest.json">manifest.json</a>
                   </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      </section>
+                  {bundle.files.map((f) => (
+                    <li key={f.name}>
+                      <a href={`/api/mu7/admin/export/PILOT/${f.name}`}>{f.name}</a> ({f.rows} rows)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="panel" aria-label="Progress">
         <div className="panel-header">
@@ -1272,7 +1285,7 @@ function Investigator({
               {!w.completion.length && (
                 <tr>
                   <td colSpan={3} className="muted">
-                    No pilot queue yet.
+                    {formalPreparation ? 'No reviewers assigned.' : 'No pilot queue yet.'}
                   </td>
                 </tr>
               )}

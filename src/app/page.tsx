@@ -85,7 +85,16 @@ function Brand() {
     </a>
   );
 }
-function Header({ user, onLogout }: { user: SessionUser | null; onLogout: () => void }) {
+function Header({
+  user,
+  onLogout,
+  environment,
+}: {
+  user: SessionUser | null;
+  onLogout: () => void;
+  environment: string | null;
+}) {
+  const synthetic = environment === 'synthetic';
   return (
     <>
       <a className="skip-link" href="#main">
@@ -111,8 +120,16 @@ function Header({ user, onLogout }: { user: SessionUser | null; onLogout: () => 
       </header>
       <div className="environment-banner">
         <span className="environment-dot" />
-        <strong>SYNTHETIC PILOT</strong>
-        <span>Fabricated evidence only. This workspace is not approved for formal validation.</span>
+        <strong>
+          {environment === null ? 'CONNECTING' : synthetic ? 'SYNTHETIC PILOT' : 'REVIEW WORKSPACE'}
+        </strong>
+        <span>
+          {environment === null
+            ? 'Checking your sign-in and workspace.'
+            : synthetic
+              ? 'Fabricated evidence only. This workspace is not approved for formal validation.'
+              : 'Practice and study records are identified within the workspace. Access follows your study role.'}
+        </span>
       </div>
     </>
   );
@@ -299,7 +316,7 @@ function Login({
         </button>
         <div className="auth-note">
           {hosted
-            ? 'Staging environment on Supabase: synthetic accounts and records only; formal-study activation is disabled.'
+            ? 'Sign in to your assigned workspace. Study access is controlled by the investigator.'
             : 'Use the password for your assigned role from local setup. Access is limited to synthetic fixtures; formal-study activation is disabled.'}
         </div>
       </form>
@@ -363,7 +380,7 @@ export default function Home() {
   }
   return (
     <>
-      <Header user={user} onLogout={logout} />
+      <Header user={user} onLogout={logout} environment={initializing ? null : environment} />
       {initializing ? (
         <main id="main" className="loading">
           <span className="loading-dot" />
@@ -389,8 +406,8 @@ export default function Home() {
         <main id="main" className="app-shell">
           <div className={`page-intro ${tab === 'mu7' ? practiceStyles.compactIntro : ''}`}>
             <div>
-              <div className="eyebrow">Supabase staging · synthetic records only</div>
-              <h1>Clinical review practice</h1>
+              <div className="eyebrow">Your review workspace</div>
+              <h1>Clinical classification review</h1>
               <p className="intro-copy">
                 Signed in as {user.displayName},{' '}
                 {user.practiceReadOnly ? 'view-only practice' : user.role.toLowerCase()}.

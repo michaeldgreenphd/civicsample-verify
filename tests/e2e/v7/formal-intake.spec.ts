@@ -1,12 +1,38 @@
 // Served production UI with a synthetic intake-plan DTO. No study data or remote writes.
 import AxeBuilder from '@axe-core/playwright';
 import { test, expect } from '@playwright/test';
+import type { Mu7InvestigatorWorkspace } from '../../../src/lib/mu7-types';
 
 test('sample intake confirms counts, requires an attestation and preserves occupied workspaces', async ({
   page,
 }) => {
   let state = 'EMPTY',
-    fail = false;
+    fail = false,
+    refreshFails = false;
+  const workspace: Mu7InvestigatorWorkspace = {
+    kind: 'investigator',
+    training: [],
+    design: null,
+    counts: { pilotUnits: 0, formalUnits: 0, trainingUnits: 0, pilotQueue: 0 },
+    pilotReviewers: [],
+    completion: [],
+    pilotRouting: [],
+    pilotLock: null,
+    exports: [],
+    phaseEvents: [],
+    gates: [],
+    formalOperationsEnabled: false,
+    formalDisabledReason: 'Formal review remains disabled.',
+    localTools: false,
+    appGitSha: 'a'.repeat(40),
+  };
+  await page.route('**/api/mu7/workspace', (route) =>
+    route.fulfill(
+      refreshFails
+        ? { status: 503, json: { error: 'Synthetic refresh failure.' } }
+        : { json: workspace },
+    ),
+  );
   const writes: unknown[] = [];
   await page.route('**/api/mu7/admin/intake', async (route) => {
     if (route.request().method() === 'GET')
@@ -21,6 +47,17 @@ test('sample intake confirms counts, requires an attestation and preserves occup
         },
       });
     writes.push(route.request().postDataJSON());
+    if (!fail) {
+      workspace.design = {
+        designVersion: 'review-design-v8.1.0',
+        assignmentSetId: 'SYNTHETIC-INTAKE',
+        overlapSetting: 'ONE_PER_TRIAL',
+        nPrimaryPlanned: 96,
+        nSubgroupPlanned: 4,
+        recordedAt: '2026-01-01T00:00:00Z',
+      };
+      workspace.counts.formalUnits = 100;
+    }
     return route.fulfill(
       fail
         ? {
@@ -77,7 +114,26 @@ test('sample intake confirms counts, requires an attestation and preserves occup
   fail = false;
   await load.click();
   await expect(panel.getByRole('status')).toContainText('Review remains closed');
+  await expect(page.getByRole('tab', { name: 'Study preparation', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Preparing formal review' })).toContainText(
+    '100 recorded',
+  );
+  await expect(page.getByRole('region', { name: 'Synthetic pilot', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Progress', exact: true })).toContainText(
+    'No reviewers assigned.',
+  );
+  await expect(page.getByRole('button', { name: 'Import the synthetic pilot units' })).toHaveCount(
+    0,
+  );
   expect(writes).toEqual(Array(2).fill({ packageSha256: 'a'.repeat(64), attestation }));
+  state = 'RECORDED';
+  refreshFails = true;
+  await panel.getByRole('button', { name: 'Check prepared sample' }).click();
+  await panel.getByRole('textbox').fill(attestation);
+  await load.click();
+  await expect(panel.getByRole('status')).toContainText(
+    'The 100 mappings are recorded and review remains closed. Refresh the page',
+  );
   for (const occupied of ['OCCUPIED', 'CLOSED']) {
     state = occupied;
     await panel.getByRole('button', { name: 'Check prepared sample' }).click();
