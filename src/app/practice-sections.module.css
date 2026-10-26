@@ -206,6 +206,75 @@
   line-height: 1.6;
   margin: 0;
 }
+.reviewContent {
+  min-width: 0;
+  scroll-margin-top: 24px;
+}
+.reviewSaveStatus {
+  color: var(--teal-dark);
+  font-size: 14px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.reviewSaveStatus:empty {
+  margin: 0;
+}
+.reviewContent :global(.notice.error) button {
+  margin-top: 12px;
+  min-height: 48px;
+}
+.answerControls {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+}
+.answerControls > :global(.field),
+.answerControls > :global(.decision-list),
+.answerControls > :global(.checkbox-row) {
+  margin: 0;
+}
+.answerControls :global(.checkbox-row) {
+  min-height: 44px;
+}
+.answerControls :global(.form-hint) {
+  display: block;
+}
+.saveActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-top: 24px;
+  border-top: 1px solid var(--practice-line);
+}
+.saveActions :global(.button) {
+  min-height: 48px;
+}
+.saveHint,
+.savedInline {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.saveHint {
+  color: var(--muted);
+}
+.savedInline {
+  color: var(--teal-dark);
+}
+@media (max-width: 600px) {
+  .saveActions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .saveActions :global(.button) {
+    width: 100%;
+  }
+}
 .guideIntro {
   display: flex;
   align-items: center;
