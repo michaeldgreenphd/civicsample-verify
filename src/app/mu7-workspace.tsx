@@ -27,6 +27,7 @@ import type { Actor } from '@/lib/types';
 import { Icon } from '@/components/icons';
 import { PracticeSections, ReviewGuide } from './practice-sections';
 import { FormalPreparation } from './formal-preparation';
+import { FormalSampleIntake } from './formal-intake';
 import { ProposedSamplePreview } from './sample-preview';
 import {
   answerMeaning,
@@ -1073,6 +1074,7 @@ function Investigator({
       )}
       <Banner />
       <FormalPreparation workspace={w} />
+      <FormalSampleIntake />
       <ProposedSamplePreview
         renderPacket={(packet, profileId) => <Packet packet={packet} profileId={profileId} />}
       />

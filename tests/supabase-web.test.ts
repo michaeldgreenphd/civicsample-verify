@@ -496,6 +496,48 @@ const cookieJar = (response: Response) =>
     .filter((c) => !c.endsWith('='))
     .join('; ');
 
+test('prepared sample routes deny other roles, read-only investigators and missing MFA before loading a file', async () => {
+  const { GET, POST } = await import('../src/app/api/[...path]/route');
+  const user = g.users[internalEmail('syn-reviewer-1', REF)];
+  const original = user.role;
+  const path = '/api/mu7/admin/intake';
+  const start = g.log.length;
+  try {
+    for (const role of ['REVIEWER', 'ADJUDICATOR', 'PRACTICE_OBSERVER', 'INVESTIGATOR']) {
+      user.role = role;
+      const token = g.issue(user.id, 'aal1');
+      const cookie = `${ACCESS_COOKIE}=${token.access_token}`;
+      assert.equal((await GET(req(path, { cookie }))).status, 403, role);
+      assert.equal(
+        (await POST(req(path, { cookie, method: 'POST', body: '{}' }))).status,
+        403,
+        role,
+      );
+    }
+    const token = g.issue(user.id, 'aal2');
+    assert.equal(
+      (
+        await POST(
+          req(path, {
+            cookie: `${ACCESS_COOKIE}=${token.access_token}`,
+            method: 'POST',
+            body: '{}',
+            headers: { origin: 'https://invalid.example' },
+          }),
+        )
+      ).status,
+      403,
+    );
+    assert.equal((await GET(req(path))).status, 401);
+    assert.equal(
+      g.log.slice(start).some((x) => /rpc_mu81_(stage_sample|intake_status)/.test(x.path)),
+      false,
+    );
+  } finally {
+    user.role = original;
+  }
+});
+
 test('routes in Supabase mode: sign-in sets cookies, session reports role and aal, investigator actions need aal2, local routes are not served', async () => {
   const { POST, GET, DELETE } = await import('../src/app/api/[...path]/route');
   const bad = await POST(

@@ -37,7 +37,8 @@
     "demo:mapconf": "node scripts/mapconf-demo.mjs",
     "build:hosted": "node scripts/hosted-build.mjs",
     "start:hosted": "node scripts/hosted-start.mjs",
-    "mu81:offline-import-check": "node --import tsx scripts/mu81-disposable-import.ts"
+    "mu81:offline-import-check": "node --import tsx scripts/mu81-disposable-import.ts",
+    "mu81:prepare-intake": "node --import tsx scripts/prepare-formal-intake.ts"
   },
   "engines": {
     "node": ">=22.0.0"

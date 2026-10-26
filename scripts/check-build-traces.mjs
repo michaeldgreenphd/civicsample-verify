@@ -44,6 +44,7 @@ const sqlInputs = new Set([
   'migrations/0036_v81_judgment_history.sql',
   'migrations/0037_v81_reviewer_profile.sql',
   'migrations/0038_v81_reviewer_guide_r4.sql',
+  'migrations/0039_v81_prepared_sample_intake.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 const guideInputs = [

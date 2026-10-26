@@ -185,6 +185,7 @@ export function verifyProfilePreparation(
 export async function checkAlternative(
   files: Map<string, Buffer>,
   alternative: (typeof alternatives)[number],
+  inspect?: (db: Awaited<ReturnType<typeof newDatabase>>) => Promise<void>,
 ) {
   const profile = verifyProfilePreparation(files, alternative);
   const suffix = profile ? `_PROFILE_R${MU81_REVIEWER_PROFILES[profile.profile_id].revision}` : '';
@@ -292,6 +293,7 @@ export async function checkAlternative(
       (select count(*) from public.mu7_snapshot)+(select count(*) from public.mu7_reference_locks)+
       (select count(*) from public.mu7_exports))::integer as n`);
     requireCheck(remaining.rows[0].n === 0);
+    if (inspect) await inspect(db);
     return {
       alternative,
       status: 'PASS',
