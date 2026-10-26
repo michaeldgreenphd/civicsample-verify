@@ -250,7 +250,7 @@
   padding-top: 24px;
   border-top: 1px solid var(--practice-line);
 }
-.saveActions :global(.button) {
+.workspace .saveActions :global(.button) {
   min-height: 48px;
 }
 .saveHint,

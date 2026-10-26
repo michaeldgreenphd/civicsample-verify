@@ -91,7 +91,7 @@ test('v8.1 subtype control: required, readable, persistent on reload, mobile and
   await expect(page.getByRole('button', { name: 'Save answer', exact: true })).toBeDisabled();
   await page.getByRole('radio', { name: 'Type 2 diabetes is not stated', exact: true }).check();
   await page.getByRole('button', { name: 'Save answer', exact: true }).click();
-  await expect(page.getByText('Answer saved.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Your answer is saved.');
   await page.reload();
   await page.getByRole('button', { name: /Mapping units/ }).click();
   await page.getByRole('button', { name: `Unit 1: ${unitId}` }).click();

@@ -502,7 +502,9 @@ function Reviewer({
         onSelect(next.assignmentId);
       } else if (refreshed.queue.every((q) => q.answered)) {
         setSaved(
-          `All ${refreshed.queue.length} answers are saved. You can return to revise them until review closes.`,
+          refreshed.queue.length === 1
+            ? 'Your answer is saved. You can return to revise it until review closes.'
+            : `All ${refreshed.queue.length} answers are saved. You can return to revise them until review closes.`,
         );
       } else if (receipt.advance && !next) {
         setSaved('Answer saved. No other cases are available yet. You can return later.');

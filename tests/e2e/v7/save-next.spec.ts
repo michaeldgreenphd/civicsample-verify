@@ -225,7 +225,9 @@ test('save failure preserves the draft; progress retry after a confirmed save ne
     .fill('Synthetic rationale that must survive a failed save.');
   await page.getByLabel(/I am answering, but I am not sure/).check();
   await page.getByRole('button', { name: 'Save and next', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Your answer was not recorded');
+  await expect(
+    page.getByRole('tabpanel', { name: 'Practice cases', exact: true }).getByRole('alert'),
+  ).toContainText('Your answer was not recorded');
   await expect(page.getByTestId('mu7-unit-id')).toHaveText('SYN-NAV-1');
   await expect(page.getByRole('radio', { name: 'Disagree', exact: true })).toBeChecked();
   await expect(page.getByLabel('Note (required)')).toHaveValue(
@@ -235,9 +237,9 @@ test('save failure preserves the draft; progress retry after a confirmed save ne
   await expect(page.getByLabel(/I am answering, but I am not sure/)).toBeChecked();
   state.failProgress = true;
   await page.getByRole('button', { name: 'Save and next', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText(
-    'Your answer was saved, but progress could not be refreshed.',
-  );
+  await expect(
+    page.getByRole('tabpanel', { name: 'Practice cases', exact: true }).getByRole('alert'),
+  ).toContainText('Your answer was saved, but progress could not be refreshed.');
   await expect(page.getByTestId('mu7-own-answer')).toContainText('Disagree');
   await expect(page.getByRole('button', { name: 'Save and next', exact: true })).toBeDisabled();
   expect(state.answers[0]).toHaveLength(1);
@@ -256,7 +258,9 @@ test('a failed next-case read can be retried without another answer submission',
   state.failDetail = 2;
   await page.getByRole('radio', { name: 'Agree', exact: true }).check();
   await page.getByRole('button', { name: 'Save and next', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Synthetic case-loading failure.');
+  await expect(
+    page.getByRole('tabpanel', { name: 'Practice cases', exact: true }).getByRole('alert'),
+  ).toContainText('Synthetic case-loading failure.');
   await expect(page.getByRole('status')).toContainText('Case 1 saved.');
   await page.getByRole('button', { name: 'Retry loading case', exact: true }).click();
   await expect(page.getByTestId('mu7-unit-id')).toHaveText('SYN-NAV-2');
