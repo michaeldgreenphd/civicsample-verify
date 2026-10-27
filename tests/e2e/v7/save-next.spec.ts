@@ -344,6 +344,7 @@ test('finish requires a complete saved review and deliberate confirmation, then 
     finishPanel.getByRole('button', { name: 'Finish my review', exact: true }),
   ).toHaveCount(0);
   for (let i = 1; i <= 3; i++) {
+    await expect(page.getByTestId('mu7-unit-id')).toHaveText(`SYN-NAV-${i}`);
     await page.getByRole('radio', { name: 'Agree', exact: true }).check();
     await page
       .getByRole('button', { name: i < 3 ? 'Save and next' : 'Save answer', exact: true })
@@ -364,6 +365,15 @@ test('finish requires a complete saved review and deliberate confirmation, then 
       true,
     );
     await expect(finish).toBeVisible();
+    const [buttonBounds, labelBounds] = await Promise.all([
+      finish.boundingBox(),
+      finishPanel.locator('label').boundingBox(),
+    ]);
+    expect(buttonBounds!.height).toBeGreaterThanOrEqual(48);
+    expect(labelBounds!.height).toBeGreaterThanOrEqual(48);
+    expect(buttonBounds!.y - (labelBounds!.y + labelBounds!.height)).toBeGreaterThanOrEqual(16);
+    if (width === 1280)
+      await finishPanel.screenshot({ path: 'test-results/finish-review-desktop.png' });
   }
   await finishPanel.screenshot({ path: 'test-results/finish-review-mobile.png' });
   c.failProgress = true; // The finish receipt still locks the UI if a subsequent GET fails.
@@ -387,6 +397,7 @@ test('a stale final-set refusal preserves saved answers and does not claim a com
 }) => {
   const c = await setup(page, true);
   for (let i = 1; i <= 3; i++) {
+    await expect(page.getByTestId('mu7-unit-id')).toHaveText(`SYN-NAV-${i}`);
     await page.getByRole('radio', { name: 'Agree', exact: true }).check();
     await page
       .getByRole('button', { name: i < 3 ? 'Save and next' : 'Save answer', exact: true })

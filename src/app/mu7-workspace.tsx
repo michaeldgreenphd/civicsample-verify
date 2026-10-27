@@ -654,11 +654,11 @@ function Reviewer({
       }
     >
       {protocol && completion && (
-        <section className="panel" aria-label="Finish your review">
+        <section className={`panel ${styles.completionPanel}`} aria-label="Finish your review">
           <div className="panel-header">
             <h2>{finished ? 'Review submitted' : 'Finish your review'}</h2>
           </div>
-          <div className="form-stack" style={{ padding: '1rem 1.25rem' }}>
+          <div className={styles.completionBody}>
             {finished ? (
               <p role="status">
                 All {completion.assigned} answers were submitted and locked{' '}
@@ -676,14 +676,16 @@ function Reviewer({
                 )}
                 {completion.answered === completion.assigned && (
                   <>
-                    <label className="check-label">
+                    <label className={styles.completionConfirm}>
                       <input
                         type="checkbox"
                         checked={finishConfirmed}
                         disabled={busy || unsaved || completion.answered !== completion.assigned}
                         onChange={(e) => setConfirmedAnswerSet(e.target.checked ? answerSet : null)}
-                      />{' '}
-                      I have checked my saved answers and am ready to submit my complete review.
+                      />
+                      <span>
+                        I have checked my saved answers and am ready to submit my complete review.
+                      </span>
                     </label>
                     <button
                       type="button"
