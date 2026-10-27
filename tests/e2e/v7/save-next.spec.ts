@@ -356,7 +356,7 @@ test('finish requires a complete saved review and deliberate confirmation, then 
   await page.getByLabel('Note (optional)').fill('An unsaved change must not be included silently.');
   await expect(confirm).toBeDisabled();
   await expect(finishPanel).toContainText('Save the changes on this case');
-  await page.getByRole('button', { name: 'Save answer', exact: true }).click();
+  await page.getByRole('button', { name: 'Save revision', exact: true }).click();
   await expect(confirm).toBeEnabled();
   await confirm.check();
   for (const width of [1280, 390, 320]) {
@@ -407,7 +407,9 @@ test('a stale final-set refusal preserves saved answers and does not claim a com
   await panel.getByRole('checkbox').check();
   c.rejectFinish = true;
   await panel.getByRole('button', { name: 'Finish my review', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('Saved answers changed');
+  await expect(
+    page.getByRole('tabpanel', { name: 'Practice cases', exact: true }).getByRole('alert'),
+  ).toContainText('Saved answers changed');
   await expect(panel).not.toContainText('submitted and locked');
   await expect(page.getByRole('radio', { name: 'Agree', exact: true })).toBeEnabled();
   expect(c.answers.map((a) => a.length)).toEqual([1, 1, 1]);
