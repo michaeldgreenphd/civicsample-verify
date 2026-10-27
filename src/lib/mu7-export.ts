@@ -1,3 +1,4 @@
+import { MU84_RECEIPT_COLUMNS, MU84_FLAG_COLUMNS, type Mu84Protocol } from './mu84-completion';
 // Bundle format 7.0 (EXPORT_TO_PERFORMANCE_SPEC_v7.md): four CSV files from the security_invoker
 // export views of migration 0024 and a manifest. Column lists are the contract's, in its order
 // (the supplied suite checks the same lists against the views, steps MU7-EXP-COL-*). CSV quoting,
@@ -138,6 +139,7 @@ export function mu7SortRows(rows: Mu7Row[]): Mu7Row[] {
 }
 
 export interface Mu7BundleSources {
+  completion?: { protocol: Mu84Protocol; receipts: Mu7Row[]; flags: Mu7Row[] } | null;
   reviewerProfile?: Mu81ReviewerProfile | null;
   probability?: Mu7Row | null;
   subtypes?: Mu7Row[];
@@ -253,11 +255,64 @@ export function buildMu7Bundle(s: Mu7BundleSources): Mu7Bundle {
   } else if (s.freeze?.reviewer_profile_sha256) {
     throw new Error('Frozen reviewer profile is missing from the export.');
   }
+  if (s.completion) {
+    const { protocol, receipts, flags } = s.completion;
+    if (
+      !profile ||
+      protocol.baseProfileSha256 !== profile.binding_sha256 ||
+      receipts.length !== 2 ||
+      flags.length !== s.rows.final_reference.length
+    )
+      throw new Error('Complete review receipts and the matching guide are required.');
+    if (s.mode === 'FORMAL' && s.freeze?.completion_protocol_sha256 !== protocol.bindingSha256)
+      throw new Error('The frozen completion protocol differs.');
+    const metadata = {
+      mode: protocol.mode,
+      protocol_id: protocol.protocolId,
+      guide_sha256: protocol.guideSha256,
+      base_profile_sha256: protocol.baseProfileSha256,
+      binding_sha256: protocol.bindingSha256,
+    };
+    const add = (name: string, role: Mu7BundleFile['role'], rows: number, content: string) =>
+      files.push({ name, role, rows, content, sha256: sha256(content) });
+    add(
+      'completion_protocol.json',
+      'completion_protocol',
+      1,
+      JSON.stringify(metadata, null, 1) + '\n',
+    );
+    add('reviewer_guide_current.md', 'reviewer_guide_current', 1, protocol.guideText);
+    add(
+      'review_completions.csv',
+      'review_completions',
+      2,
+      mu7Csv(
+        MU84_RECEIPT_COLUMNS,
+        [...receipts].sort((a, b) => Number(a.reviewer_slot) - Number(b.reviewer_slot)),
+      ),
+    );
+    add(
+      'final_answer_flags.csv',
+      'final_answer_flags',
+      flags.length,
+      mu7Csv(MU84_FLAG_COLUMNS, mu7SortRows(flags)),
+    );
+  } else if (s.freeze?.completion_protocol_sha256) {
+    throw new Error('Frozen completion protocol is missing from the export.');
+  }
   const manifest: Record<string, unknown> = {
     ...(profile ? { reviewer_profile: profile } : {}),
     ...(v82 ? { history_contract_version: 'mu81-history-1' } : {}),
     ...(v81 ? { vocabulary_version: 'mu81-subtype-1', probability_binding: probability } : {}),
-    bundle_format_version: profile ? '8.3' : v82 ? '8.2' : v81 ? '8.1' : MU7_BUNDLE_FORMAT,
+    bundle_format_version: s.completion
+      ? '8.4'
+      : profile
+        ? '8.3'
+        : v82
+          ? '8.2'
+          : v81
+            ? '8.1'
+            : MU7_BUNDLE_FORMAT,
     mode: s.mode,
     status:
       s.mode === 'PILOT'

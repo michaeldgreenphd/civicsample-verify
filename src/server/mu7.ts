@@ -1,3 +1,4 @@
+import { finishReview as finishCompletion } from './mu84-completion';
 // Review design v7 on the local synthetic database (PGlite). Each service operation runs in one
 // transaction under the signed-in actor's database identity (src/server/db.ts withActor), so
 // row-level security and the rpc_mu7_* guards decide everything, as on Supabase.
@@ -140,3 +141,6 @@ export const mu7AdminAction = (actor: Actor, input: Mu7AdminAction) =>
   core.mu7AdminAction(context(actor), input);
 export const exportMu7Bundle = (actor: Actor, mode: Mu7Mode) =>
   core.exportMu7Bundle(context(actor), mode);
+
+export const finishMu7Review = (actor: Actor, input: unknown) =>
+  finishCompletion(context(actor), input);

@@ -1,3 +1,4 @@
+import type { Mu84Protocol, Mu84Completion } from './mu84-completion';
 // Review design v7 (mapping units): data contracts shared by the server and the browser.
 // Every DTO here is an explicit allow-list. A reviewer receives the packet of an assigned unit (the
 // unit block exactly as stored and the trial block), their own answers and the read-only worked
@@ -157,6 +158,8 @@ export interface Mu7OwnAnswer {
   submittedAt: string;
 }
 export interface Mu7ReviewerWorkspace {
+  completionProtocols?: Mu84Protocol[];
+  completions?: Mu84Completion[];
   reviewerProfile?: Mu81ReviewerProfile | null;
   kind: 'reviewer';
   designRecorded: boolean;
@@ -213,6 +216,7 @@ export interface Mu7AdjudicationQueueItem {
   adjudicated: boolean;
 }
 export interface Mu7AdjudicatorWorkspace {
+  completionProtocols?: Mu84Protocol[];
   reviewerProfile?: Mu81ReviewerProfile | null;
   kind: 'adjudicator';
   training: Mu7TrainingView[];
@@ -263,6 +267,7 @@ export interface Mu7RoutingCheck {
   matches: boolean | null;
 }
 export interface Mu7InvestigatorWorkspace {
+  completionProtocols?: Mu84Protocol[];
   reviewerProfile?: Mu81ReviewerProfile | null;
   canCreateProfilePilot?: boolean;
   kind: 'investigator';
@@ -302,6 +307,7 @@ export type Mu7Workspace =
 export type Mu7AdminAction =
   | { action: 'record-design'; attestation: string }
   | { action: 'record-profile-design'; attestation: string }
+  | { action: 'enable-completion-pilot'; attestation: string }
   | { action: 'import-pilot' }
   | { action: 'import-training' }
   | { action: 'assign-pilot' }
@@ -324,7 +330,11 @@ export interface Mu7BundleFile {
     | 'probabilities'
     | 'probability_source'
     | 'judgment_history'
-    | 'reviewer_guide';
+    | 'reviewer_guide'
+    | 'reviewer_guide_current'
+    | 'completion_protocol'
+    | 'review_completions'
+    | 'final_answer_flags';
   rows: number;
   sha256: string;
   content: string;

@@ -122,7 +122,8 @@ try {
     const m37 = join(root, 'migrations/0037_v81_reviewer_profile.sql');
     const m38 = join(root, 'migrations/0038_v81_reviewer_guide_r4.sql');
     const m39 = join(root, 'migrations/0039_v81_prepared_sample_intake.sql');
-    const m24to28 = await concat('nnnn_0024_to_0039.sql', [
+    const m40 = join(root, 'migrations/0040_v84_reviewer_completion.sql');
+    const m24to28 = await concat('nnnn_0024_to_0040.sql', [
       m24,
       m25,
       m26,
@@ -138,6 +139,7 @@ try {
       m37,
       m38,
       m39,
+      m40,
       gateShim,
     ]);
     const chainApp0004to0011 = await concat('chain_app_0004_to_0011.sql', [...app, m11]);
@@ -168,6 +170,7 @@ try {
       ['0037', m37],
       ['0038', m38],
       ['0039', m39],
+      ['0040', m40],
     ]) {
       report.schema_sha256[label] = createHash('sha256')
         .update(await readFile(file))
@@ -243,7 +246,7 @@ try {
           ['MU7-SCHEMA-01', 'MU7-ADD-01'],
         ],
         [
-          'v7-on-app-chain-through-0039',
+          'v7-on-app-chain-through-0040',
           'v7',
           [
             shim,

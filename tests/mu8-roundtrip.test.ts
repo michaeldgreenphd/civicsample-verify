@@ -1,3 +1,5 @@
+import { summarizeMu84Bundle } from '../scripts/summarize-mu84-bundle';
+import { MU84_GUIDE_SHA256, MU84_PROTOCOL_ID } from '../src/lib/mu84-completion';
 // Entirely fictional records in disposable databases. No research input or cloud configuration.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -115,6 +117,7 @@ async function runScenario(
   existing?: FixtureDb,
   addendum = false,
   reviewerProfile = false,
+  completionProtocol = false,
 ) {
   assert.ok(!reviewerProfile || addendum, 'reviewer profile uses the v8.1 design contract');
   const designVersion = addendum ? 'SYN-8-1-DATABASE-ROUNDTRIP' : version;
@@ -164,6 +167,17 @@ async function runScenario(
     );
     Object.assign(linked.packet.trial, { registry_url: 'https://example.test/fictional' });
     await assert.rejects(one(db, 'inv', call('rpc_mu7_import_unit', linked)), /MU8-G04/);
+    if (completionProtocol)
+      await one(
+        db,
+        'inv',
+        call('rpc_mu84_bind_protocol', {
+          mode: 'FORMAL',
+          protocol_id: MU84_PROTOCOL_ID,
+          guide_sha256: MU84_GUIDE_SHA256,
+          attestation: ATT,
+        }),
+      );
     await specifyAndApproveGates(db, 'all'); // disposable engineering decisions only
     const queue1 = units.map((u) => u.uid);
     const queue2 = [
@@ -376,6 +390,40 @@ async function runScenario(
         ),
         0,
       );
+    if (completionProtocol) {
+      await assert.rejects(one(db, 'inv', phase('FORMAL_CLOSED_COMPLETE')), /MU84-G12/);
+      for (const who of ['r1', 'r2'] as const) {
+        const own = (await one(
+          db,
+          who,
+          "select public.rpc_mu84_my_completion('FORMAL')",
+        )) as Record<string, unknown>;
+        const receipt = (await one(db, who, "select public.rpc_mu84_finish_review('FORMAL',$1)", [
+          own.answers_sha256,
+        ])) as Record<string, unknown>;
+        assert.equal(receipt.answered, 100);
+        assert.ok(receipt.finished_at);
+      }
+      for (const who of ['inv', 'adj'] as const)
+        assert.equal(
+          (
+            await rows(
+              db,
+              who,
+              "select * from public.mu7_review_completions_v84 where mode='FORMAL'",
+            )
+          ).length,
+          0,
+        );
+      await assert.rejects(
+        one(
+          db,
+          'r1',
+          submitSql(await assignmentOf(db, pseudos[0], queue1[0]), { answer: 'AGREE' }),
+        ),
+        /MU84-G10/,
+      );
+    }
     await one(db, 'inv', phase('FORMAL_CLOSED_COMPLETE'));
     await one(db, 'inv', 'select public.rpc_mu7_snapshot()');
     if (addendum)
@@ -408,9 +456,43 @@ async function runScenario(
         rationale: 'Synthetic unresolved evidence.',
       }),
     );
+    if (completionProtocol) {
+      await assert.rejects(
+        one(db, 'inv', `select public.rpc_mu7_lock_reference('FORMAL','${ATT}')`),
+        /MU7-G48/,
+      );
+      await one(
+        db,
+        'adj',
+        adjudicateSql({
+          unit_id: queue1[0],
+          decision: 'AGREE',
+          status: 'DISCORDANT_RESOLVED',
+          basis: 'NEITHER',
+          rationale: 'Synthetic adjudication of two Cannot tell answers.',
+        }),
+      );
+      assert.equal(
+        await one(
+          db,
+          'inv',
+          'select both_final_cannot_tell from public.v_mu84_both_cannot_tell where unit_id=$1',
+          [queue1[0]],
+        ),
+        true,
+      );
+    }
     await one(db, 'inv', `select public.rpc_mu7_lock_reference('FORMAL','${ATT}')`);
     const bundle = await exporter();
     assert.deepEqual(bundle.manifest.row_counts, {
+      ...(completionProtocol
+        ? {
+            'completion_protocol.json': 1,
+            'reviewer_guide_current.md': 1,
+            'review_completions.csv': 2,
+            'final_answer_flags.csv': 100,
+          }
+        : {}),
       'units.csv': 100,
       'unit_design.csv': 100,
       'independent_judgments.csv': 200,
@@ -433,7 +515,7 @@ async function runScenario(
     assert.equal(bundle.manifest.n_units_locked, 100);
     assert.equal(
       bundle.manifest.bundle_format_version,
-      reviewerProfile ? '8.3' : addendum ? '8.2' : '7.0',
+      completionProtocol ? '8.4' : reviewerProfile ? '8.3' : addendum ? '8.2' : '7.0',
     );
     if (reviewerProfile) {
       const profile = (await one(db, 'inv', 'select public.rpc_mu81_reviewer_profile()')) as {
@@ -526,7 +608,12 @@ async function runScenario(
       12,
     );
     const final = bundle.files.find((f) => f.role === 'final_reference')!.content;
-    for (const status of ['CANNOT_TELL_BY_RULE', 'ADJUDICATED', 'UNRESOLVED', 'CONCORDANT'])
+    for (const status of [
+      ...(completionProtocol ? [] : ['CANNOT_TELL_BY_RULE']),
+      'ADJUDICATED',
+      'UNRESOLVED',
+      'CONCORDANT',
+    ])
       assert.match(final, new RegExp(status));
     const registered = await as(db, 'inv', () =>
       mu7SqlData({ query: (sql, params) => db.query(sql, params) }).rpc(
@@ -930,5 +1017,83 @@ test(
         await client.end();
       }
     });
+  },
+);
+test(
+  'native PostgreSQL: bundle 8.4 completion protocol through complete synthetic lifecycle',
+  {
+    skip:
+      !process.env.VERIFY_PG_TEST_URL && process.env.VERIFY_PG_REQUIRE !== '1'
+        ? 'BLOCKED: native PostgreSQL server unavailable'
+        : false,
+    timeout: 120_000,
+  },
+  async () => {
+    assert.ok(process.env.VERIFY_PG_TEST_URL);
+    await withDisposableHandoffDatabase(process.env.VERIFY_PG_TEST_URL, async (url: string) => {
+      const client = new Client({ connectionString: url });
+      try {
+        await client.connect();
+        await runScenario(
+          'ONE_PER_TRIAL',
+          {
+            exec: (sql) => client.query(sql),
+            query: async <T>(sql: string, params: unknown[] = []) => ({
+              rows: (await client.query(sql, params)).rows as T[],
+            }),
+          },
+          true,
+          true,
+          true,
+        );
+      } finally {
+        await client.end();
+      }
+    });
+  },
+);
+
+test(
+  'completion protocol: database-written 100-mapping bundle binds both final sets and preserves the double-Cannot-tell flag',
+  { timeout: 120000 },
+  async () => {
+    const { bundle, pilot } = await runScenario('ONE_PER_TRIAL', undefined, true, true, true);
+    assert.equal(pilot.manifest.bundle_format_version, '8.3'); // previous completed pilot is unchanged
+    const dir = mkdtempSync(join(tmpdir(), 'verify-mu84-'));
+    try {
+      const path = join(dir, 'bundle');
+      fileWrite(bundle, path);
+      assert.deepEqual(verifyMu7Bundle(path, bundle.manifestSha256).problems, []);
+      const counts = summarizeMu84Bundle(path, bundle.manifestSha256);
+      assert.equal(counts.totalMappings, 100);
+      assert.equal(counts.finalIndependentJudgments, 200);
+      assert.deepEqual(
+        counts.byFamily.map((f) => f.mappings),
+        [56, 40, 4],
+      );
+      assert.ok(counts.byFamily.some((f) => f.bothFinalCannotTell > 0));
+      for (const f of counts.byFamily) {
+        assert.equal(f.confirmed + f.notConfirmed + f.unresolved + f.missing, f.mappings);
+        assert.equal(
+          f.finalIndependentAnswerTable.reduce((s, r) => s + r.count, 0),
+          f.mappings,
+        );
+      }
+      const serialized = JSON.stringify(counts);
+      assert.ok(!serialized.includes('MU7-'));
+      assert.ok(!serialized.includes('NCT'));
+      assert.equal(counts.diabetesStatedType.adjudicated, false);
+      // Even a self-consistent file/manifest edit may not switch a finalized revision or flag.
+      const manifest = JSON.parse(bundle.manifestText);
+      const flag = bundle.files.find((f) => f.name === 'final_answer_flags.csv')!;
+      const altered = flag.content.replace(',true', ',false');
+      writeFileSync(join(path, flag.name), altered);
+      manifest.files[flag.name] = sha(altered);
+      writeFileSync(join(path, 'manifest.json'), JSON.stringify(manifest));
+      assert.ok(verifyMu7Bundle(path).problems.some((p) => p.includes('completion')));
+      assert.throws(() => summarizeMu84Bundle(path, bundle.manifestSha256), /verified/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   },
 );

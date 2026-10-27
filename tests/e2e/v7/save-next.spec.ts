@@ -1,4 +1,5 @@
 // Synthetic intercepted DTOs exercise request timing and failures without touching study records.
+import { MU84_PROTOCOL_ID, MU84_GUIDE_SHA256 } from '../../../src/lib/mu84-completion';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
@@ -18,7 +19,7 @@ function deferred() {
   return { promise, release };
 }
 
-async function setup(page: Page) {
+async function setup(page: Page, completionProtocol = false) {
   const guideText = readFileSync('docs/reviewer/REVIEWER_GUIDE_v81_r4.md', 'utf8');
   const reviewerProfile = {
     profileId: 'mu81-plain-language-r4' as const,
@@ -28,6 +29,9 @@ async function setup(page: Page) {
     guideText,
   };
   const control = {
+    finished: false,
+    rejectFinish: false,
+    finishes: [] as Record<string, unknown>[],
     rejectSave: false,
     failProgress: false,
     failDetail: 0,
@@ -44,6 +48,21 @@ async function setup(page: Page) {
   });
   const workspace = (): Mu7ReviewerWorkspace => ({
     kind: 'reviewer',
+    ...(completionProtocol
+      ? {
+          completionProtocols: [
+            {
+              mode: 'PILOT' as const,
+              protocolId: MU84_PROTOCOL_ID,
+              guideSha256: MU84_GUIDE_SHA256,
+              baseProfileSha256: 'b'.repeat(64),
+              bindingSha256: 'c'.repeat(64),
+              guideText: readFileSync('docs/reviewer/REVIEWER_GUIDE_v81_r5.md', 'utf8'),
+            },
+          ],
+          completions: [completion()],
+        }
+      : {}),
     designRecorded: true,
     enrolled: true,
     reviewerProfile,
@@ -102,6 +121,26 @@ async function setup(page: Page) {
       },
       notices: ['Synthetic test fixture'],
     },
+  });
+  const completion = () => ({
+    mode: 'PILOT' as const,
+    assigned: 3,
+    answered: control.answers.filter((a) => a.length).length,
+    answersSha256: createHash('sha256').update(JSON.stringify(control.answers)).digest('hex'),
+    finishedAt: control.finished ? '2026-10-27T12:00:00Z' : null,
+    receiptSha256: control.finished ? 'd'.repeat(64) : null,
+  });
+  await page.route('**/api/mu7/finish', (route) => {
+    control.finishes.push(route.request().postDataJSON());
+    if (control.rejectFinish) {
+      control.rejectFinish = false;
+      return route.fulfill({
+        status: 409,
+        json: { error: 'Saved answers changed; reload and check before finishing.' },
+      });
+    }
+    control.finished = true;
+    return route.fulfill({ json: completion() });
   });
   await page.route('**/api/mu7/workspace', (route) => {
     if (control.failProgress) {
@@ -294,4 +333,72 @@ test('an older case read cannot overwrite the current case or its unsaved text',
     'New unsaved text on the current case.',
   );
   expect(state.posts).toEqual([]);
+});
+
+test('finish requires a complete saved review and deliberate confirmation, then locks the form', async ({
+  page,
+}) => {
+  const c = await setup(page, true);
+  const finishPanel = page.getByRole('region', { name: 'Finish your review', exact: true });
+  await expect(
+    finishPanel.getByRole('button', { name: 'Finish my review', exact: true }),
+  ).toHaveCount(0);
+  for (let i = 1; i <= 3; i++) {
+    await page.getByRole('radio', { name: 'Agree', exact: true }).check();
+    await page
+      .getByRole('button', { name: i < 3 ? 'Save and next' : 'Save answer', exact: true })
+      .click();
+  }
+  const finish = finishPanel.getByRole('button', { name: 'Finish my review', exact: true });
+  await expect(finish).toBeDisabled();
+  const confirm = finishPanel.getByRole('checkbox');
+  await page.getByLabel('Note (optional)').fill('An unsaved change must not be included silently.');
+  await expect(confirm).toBeDisabled();
+  await expect(finishPanel).toContainText('Save the changes on this case');
+  await page.getByRole('button', { name: 'Save answer', exact: true }).click();
+  await expect(confirm).toBeEnabled();
+  await confirm.check();
+  for (const width of [1280, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await expect(finish).toBeVisible();
+  }
+  await finishPanel.screenshot({ path: 'test-results/finish-review-mobile.png' });
+  c.failProgress = true; // The finish receipt still locks the UI if a subsequent GET fails.
+  await finish.click();
+  await expect(finishPanel).toContainText('All 3 answers were submitted and locked');
+  await expect(page.getByRole('radio', { name: 'Agree', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Note (optional)')).toBeDisabled();
+  expect(c.finishes).toHaveLength(1);
+  expect(c.finishes[0].confirm).toBe(true);
+  await page.getByRole('tab', { name: 'Review guide', exact: true }).click();
+  await expect(page.getByRole('article', { name: 'Review instructions' })).toContainText(
+    'Finish my review',
+  );
+  expect(
+    (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa']).analyze()).violations,
+  ).toEqual([]);
+});
+
+test('a stale final-set refusal preserves saved answers and does not claim a completed review', async ({
+  page,
+}) => {
+  const c = await setup(page, true);
+  for (let i = 1; i <= 3; i++) {
+    await page.getByRole('radio', { name: 'Agree', exact: true }).check();
+    await page
+      .getByRole('button', { name: i < 3 ? 'Save and next' : 'Save answer', exact: true })
+      .click();
+  }
+  const panel = page.getByRole('region', { name: 'Finish your review', exact: true });
+  await panel.getByRole('checkbox').check();
+  c.rejectFinish = true;
+  await panel.getByRole('button', { name: 'Finish my review', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Saved answers changed');
+  await expect(panel).not.toContainText('submitted and locked');
+  await expect(page.getByRole('radio', { name: 'Agree', exact: true })).toBeEnabled();
+  expect(c.answers.map((a) => a.length)).toEqual([1, 1, 1]);
+  expect(c.finishes).toHaveLength(1);
 });
