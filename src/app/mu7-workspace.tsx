@@ -889,8 +889,8 @@ function Reviewer({
 type AdjForm = Omit<Mu7AdjudicationInput, 'unitId'>;
 const EMPTY_ADJ: AdjForm = {
   status: 'DISCORDANT_RESOLVED',
-  decision: 'AGREE',
-  basis: 'REVIEWER_1',
+  decision: null,
+  basis: 'NONE',
   reasonCode: null,
   disagreementReasonCode: null,
   rationale: '',
@@ -912,8 +912,12 @@ function Adjudicator({
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!selected) return;
-    api<Mu7AdjudicatorUnit>(`/api/mu7/adjudication/${selected}`)
+    const controller = new AbortController();
+    api<Mu7AdjudicatorUnit>(`/api/mu7/adjudication/${selected}`, {
+      signal: controller.signal,
+    })
       .then((next) => {
+        if (controller.signal.aborted) return;
         // Each unit starts from an empty form: nothing typed for another unit can be recorded
         // as this unit's immutable tie-break.
         setDetail(next);
@@ -921,9 +925,11 @@ function Adjudicator({
         setError('');
       })
       .catch((e) => {
+        if (controller.signal.aborted) return;
         setDetail(null);
         setError(e.message);
       });
+    return () => controller.abort();
   }, [selected]);
   const shown = selected && detail?.unitId === selected ? detail : null;
   const profileId = shown?.reviewerProfile?.profileId ?? workspace.reviewerProfile?.profileId;
@@ -933,8 +939,23 @@ function Adjudicator({
     const match = shown.answers.find((a) => a.answer === decision);
     return match ? (match.reviewerSlot === 1 ? 'REVIEWER_1' : 'REVIEWER_2') : 'NEITHER';
   };
+  const validResolvedDecision =
+    !!form.decision &&
+    (form.basis === 'NEITHER' ||
+      shown?.answers.some(
+        (answer) =>
+          `REVIEWER_${answer.reviewerSlot}` === form.basis && answer.answer === form.decision,
+      )) &&
+    (form.decision !== 'DISAGREE' ||
+      shown?.reasonCodes.some((reason) => reason.code === form.reasonCode));
+  const readyToRecord =
+    !!shown &&
+    !shown.referenceLocked &&
+    !shown.adjudication &&
+    form.rationale.trim().length >= 3 &&
+    (form.status === 'UNRESOLVED_ESCALATED' || validResolvedDecision);
   async function decide() {
-    if (!shown) return;
+    if (!shown || busy || !readyToRecord) return;
     const resolved = form.status === 'DISCORDANT_RESOLVED';
     setBusy(true);
     try {
@@ -986,6 +1007,7 @@ function Adjudicator({
                 <button
                   className={`queue-item${selected === q.unitId ? ' selected' : ''}`}
                   aria-current={selected === q.unitId ? 'true' : undefined}
+                  disabled={busy}
                   onClick={() => onSelect(q.unitId)}
                 >
                   <span className="queue-icon">
@@ -1083,7 +1105,7 @@ function Adjudicator({
                               setForm({
                                 ...form,
                                 status: 'DISCORDANT_RESOLVED',
-                                basis: suggestedBasis(form.decision ?? 'AGREE'),
+                                basis: form.decision ? suggestedBasis(form.decision) : 'NONE',
                               })
                             }
                           />
@@ -1116,12 +1138,18 @@ function Adjudicator({
                             <span className="form-label">Decision</span>
                             <select
                               aria-describedby="mu7-adjudication-target"
-                              value={form.decision ?? 'AGREE'}
+                              value={form.decision ?? ''}
                               onChange={(e) => {
-                                const decision = e.target.value as 'AGREE' | 'DISAGREE';
-                                setForm({ ...form, decision, basis: suggestedBasis(decision) });
+                                const decision = e.target.value as '' | 'AGREE' | 'DISAGREE';
+                                setForm({
+                                  ...form,
+                                  decision: decision || null,
+                                  basis: decision ? suggestedBasis(decision) : 'NONE',
+                                  reasonCode: null,
+                                });
                               }}
                             >
+                              <option value="">Choose your decision</option>
                               <option value="AGREE">Agree: our assignment is right</option>
                               <option value="DISAGREE">
                                 Disagree: our assignment is not right
@@ -1153,13 +1181,26 @@ function Adjudicator({
                           <label className="field">
                             <span className="form-label">Basis</span>
                             <select
-                              value={form.basis}
+                              value={form.basis === 'NONE' ? '' : form.basis}
+                              disabled={!form.decision}
                               onChange={(e) =>
-                                setForm({ ...form, basis: e.target.value as AdjForm['basis'] })
+                                setForm({
+                                  ...form,
+                                  basis: (e.target.value || 'NONE') as AdjForm['basis'],
+                                })
                               }
                             >
-                              <option value="REVIEWER_1">Reviewer 1</option>
-                              <option value="REVIEWER_2">Reviewer 2</option>
+                              <option value="">Choose a decision first</option>
+                              {shown.answers
+                                .filter((answer) => answer.answer === form.decision)
+                                .map((answer) => (
+                                  <option
+                                    key={answer.reviewerSlot}
+                                    value={`REVIEWER_${answer.reviewerSlot}`}
+                                  >
+                                    Reviewer {answer.reviewerSlot}
+                                  </option>
+                                ))}
                               <option value="NEITHER">Neither</option>
                             </select>
                           </label>
@@ -1193,7 +1234,7 @@ function Adjudicator({
                       <div className="button-row">
                         <button
                           className="button"
-                          disabled={busy || form.rationale.trim().length < 3}
+                          disabled={busy || !readyToRecord}
                           onClick={decide}
                         >
                           Record the tie-break
