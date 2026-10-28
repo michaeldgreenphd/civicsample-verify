@@ -89,6 +89,9 @@ export type ChainOptions = {
 };
 /** Migrations that build on another: leaving one out leaves its dependents out too. */
 const DEPENDENTS: Record<string, string[]> = {
+  'migrations/0042_v84_formal_release_controls.sql': [
+    'migrations/0043_v84_release_gate_specifications.sql',
+  ],
   'migrations/0041_v84_pilot_export_inventory.sql': [
     'migrations/0042_v84_formal_release_controls.sql',
   ],
