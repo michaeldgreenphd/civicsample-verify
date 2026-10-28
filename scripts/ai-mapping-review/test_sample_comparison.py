@@ -127,7 +127,7 @@ def make_export(root):
         'reference_locked_at': '2026-01-02T00:00:00.000Z', 'n_units_locked': 100,
         'history_contract_version': 'mu81-history-1', 'reviewer_profile': {'binding_sha256': 'b'*64},
         'freeze': {'unit_list_sha256': ai['source']['sample_sha256'], 'completion_protocol_sha256': protocol['binding_sha256']},
-        'snapshot': {'n_rows': len(history), 'content_sha256': H.hash_text(body), 'taken_at': '2026-01-01T02:00:00Z'},
+        'snapshot': {'n_rows': len(history), 'content_sha256': H.hash_text(body)},
         'files': {name: R.sha(raw) for name, raw in files.items()},
         'row_counts': {name: len(rows) for name, rows in data.items()}}
     for name, raw in files.items():
@@ -142,10 +142,16 @@ class ComparisonTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.ai, self.ledger, self.live, self.manifest = make_export(self.root)
+        self.closure = {'format': 'civicsample-review-closure-1.0',
+            'unit_list_sha256': self.manifest['freeze']['unit_list_sha256'],
+            'snapshot_sha256': self.manifest['snapshot']['content_sha256'],
+            'completion_protocol_sha256': self.manifest['freeze']['completion_protocol_sha256'],
+            'closed_at': '2026-01-01T02:00:00Z', 'snapshot_taken_at': '2026-01-01T02:00:00Z'}
 
     def load(self, r2=True):
         return H.load(self.root, R.sha((self.root/'manifest.json').read_bytes()), self.live,
-                      adjudication_digest=self.manifest['files']['final_reference.csv'] if r2 else None)
+                      adjudication_digest=self.manifest['files']['final_reference.csv'] if r2 else None,
+                      closure=self.closure)
 
     def rewrite(self, name, rows):
         raw = encode_csv(rows)
@@ -226,10 +232,18 @@ class ComparisonTests(unittest.TestCase):
     def test_prespecification_and_close_chronology_are_checked(self):
         with self.assertRaisesRegex(R.Refused, 'analysis_approval_after_review_close'):
             H.load(self.root, R.sha((self.root/'manifest.json').read_bytes()), self.live,
-                   approved_at='2026-01-03T00:00:00Z')
-        self.manifest['snapshot']['taken_at'] = '2026-01-01T00:30:00Z'
-        (self.root/'manifest.json').write_bytes(R.encode(self.manifest))
+                   approved_at='2026-01-03T00:00:00Z', closure=self.closure)
+        self.closure['closed_at'] = '2026-01-01T00:30:00Z'
         with self.assertRaisesRegex(R.Refused, 'review_close_precedes_completion'):
+            self.load()
+
+    def test_actual_export_without_close_timestamp_needs_separate_receipt(self):
+        self.assertEqual(set(self.manifest['snapshot']), {'n_rows', 'content_sha256'})
+        with self.assertRaisesRegex(R.Refused, 'review_closure_required'):
+            H.load(self.root, R.sha((self.root/'manifest.json').read_bytes()), self.live,
+                   approved_at='2025-12-31T00:00:00Z')
+        self.closure['snapshot_sha256'] = 'a'*64
+        with self.assertRaisesRegex(R.Refused, 'review_closure_mismatch'):
             self.load()
 
     def test_wrong_sample_and_duplicate_judgment_refused(self):
@@ -282,8 +296,28 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(R.Refused, 'screening_choice_required_before_human_export'):
             S.validate_plan(R.encode(plan))
 
+    def test_retrospective_screening_choice_refused_before_other_inputs_open(self):
+        args = ['compare_sample.py']
+        for name in ('ai-input', 'ai-sha256', 'ledger', 'ledger-sha256', 'live-snapshot', 'live-sha256',
+                     'review-bundle', 'manifest-sha256', 'review-closure', 'closure-sha256',
+                     'analysis-plan', 'plan-sha256', 'private-output'):
+            args += ['--'+name, name]
+        args += ['--references', 'R1']
+        for status, model in (('FIXED_BEFORE_HUMAN_EXPORT', R.MODELS[1]), ('NO_COHORT_SCREEN_PLANNED', None)):
+            # Both dates precede today; one predates closure, the other follows
+            # even the reference lock. Neither belonged to the approved plan.
+            for date in ('2025-12-31T01:00:00Z', '2026-01-03T00:00:00Z'):
+                with self.subTest(status=status, recorded_at=date):
+                    plan = plan_fixture()
+                    plan['screening_model_decision'].update(status=status, model=model, recorded_at=date)
+                    with patch.object(sys, 'argv', args), patch.object(C, 'read_private', return_value=R.encode(plan)) as read:
+                        with self.assertRaisesRegex(R.Refused, 'screening_choice_after_analysis_approval'):
+                            S.main()
+                        read.assert_called_once_with('analysis-plan', 'plan-sha256')
+
     def test_cli_outputs_only_fixed_counts_and_hash_and_preserves_inputs(self):
-        names = {'ai': R.encode(self.ai), 'ledger': R.encode(self.ledger), 'live': R.encode(self.live), 'plan': R.encode(plan_fixture())}
+        names = {'ai': R.encode(self.ai), 'ledger': R.encode(self.ledger), 'live': R.encode(self.live),
+                 'plan': R.encode(plan_fixture()), 'closure': R.encode(self.closure)}
         for name, raw in names.items():
             (self.root/(name+'.json')).write_bytes(raw)
         output = self.root/'comparison'
@@ -292,7 +326,8 @@ class ComparisonTests(unittest.TestCase):
                '--manifest-sha256', R.sha((self.root/'manifest.json').read_bytes()),
                '--adjudication-sha256', self.manifest['files']['final_reference.csv'], '--private-output', str(output)]
         for name, flag, pin in (('ai','ai-input','ai-sha256'), ('ledger','ledger','ledger-sha256'),
-                               ('live','live-snapshot','live-sha256'), ('plan','analysis-plan','plan-sha256')):
+                               ('live','live-snapshot','live-sha256'), ('plan','analysis-plan','plan-sha256'),
+                               ('closure','review-closure','closure-sha256')):
             cmd += ['--'+flag, str(self.root/(name+'.json')), '--'+pin, R.sha(names[name])]
         result = subprocess.run(cmd, capture_output=True, text=True, env={**os.environ, 'PYTHONDONTWRITEBYTECODE':'1'})
         self.assertEqual(result.returncode, 0, result.stdout+result.stderr)

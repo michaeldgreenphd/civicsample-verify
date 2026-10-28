@@ -100,15 +100,28 @@ Keep the dated, approved plan outside the public repository. It must contain:
 - `screening_model_decision`: `status`, `recorded_at`, and `model`. Status must be
   `FIXED_BEFORE_HUMAN_EXPORT` with one of the existing model identifiers, or an
   explicit `NO_COHORT_SCREEN_PLANNED` with a null model. A pending cohort choice
-  does not permit selecting a model after viewing agreement results.
+  does not permit selecting a model after viewing agreement results. In either
+  case, `recorded_at` must be at or before `approved_at`: a later choice requires
+  a newly approved plan before review closure, never a backdated choice.
 
 An approved implementation is not permission to inspect interim answers. The CLI
 validates this plan and the sample before opening human files. The v8.4 adapter
 then validates two distinct completion receipts, their protocol/guide bindings and
 timestamps, and the presence and timing of a closed snapshot before reading
 judgment history. It then reconstructs and verifies that snapshot's content hash.
-Approval recorded after the review-close snapshot is refused for this prespecified
+Approval recorded after review closure is refused for this prespecified
 analysis. The tool never silently relabels a later analysis as prespecified.
+
+The v8.4 manifest exports snapshot `n_rows` and `content_sha256`, **not** the review
+close timestamp. Supply a separately pinned, answer-free closure receipt with keys
+`format` (`civicsample-review-closure-1.0`), `unit_list_sha256`, `snapshot_sha256`,
+`completion_protocol_sha256`, `closed_at` and `snapshot_taken_at`. The hashes must
+match the same export. The times come from the existing `FORMAL_CLOSED_COMPLETE`
+phase event's `occurred_at` and the snapshot's `taken_at`. The current release
+workflow closes review and takes that snapshot in one transaction. Obtain this
+metadata read-only through the investigator's existing process; this tool neither
+queries the database nor adds a field or route to the app. Missing or inconsistent
+closure evidence refuses analysis before any judgment file is opened.
 
 The supported input is the app's v8.4 export directory: `manifest.json`, `units.csv`,
 `independent_judgments.csv`, `judgment_history.csv`, `subtype_observations.csv`,
@@ -140,6 +153,7 @@ python3 scripts/ai-mapping-review/compare_sample.py \
   --ledger /private/staging/mapping-review-ledger.json --ledger-sha256 LEDGER_SHA256 \
   --live-snapshot /private/staging/live-comparability.json --live-sha256 LIVE_CAPTURE_SHA256 \
   --review-bundle /private/staging/locked-review --manifest-sha256 MANIFEST_SHA256 \
+  --review-closure /private/staging/review-closure.json --closure-sha256 CLOSURE_SHA256 \
   --analysis-plan /private/staging/approved-comparison-plan.json --plan-sha256 PLAN_SHA256 \
   --references both --adjudication-sha256 FINAL_REFERENCE_SHA256 \
   --private-output /private/staging/state/comparison

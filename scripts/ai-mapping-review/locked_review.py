@@ -38,7 +38,7 @@ def csv_rows(raw: bytes) -> list[dict]:
 
 
 def load(root: Path, manifest_digest: str, live: dict, *, adjudication_digest: str | None = None,
-         approved_at: str | None = None) -> dict:
+         approved_at: str | None = None, closure: dict | None = None) -> dict:
     manifest = R.decode(read_private(str(root / 'manifest.json'), manifest_digest))
     R.require(isinstance(manifest, dict) and manifest.get('bundle_format_version') == '8.4' and
               manifest.get('mode') == 'FORMAL' and manifest.get('status') == 'FORMAL', 'completion_export_required')
@@ -84,15 +84,30 @@ def load(root: Path, manifest_digest: str, live: dict, *, adjudication_digest: s
     snapshot = manifest.get('snapshot')
     R.require(isinstance(snapshot, dict) and manifest.get('history_contract_version') == 'mu81-history-1',
               'locked_judgment_snapshot_required')
-    closed = timestamp(snapshot.get('taken_at'))
-    R.require(all(timestamp(r['finished_at']) <= closed for r in receipts), 'review_close_precedes_completion')
+    # The actual v8.4 export includes only n_rows/content_sha256 in snapshot.
+    # Never invent a taken_at field in that bundle. A separately pinned,
+    # answer-free lifecycle receipt supplies the closure chronology.
+    closed = None
+    if closure is not None:
+        R.keys(closure, {'format', 'unit_list_sha256', 'snapshot_sha256', 'completion_protocol_sha256',
+                         'closed_at', 'snapshot_taken_at'})
+        R.require(closure['format'] == 'civicsample-review-closure-1.0' and
+                  closure['unit_list_sha256'] == freeze.get('unit_list_sha256') and
+                  closure['snapshot_sha256'] == snapshot.get('content_sha256') and
+                  closure['completion_protocol_sha256'] == binding, 'review_closure_mismatch')
+        closed = timestamp(closure['closed_at'])
+        R.require(timestamp(closure['snapshot_taken_at']) >= closed and
+                  all(timestamp(r['finished_at']) <= closed for r in receipts), 'review_close_precedes_completion')
     if approved_at is not None:
+        R.require(closed is not None, 'review_closure_required')
         R.require(timestamp(approved_at) <= closed, 'analysis_approval_after_review_close')
     if adjudication_digest is not None:
         R.require(files.get('final_reference.csv') == adjudication_digest and
                   manifest.get('reference_locked_at') and manifest.get('n_units_locked') == 100,
                   'adjudication_snapshot_required')
-        R.require(timestamp(manifest['reference_locked_at']) >= closed, 'reference_lock_precedes_close')
+        locked = timestamp(manifest['reference_locked_at'])
+        R.require(locked >= (timestamp(closure['snapshot_taken_at']) if closure is not None else
+                            max(timestamp(r['finished_at']) for r in receipts)), 'reference_lock_precedes_close')
 
     expected = {u['unit_id']: u for u in live['units']}
     units = rows('units.csv')

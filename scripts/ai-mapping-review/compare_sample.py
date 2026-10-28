@@ -42,7 +42,8 @@ def validate_plan(raw: bytes) -> dict:
     # agreement. A pending cohort decision does not implicitly waive that gate.
     R.require(selection['status'] in ('FIXED_BEFORE_HUMAN_EXPORT', 'NO_COHORT_SCREEN_PLANNED'),
               'screening_choice_required_before_human_export')
-    R.require(H.timestamp(selection['recorded_at']) <= datetime.now(timezone.utc), 'invalid_screening_choice')
+    R.require(H.timestamp(selection['recorded_at']) <= H.timestamp(plan['approved_at']),
+              'screening_choice_after_analysis_approval')
     R.require(selection['model'] in R.MODELS if selection['status'] == 'FIXED_BEFORE_HUMAN_EXPORT'
               else selection['model'] is None, 'invalid_screening_choice')
     return plan
@@ -238,7 +239,8 @@ def write_report(parent: Path, report: str, trace: str) -> str:
 def main() -> None:
     p = R.QuietParser(description=__doc__)
     for name in ('ai-input', 'ai-sha256', 'ledger', 'ledger-sha256', 'live-snapshot', 'live-sha256',
-                 'review-bundle', 'manifest-sha256', 'analysis-plan', 'plan-sha256', 'private-output'):
+                 'review-bundle', 'manifest-sha256', 'review-closure', 'closure-sha256',
+                 'analysis-plan', 'plan-sha256', 'private-output'):
         p.add_argument('--'+name, required=True)
     p.add_argument('--references', choices=('R1', 'R2', 'both'), default='both')
     p.add_argument('--adjudication-sha256')
@@ -252,10 +254,12 @@ def main() -> None:
     comparability = C.compare(ai, live)
     R.require(comparability[0]['unit_list_sha256_equal'] and comparability[0]['import_sha256_equal'], 'sample_freeze_mismatch')
     validate_same_assignments(ai, live)
+    closure = R.decode(C.read_private(a.review_closure, a.closure_sha256))
     review = H.load(Path(a.review_bundle), a.manifest_sha256, live, adjudication_digest=a.adjudication_sha256,
-                    approved_at=plan['approved_at'])
+                    approved_at=plan['approved_at'], closure=closure)
     provenance = {'ai_input_sha256': a.ai_sha256, 'ledger_sha256': a.ledger_sha256,
         'live_snapshot_sha256': a.live_sha256, 'review_manifest_sha256': a.manifest_sha256,
+        'review_closure_sha256': a.closure_sha256,
         'adjudication_snapshot_sha256': a.adjudication_sha256, 'analysis_plan_sha256': a.plan_sha256,
         'protocol_sha256': plan['protocol_sha256'], 'approval_ref': plan['approval_ref'],
         'references': a.references, 'guide_ai_profile': ai['guide']['profile_id'], 'guide_live_profile': live['guide']['profile_id'],
