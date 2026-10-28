@@ -36,31 +36,45 @@ test('hosted name chooser submits only the selected username and password (mock 
   await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
 });
 
-test('hosted navigation opens Mapping units by default (mock session, no remote Auth claim)', async ({
-  page,
-}) => {
-  await page.route('**/api/session', (route) =>
-    route.fulfill({
-      json: {
-        environment: 'supabase-staging',
-        user: {
-          id: 'synthetic-navigation-user',
-          displayName: 'Synthetic reviewer',
-          role: 'REVIEWER',
-          aal: 'aal1',
-          mfaEnrolled: false,
+for (const role of ['REVIEWER', 'ADJUDICATOR', 'INVESTIGATOR'] as const) {
+  test(`hosted ${role} navigation only offers Mapping units (mock session)`, async ({ page }) => {
+    await page.route('**/api/session', (route) =>
+      route.fulfill({
+        json: {
+          environment: 'supabase-staging',
+          user: {
+            id: 'synthetic-navigation-user',
+            displayName: 'Synthetic reviewer',
+            role,
+            aal: role === 'INVESTIGATOR' ? 'aal2' : 'aal1',
+            mfaEnrolled: false,
+          },
         },
-      },
-    }),
-  );
-  await page.route('**/api/mu7/**', (route) =>
-    route.fulfill({ status: 503, json: { error: 'Synthetic navigation check only.' } }),
-  );
-  await page.goto('/');
-  await expect(page.getByRole('button', { name: 'Mapping units Design v7' })).toHaveClass('active');
-  await expect(page.getByRole('heading', { name: 'Clinical classification review' })).toBeVisible();
-  await expect(page.locator('.environment-banner')).toContainText('REVIEW WORKSPACE');
-});
+      }),
+    );
+    const legacyRequests: string[] = [];
+    page.on('request', (request) => {
+      if (request.url().includes('/api/mc/')) legacyRequests.push(request.url());
+    });
+    await page.route('**/api/mu7/**', (route) =>
+      route.fulfill({ status: 503, json: { error: 'Synthetic navigation check only.' } }),
+    );
+    await page.goto('/');
+    const navigation = page.getByRole('navigation', { name: 'Workspace sections' });
+    await expect(navigation.getByRole('button')).toHaveCount(1);
+    await expect(
+      navigation.getByRole('button', { name: 'Mapping units', exact: true }),
+    ).toHaveClass('active');
+    await expect(page.getByRole('button', { name: /Mapping confirmation/ })).toHaveCount(0);
+    await expect(page.getByText('Design v7', { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole('heading', { name: 'Clinical classification review' }),
+    ).toBeVisible();
+    await expect(page.locator('.environment-banner')).toContainText('REVIEW WORKSPACE');
+    await expect(page.getByText('Synthetic navigation check only.', { exact: true })).toBeVisible();
+    expect(legacyRequests).toEqual([]);
+  });
+}
 
 test('workspace wording waits for session context and retains the local synthetic warning', async ({
   page,

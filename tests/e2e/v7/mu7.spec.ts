@@ -280,7 +280,7 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
       aPage
         .getByLabel('Choose a practice case')
         .locator('option')
-        .filter({ hasText: 'Opens later' })
+        .filter({ hasText: 'After classification answers' })
         .first(),
     ).toHaveJSProperty('disabled', true);
     // Saving on mobile persists the answer; changing the mobile picker loads the right case.
