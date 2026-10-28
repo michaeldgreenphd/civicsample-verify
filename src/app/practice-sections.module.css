@@ -405,6 +405,17 @@
 .mobilePicker {
   display: none;
 }
+.workspace .unavailableQueueItem:disabled {
+  opacity: 1;
+  color: var(--ink);
+}
+.queueAvailability {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .examples {
   display: grid;
   gap: 24px;

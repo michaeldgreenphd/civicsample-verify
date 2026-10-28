@@ -36,6 +36,7 @@ import { ReviewTarget } from './review-target';
 import { nextUnansweredUnit } from '@/lib/mu7-review-navigation';
 import {
   answerMeaning,
+  queueUnitLabel,
   reasonLabel,
   readableCode,
   studyLabel,
@@ -724,8 +725,14 @@ function Reviewer({
               <option value="">Select a case</option>
               {workspace.queue.map((q) => (
                 <option key={q.assignmentId} value={q.assignmentId} disabled={!q.available}>
-                  {q.queuePosition}. {q.unitId} ·{' '}
-                  {q.answered ? 'Answered' : q.available ? 'Open' : 'Opens later'}
+                  {q.queuePosition}. {queueUnitLabel(q.unitId, q.unitRole)} ·{' '}
+                  {q.answered
+                    ? 'Answered'
+                    : q.available
+                      ? 'Open'
+                      : q.unitRole === 'SUBGROUP'
+                        ? 'After classification answers'
+                        : 'Opens later'}
                 </option>
               ))}
             </select>
@@ -734,18 +741,18 @@ function Reviewer({
             {workspace.queue.map((q) => (
               <li key={q.assignmentId}>
                 <button
-                  className={`queue-item${selected === q.assignmentId ? ' selected' : ''}`}
+                  className={`queue-item${selected === q.assignmentId ? ' selected' : ''}${!q.available ? ` ${styles.unavailableQueueItem}` : ''}`}
                   aria-current={selected === q.assignmentId ? 'true' : undefined}
                   onClick={() => selectCase(q.assignmentId)}
                   disabled={busy || !q.available}
-                  aria-label={`Unit ${q.queuePosition}: ${q.unitId}`}
+                  aria-label={`Unit ${q.queuePosition}: ${queueUnitLabel(q.unitId, q.unitRole)}`}
                 >
                   <span className="queue-icon">
                     <Icon name={q.answered ? 'check' : q.available ? 'file' : 'lock'} size={13} />
                   </span>
                   <span className="queue-copy">
-                    <strong className="mono">
-                      {q.queuePosition}. {q.unitId}
+                    <strong className={q.unitRole === 'PRIMARY' ? 'mono' : undefined}>
+                      {q.queuePosition}. {queueUnitLabel(q.unitId, q.unitRole)}
                     </strong>
                     <span className="queue-meta">
                       <span>
@@ -758,6 +765,13 @@ function Reviewer({
                         {q.answered ? 'Answered' : q.available ? 'Open' : 'Opens later'}
                       </span>
                     </span>
+                    {!q.available && q.unitRole === 'SUBGROUP' && primaryLeft > 0 && (
+                      <span className={styles.queueAvailability}>
+                        Opens when you have answered all{' '}
+                        {workspace.queue.filter((unit) => unit.unitRole === 'PRIMARY').length}{' '}
+                        classifications ({primaryLeft} remaining).
+                      </span>
+                    )}
                   </span>
                 </button>
               </li>
@@ -1125,7 +1139,9 @@ function Adjudicator({
                     <Icon name={q.adjudicated ? 'check' : 'file'} size={13} />
                   </span>
                   <span className="queue-copy">
-                    <strong className="mono">{q.unitId}</strong>
+                    <strong className={q.unitRole === 'PRIMARY' ? 'mono' : undefined}>
+                      {queueUnitLabel(q.unitId, q.unitRole)}
+                    </strong>
                     <span className="queue-meta">
                       <span>{studyLabel(q.mappingLabel).replace(/ \(.*/, '')}</span>
                       <span aria-hidden="true">·</span>

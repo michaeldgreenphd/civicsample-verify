@@ -47,6 +47,21 @@ export function studyLabel(text: string): string {
     .replace(/\bFigure 2 condition row:/g, 'Condition group:');
 }
 
+/**
+ * The queue already contains these legacy subgroup tokens, even before packet access opens.
+ * Decode only the documented token, not the private suffix or a case's clinical evidence.
+ * Unrecognized identifiers retain their reference; they must not acquire an inferred label.
+ * Access and the actual question still come from the server, never this presentation helper.
+ */
+export function queueUnitLabel(unitId: string, unitRole: 'PRIMARY' | 'SUBGROUP'): string {
+  if (unitRole !== 'SUBGROUP') return unitId;
+  const match = /^MU7-SG-RULE_([DK])_(KEPT|REMOVED)-[A-Za-z0-9_-]+$/.exec(unitId);
+  if (!match) return unitId;
+  const group = match[1] === 'D' ? 'Diabetes' : 'Neoplasms';
+  const disposition = match[2] === 'KEPT' ? 'included' : 'excluded';
+  return `${group} — ${disposition}`;
+}
+
 export function unitDisplay(unit: Mu7UnitBlock, profileId?: string | null) {
   const label = studyLabel(unit.mapping_label);
   const split = label.indexOf(' (parent MeSH category ');

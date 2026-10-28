@@ -5,6 +5,7 @@ import {
   PLAIN_LANGUAGE_PROFILE,
   answerMeaning,
   parseReviewerGuide,
+  queueUnitLabel,
   reasonLabel,
   studyLabel,
   unitDisplay,
@@ -14,6 +15,23 @@ import PILOT from './handoff/fixtures/v7/SYNTHETIC_PILOT_UNITS_v7.json';
 import { reviewTarget } from '../src/lib/mu7-review-target';
 
 const units = PILOT.units.map((entry) => entry.import.packet.unit as Mu7UnitBlock);
+
+test('legacy subgroup queue references have readable labels without inferring unknown identifiers', () => {
+  const labels = [
+    ['RULE_D_REMOVED', 'Diabetes — excluded'],
+    ['RULE_D_KEPT', 'Diabetes — included'],
+    ['RULE_K_KEPT', 'Neoplasms — included'],
+    ['RULE_K_REMOVED', 'Neoplasms — excluded'],
+  ];
+  for (const [code, label] of labels) {
+    const syntheticId = `MU7-SG-${code}-SYNTHETIC`;
+    assert.equal(queueUnitLabel(syntheticId, 'SUBGROUP'), label);
+    assert.equal(queueUnitLabel(syntheticId, 'PRIMARY'), syntheticId);
+  }
+  for (const id of ['SYN-UNKNOWN', 'MU7-SG-RULE_X_KEPT-SYNTHETIC', 'MU7-SG-RULE_D_KEPT-']) {
+    assert.equal(queueUnitLabel(id, 'SUBGROUP'), id);
+  }
+});
 
 test('answer targets distinguish an area judgment from a condition-group judgment', () => {
   const area = units.find((u) => u.mapping_label.startsWith('Therapeutic area: Cardiovascular'))!;

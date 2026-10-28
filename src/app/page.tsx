@@ -404,7 +404,7 @@ export default function Home() {
         </>
       ) : hosted ? (
         <main id="main" className="app-shell">
-          <div className={`page-intro ${tab === 'mu7' ? practiceStyles.compactIntro : ''}`}>
+          <div className={`page-intro ${practiceStyles.compactIntro}`}>
             <div>
               <div className="eyebrow">Your review workspace</div>
               <h1>Clinical classification review</h1>
@@ -428,14 +428,11 @@ export default function Home() {
           ) : (
             <>
               <nav className="workspace-tabs" aria-label="Workspace sections">
-                <button className={tab !== 'mu7' ? 'active' : ''} onClick={() => setTab('review')}>
-                  Mapping confirmation
-                </button>
-                <button className={tab === 'mu7' ? 'active' : ''} onClick={() => setTab('mu7')}>
-                  Mapping units <span className="count-pill">Design v7</span>
+                <button className="active" aria-current="page" onClick={() => setTab('mu7')}>
+                  Mapping units
                 </button>
               </nav>
-              {tab === 'mu7' ? <Mu7Panel user={user} /> : <McPanel user={user} />}
+              <Mu7Panel user={user} />
             </>
           )}
           {error && (
@@ -496,7 +493,7 @@ export default function Home() {
               Mapping confirmation <span className="count-pill">Synthetic</span>
             </button>
             <button className={tab === 'mu7' ? 'active' : ''} onClick={() => setTab('mu7')}>
-              Mapping units <span className="count-pill">Design v7</span>
+              Mapping units
             </button>
             <button
               className={tab === 'module-b' ? 'active' : ''}
