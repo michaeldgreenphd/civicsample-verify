@@ -107,3 +107,11 @@ For this specific failure, after reviewing and merging the correction:
 3. Dispatch `run` separately. It validates the archived evidence and both request hashes before any provider call. The old reservation plus all new response costs must fit under the original combined ceiling.
 
 If the failed preflight report is absent or has already been replaced, recovery refuses rather than guessing. The prior report remains in private Git history for a separately reviewed restoration. Any later generation failure stops again; this recovery cannot be reused to bypass it. Never select or discard answers based on their content.
+
+## Comparison after clinical review
+
+The separate [offline sample comparison](AI_SAMPLE_COMPARISON.md) validates completed
+AI records, checks answer-free task comparability, and compares the original answers
+with completion-locked human exports. It makes no model calls and preserves both
+paid-run ledgers. Scientific approval, deployed-renderer provenance and completion
+receipts are required before human comparison; consistency is not clinical validity.
