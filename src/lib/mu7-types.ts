@@ -295,8 +295,8 @@ export interface Mu7InvestigatorWorkspace {
   }[];
   phaseEvents: { eventType: string; occurredAt: string }[];
   gates: Mu7GateStatus[];
-  /** Always false in this build: the FORMAL freeze and opening wait for specified, approved gates. */
-  formalOperationsEnabled: false;
+  /** True only while an explicit FORMAL_OPENED phase is current. Never inferred from gates. */
+  formalOperationsEnabled: boolean;
   formalDisabledReason: string;
   localTools: boolean;
   appGitSha: string;

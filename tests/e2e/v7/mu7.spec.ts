@@ -86,7 +86,7 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     // ---- investigator: design, import, assignment ---------------------------------------------
     await signIn(adminPage, 'investigator');
     await expect(adminPage.getByTestId('mu7-phase')).toContainText('No design recorded');
-    await expect(adminPage.getByText('Formal review disabled')).toBeVisible();
+    await expect(adminPage.getByText('Investigator approval required')).toBeVisible();
     await adminPage.getByLabel(/Attestation/).fill(ATT);
     await adminPage.getByRole('button', { name: 'Record the synthetic design' }).click();
     await expect(adminPage.getByTestId('mu7-phase')).toContainText('Pilot open');

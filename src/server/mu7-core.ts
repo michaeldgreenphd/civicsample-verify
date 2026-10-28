@@ -403,7 +403,11 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
         occurredAt: iso(e.occurred_at),
       })),
       gates,
-      formalOperationsEnabled: false,
+      formalOperationsEnabled:
+        events.some((e) => e.event_type === 'FORMAL_OPENED') &&
+        !events.some((e) =>
+          ['FORMAL_CLOSED_COMPLETE', 'FORMAL_CLOSED_INCOMPLETE'].includes(String(e.event_type)),
+        ),
       formalDisabledReason: formalDisabledReason(gates),
       localTools: !!ctx.localTools,
       appGitSha: ctx.appGitSha,
