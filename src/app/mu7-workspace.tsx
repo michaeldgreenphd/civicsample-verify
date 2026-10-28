@@ -30,6 +30,7 @@ import { Icon } from '@/components/icons';
 import { PracticeSections, ReviewGuide } from './practice-sections';
 import { FormalPreparation } from './formal-preparation';
 import { FormalSampleIntake } from './formal-intake';
+import { FormalRelease } from './formal-release';
 import { ProposedSamplePreview } from './sample-preview';
 import { ReviewTarget } from './review-target';
 import { nextUnansweredUnit } from '@/lib/mu7-review-navigation';
@@ -1428,6 +1429,7 @@ function Investigator({
       )}
       {!formalPreparation && <Banner />}
       <FormalPreparation workspace={w} />
+      {formalPreparation && <FormalRelease onRecorded={onRefresh} />}
       <FormalSampleIntake onRecorded={onRefresh} />
       <ProposedSamplePreview
         renderPacket={(packet, profileId) => <Packet packet={packet} profileId={profileId} />}
@@ -1703,7 +1705,7 @@ function Investigator({
       <section className="panel" aria-label="Study decisions">
         <div className="panel-header">
           <span className="section-label">Study decisions before the formal review</span>
-          <span className="badge amber">Formal review disabled</span>
+          <span className="badge">Investigator approval required</span>
         </div>
         <div className="panel-body">
           <p>{w.formalDisabledReason}</p>

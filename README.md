@@ -4,6 +4,12 @@ A clinical review application with independent reviewer accounts and a separate 
 
 **Formal review remains closed.** The new [prepared-sample intake](docs/FORMAL_SAMPLE_INTAKE.md) can verify and record a private 100-mapping package in a separately authorized, empty workspace. It creates no approvals, freeze, reviewer assignments or clinical answers. The practice workspace is preserved. See [the current verification record](docs/test_runs/FORMAL_SAMPLE_INTAKE.md) for executed checks and remaining live acceptance work. Older workflow sections below describe preserved modules, not alternative approvals for the current study.
 
+The [investigator release controls](docs/FORMAL_RELEASE_CONTROLS.md) provide separate, guarded
+steps from preparation through opening, reviewer completion, adjudication and a locked export.
+The initial [reporting scope](docs/DESCRIPTIVE_REVIEW_PLAN.md) is descriptive agreement and
+outcomes from the reviewed sample; population estimation is deferred. Installing these controls
+does not approve any gate or open clinical review.
+
 ## Start locally
 
 Requires Node.js 22 or newer and npm. Run these commands in this repository:

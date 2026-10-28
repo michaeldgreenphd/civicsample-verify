@@ -90,7 +90,7 @@ async function body(request: Request) {
 }
 /** Review design v7 (mapping units): the same routes in both deployment modes. Role first, then the
  *  body: a caller without the role is refused whatever it sends. Returns null when no v7 route
- *  matches. FORMAL operations have no route here. */
+ *  matches. Formal lifecycle actions also require database-enforced prerequisites. */
 async function mu7Route(
   request: Request,
   path: string,
@@ -137,6 +137,10 @@ async function mu7Route(
     );
   }
   if (path.startsWith('/api/mu7/admin/')) requireRole('INVESTIGATOR', 'an investigator account');
+  if (path === '/api/mu7/admin/release' && request.method === 'GET')
+    return respond(await api.getFormalReleaseStatus(actor));
+  if (path === '/api/mu7/admin/release' && request.method === 'POST')
+    return respond(await api.recordFormalReleaseAction(actor, await body(request)));
   if (path === '/api/mu7/admin/intake' && request.method === 'GET')
     return respond(await api.getFormalIntakePlan(actor));
   if (path === '/api/mu7/admin/intake' && request.method === 'POST')

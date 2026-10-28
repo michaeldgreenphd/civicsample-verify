@@ -313,6 +313,7 @@ export type Mu7AdminAction =
   | { action: 'assign-pilot' }
   | { action: 'lock-pilot'; attestation: string }
   | { action: 'register-pilot-export'; notes?: string }
+  | { action: 'register-formal-export'; notes?: string }
   /** The investigator's own approval of a SPECIFIED gate; the server cites its decision record. */
   | { action: 'approve-gate'; gateId: string; attestation: string }
   | { action: 'lock-account'; account: 'reviewer-a' | 'reviewer-b' | 'adjudicator'; reason: string }

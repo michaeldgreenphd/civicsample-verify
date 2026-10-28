@@ -387,7 +387,7 @@ test('v7 synthetic pilot through the application service, end to end', async () 
   // Since 0032, G-EST-01, G-OQ-03 and G-OQ-04 hold the freeze as well as the opening.
   assert.match(
     inv.formalDisabledReason,
-    /The FORMAL freeze waits for G-EST-01, G-MH-V53, G-OQ-03, G-OQ-04, G-OVERLAP-01, G-PROV-01, G-TEXT-01;/,
+    /The sample freeze waits for G-EST-01, G-MH-V53, G-OQ-03, G-OQ-04, G-OVERLAP-01, G-PROV-01, G-TEXT-01;/,
   );
   for (const gateId of ['G-EST-01', 'G-OQ-03', 'G-OQ-04'])
     assert.match(

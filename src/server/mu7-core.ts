@@ -75,7 +75,7 @@ export interface Mu7Context {
   /** Runs one service operation with the caller's data access (one transaction locally). */
   withData<T>(operation: (data: Mu7Data) => Promise<T>): Promise<T>;
   appGitSha: string;
-  /** Every database this build serves holds synthetic records only. */
+  /** Local simulation flag; synthetic design versions are also detected when exporting. */
   syntheticDatabase: boolean;
   /** Local synthetic mode only: the privileged identity tool's lock and release, for testing. */
   localTools?: {
@@ -275,8 +275,8 @@ function formalDisabledReason(gates: Mu7GateStatus[]): string {
   const freeze = open('FREEZE');
   const opening = open('FORMAL_OPEN');
   if (!freeze.length && !opening.length)
-    return 'Every study-decision gate is approved; the formal operations are still not offered in this build.';
-  return `The FORMAL freeze waits for ${freeze.join(', ') || 'no gate'}; the formal opening waits for ${opening.join(', ')}. A gate counts once its requirement is specified by a reviewed migration and the investigator approves it citing that record. The formal operations are not offered in this build.`;
+    return 'Every study-decision gate is approved. Use the separate release controls to review the remaining prerequisites and explicitly authorize each step.';
+  return `The sample freeze waits for ${freeze.join(', ') || 'no gate'}; opening review waits for ${opening.join(', ') || 'no gate'}. A gate counts only when its specified requirement has a matching investigator approval. Preparing packets never opens review.`;
 }
 async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWorkspace> {
   requireRole(ctx, 'INVESTIGATOR');
@@ -601,7 +601,7 @@ export async function recordMu7Adjudication(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Investigator actions (synthetic pilot only; FORMAL operations are not offered)
+// Investigator pilot, study-decision and locked-export actions. Lifecycle controls are separate.
 // ---------------------------------------------------------------------------------------------
 export async function mu7AdminAction(
   ctx: Mu7Context,
@@ -793,8 +793,12 @@ export async function mu7AdminAction(
         ),
       );
       break;
-    case 'register-pilot-export': {
-      const bundle = await exportMu7Bundle(ctx, 'PILOT');
+    case 'register-pilot-export':
+    case 'register-formal-export': {
+      const bundle = await exportMu7Bundle(
+        ctx,
+        input.action === 'register-formal-export' ? 'FORMAL' : 'PILOT',
+      );
       await ctx.withData((d) =>
         d.rpc(
           'rpc_mu7_register_export',
@@ -979,7 +983,7 @@ export async function readMu7Bundle(
     snapshot,
     lockedAt: iso(lock.locked_at),
     nUnitsLocked: Number(lock.n_units_locked),
-    syntheticDatabase,
+    syntheticDatabase: syntheticDatabase || String(design?.design_version ?? '').startsWith('SYN-'),
     rows,
   });
 }

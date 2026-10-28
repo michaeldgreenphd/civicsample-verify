@@ -85,8 +85,9 @@ export const HOSTED_SCHEMA_FILES = [
   'migrations/0039_v81_prepared_sample_intake.sql',
   'migrations/0040_v84_reviewer_completion.sql',
   'migrations/0041_v84_pilot_export_inventory.sql',
+  'migrations/0042_v84_formal_release_controls.sql',
 ];
-export const EXPECTED_SCHEMA_VERSION = '8.4.1-pilot-export-inventory';
+export const EXPECTED_SCHEMA_VERSION = '8.4.2-formal-release-controls';
 /** app_schema_version markers each file writes; used by the resumable schema runner. */
 export const SCHEMA_FILE_MARKERS = Object.freeze({
   'schema.sql': ['1.0.0'],
@@ -138,6 +139,7 @@ export const SCHEMA_FILE_MARKERS = Object.freeze({
   'migrations/0039_v81_prepared_sample_intake.sql': ['8.1.4-prepared-sample-intake'],
   'migrations/0040_v84_reviewer_completion.sql': ['8.4.0-reviewer-completion'],
   'migrations/0041_v84_pilot_export_inventory.sql': ['8.4.1-pilot-export-inventory'],
+  'migrations/0042_v84_formal_release_controls.sql': ['8.4.2-formal-release-controls'],
 });
 /** Files that write no marker and may run on every bootstrap (a check, not a change). */
 export const REPEATABLE_SCHEMA_FILES = Object.freeze([

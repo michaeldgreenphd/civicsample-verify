@@ -84,7 +84,7 @@ export function formalPreparation(w: Mu7InvestigatorWorkspace) {
       id: 'opening',
       label: 'Formal opening',
       state: 'pending',
-      status: 'Disabled in this build',
+      status: 'Requires explicit investigator release',
       detail:
         'No preparation status enables formal review. A verified sample, required approvals and a separately authorized release must precede opening.',
     },

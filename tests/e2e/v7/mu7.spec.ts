@@ -113,6 +113,15 @@ test('review design v7: synthetic pilot across four separate sessions, lock and 
     // ---- permission denials at the API (role before body) --------------------------------------
     const firstA = (await queueOf(a))[0];
     expect((await post(a, '/api/mu7/admin/action', { action: 'import-pilot' })).status()).toBe(403);
+    for (const other of [a, b, adj]) {
+      expect((await other.request.get('/api/mu7/admin/release')).status()).toBe(403);
+      expect(
+        (await post(other, '/api/mu7/admin/release', { action: 'open-review' })).status(),
+      ).toBe(403);
+      expect(
+        (await post(other, '/api/mu7/admin/action', { action: 'register-formal-export' })).status(),
+      ).toBe(403);
+    }
     expect((await post(admin, '/api/mu7/finish', {})).status()).toBe(403);
     expect((await post(adj, '/api/mu7/finish', {})).status()).toBe(403);
     expect((await post(a, '/api/mu7/finish', {})).status()).toBe(400);

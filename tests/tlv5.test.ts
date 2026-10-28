@@ -260,6 +260,7 @@ test('design v5 lifecycle: pilot, sign-off, activation, training, synthetic form
     '8.1.4-prepared-sample-intake',
     '8.4.0-reviewer-completion',
     '8.4.1-pilot-export-inventory',
+    '8.4.2-formal-release-controls',
   ]);
   assert.equal(versions.includes('4.0.7-investigator-judgment-boundary'), true);
 
