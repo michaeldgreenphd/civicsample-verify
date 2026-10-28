@@ -107,3 +107,16 @@ test('the downloadable status is allowlisted and does not export identities, stu
   assert.ok(!JSON.stringify(r).includes(marker));
   assert.equal(r.decisions[0].approval_recorded, false);
 });
+
+test('only recorded phase events show an open or closed review', () => {
+  const w = workspace();
+  w.phaseEvents = [{ eventType: 'FORMAL_OPENED', occurredAt: '2026-01-01T00:00:00Z' }];
+  assert.equal(
+    formalPreparation(w).checks.find((c) => c.id === 'opening')?.status,
+    'Open for assigned reviewers',
+  );
+  assert.equal(formalPreparation(w).formal_operations_enabled, true);
+  w.phaseEvents.push({ eventType: 'FORMAL_CLOSED_COMPLETE', occurredAt: '2026-01-02T00:00:00Z' });
+  assert.equal(formalPreparation(w).checks.find((c) => c.id === 'opening')?.status, 'Closed');
+  assert.equal(formalPreparation(w).formal_operations_enabled, false);
+});

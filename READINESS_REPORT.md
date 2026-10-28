@@ -1,5 +1,16 @@
 # CivicSample Verify readiness — 2026-10-22
 
+## Current release increment — 2026-10-27
+
+The [release controls](docs/FORMAL_RELEASE_CONTROLS.md) add explicit investigator actions for
+the prepared sample, final-set completion and locked formal exports. The initial reporting
+scope is [descriptive sample agreement](docs/DESCRIPTIVE_REVIEW_PLAN.md); weights, intervals
+and population estimates are deferred. Recording that scope specifies G-EST-01 but approves
+no gate. The [current test record](docs/test_runs/FORMAL_RELEASE_CONTROLS.md) distinguishes
+disposable tests from hosted acceptance. The migration and controls have not been applied to
+the operational preparation project. Formal review remains closed pending the reviewed
+deployment, live rehearsal, matching investigator approvals and explicit opening.
+
 ## Current preparation increment — 2026-10-26
 
 The [prepared-sample intake](docs/FORMAL_SAMPLE_INTAKE.md) implements an atomic, investigator-only load of 100 mappings into an empty review workspace. It preserves the guide and probability binding, verifies the planned 200 queue positions and creates no approvals, freeze, assignments or judgments. Existing practice campaigns are refused. Formal opening remains disabled. [Current commands and limits](docs/test_runs/FORMAL_SAMPLE_INTAKE.md) supersede older import-availability statements below; historical results retain their original scope.

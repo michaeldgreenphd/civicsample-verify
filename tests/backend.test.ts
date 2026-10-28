@@ -107,6 +107,7 @@ test('synthetic lifecycle enforces independent blinding, final locks, amendments
       '8.1.4-prepared-sample-intake',
       '8.4.0-reviewer-completion',
       '8.4.1-pilot-export-inventory',
+      '8.4.2-formal-release-controls',
     ],
   );
   const initialAdmin = await getWorkspace(investigator);

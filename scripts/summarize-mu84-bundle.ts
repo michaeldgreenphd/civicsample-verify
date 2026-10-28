@@ -1,9 +1,10 @@
-// Verified sample counts only. Deliberately no population estimator, confidence interval or
-// sensitivity analysis: those await the investigator's analysis decision. Never prints IDs.
+// Verified sample description. No population estimator, weights, intervals or sensitivity analysis.
+// The investigator deferred those analyses on October 27. Never prints IDs.
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { csvRecords, verifyMu7Bundle } from './verify-mu7-bundle';
+import { sampleAgreement, sampleOutcomePercentages } from '../src/lib/sample-agreement';
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 type Row = Record<string, string>;
 const answers = ['AGREE', 'DISAGREE', 'CANNOT_TELL'] as const;
@@ -73,22 +74,33 @@ export function summarizeMu84Bundle(dir: string, registeredManifestSha256: strin
       ),
     }));
   return {
-    reportVersion: 'mu84-sample-counts-1',
+    reportVersion: 'mu84-descriptive-agreement-1',
     mode: check.mode,
     status: check.status,
     scope:
-      check.mode === 'PILOT'
+      check.status !== 'FORMAL'
         ? 'SYNTHETIC PRACTICE ONLY; excluded from study statistics'
         : 'Description of these reviewed mappings only; no population estimate.',
     registeredManifestSha256,
-    populationEstimation: 'NOT IMPLEMENTED IN THIS REPORT: estimator approval pending',
+    populationEstimation:
+      'DEFERRED: no weights, confidence intervals or population inference in this report',
     totalMappings: finals.length,
     finalIndependentJudgments: latest.size,
     savedRevisions: history.length - latest.size,
-    byFamily: ['AREA', 'ROW', 'SG'].map((family) => ({
-      family,
-      ...count(finals.filter((f) => f.family === family)),
-    })),
+    byFamily: ['AREA', 'ROW', 'SG'].map((family) => {
+      const records = finals.filter((f) => f.family === family),
+        counts = count(records);
+      return {
+        family,
+        ...counts,
+        ...(family === 'SG'
+          ? {}
+          : {
+              outcomePercentages: sampleOutcomePercentages(counts),
+              reviewerAgreement: sampleAgreement(records),
+            }),
+      };
+    }),
     byCategory: strata.map((stratum) => {
       const [family, category] = stratum.split('|');
       return {

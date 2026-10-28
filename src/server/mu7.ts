@@ -13,6 +13,7 @@ import type {
 import { getDb, withActor } from './db';
 import * as core from './mu7-core';
 import * as intake from './formal-intake';
+import * as release from './formal-release';
 import { ServiceError } from './service';
 import { appGitSha } from './tlv5';
 
@@ -128,6 +129,9 @@ export const getMu7Workspace = (actor: Actor) => core.getMu7Workspace(context(ac
 export const getFormalIntakePlan = (actor: Actor) => intake.formalIntakePlan(context(actor));
 export const stageFormalSample = (actor: Actor, request: unknown) =>
   intake.stageFormalSample(context(actor), request);
+export const getFormalReleaseStatus = (actor: Actor) => release.formalReleaseStatus(context(actor));
+export const recordFormalReleaseAction = (actor: Actor, request: unknown) =>
+  release.formalReleaseAction(context(actor), request);
 export const getMu7ReviewerUnit = (actor: Actor, assignmentId: string) =>
   core.getMu7ReviewerUnit(context(actor), assignmentId);
 export const submitMu7 = (actor: Actor, assignmentId: string, input: Mu7SubmissionInput) =>

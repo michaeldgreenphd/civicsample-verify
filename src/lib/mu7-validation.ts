@@ -51,6 +51,9 @@ export const mu7AdminSchema = z.discriminatedUnion('action', [
     .object({ action: z.literal('register-pilot-export'), notes: z.string().max(2000).optional() })
     .strict(),
   z
+    .object({ action: z.literal('register-formal-export'), notes: z.string().max(2000).optional() })
+    .strict(),
+  z
     .object({
       action: z.literal('lock-account'),
       account,

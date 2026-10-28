@@ -295,8 +295,8 @@ export interface Mu7InvestigatorWorkspace {
   }[];
   phaseEvents: { eventType: string; occurredAt: string }[];
   gates: Mu7GateStatus[];
-  /** Always false in this build: the FORMAL freeze and opening wait for specified, approved gates. */
-  formalOperationsEnabled: false;
+  /** True only while an explicit FORMAL_OPENED phase is current. Never inferred from gates. */
+  formalOperationsEnabled: boolean;
   formalDisabledReason: string;
   localTools: boolean;
   appGitSha: string;
@@ -313,6 +313,7 @@ export type Mu7AdminAction =
   | { action: 'assign-pilot' }
   | { action: 'lock-pilot'; attestation: string }
   | { action: 'register-pilot-export'; notes?: string }
+  | { action: 'register-formal-export'; notes?: string }
   /** The investigator's own approval of a SPECIFIED gate; the server cites its decision record. */
   | { action: 'approve-gate'; gateId: string; attestation: string }
   | { action: 'lock-account'; account: 'reviewer-a' | 'reviewer-b' | 'adjudicator'; reason: string }

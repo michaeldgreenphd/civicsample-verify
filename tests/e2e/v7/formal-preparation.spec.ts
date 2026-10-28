@@ -47,7 +47,7 @@ test('investigator preparation status is readable, private and never authorizes 
     await expect(panel).toContainText(
       'No decision status was returned; approval cannot be inferred.',
     );
-    await expect(panel).toContainText('Disabled in this build');
+    await expect(panel).toContainText('Requires explicit investigator release');
     await expect(panel.getByRole('button')).toHaveCount(1);
     const downloadPromise = page.waitForEvent('download');
     await panel.getByRole('button', { name: 'Download preparation status' }).click();

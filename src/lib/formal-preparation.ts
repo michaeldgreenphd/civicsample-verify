@@ -15,6 +15,10 @@ export function formalPreparation(w: Mu7InvestigatorWorkspace) {
   const guide = w.reviewerProfile;
   const pendingGates = w.gates.filter((g) => !g.satisfied);
   const pilotExport = w.exports.some((e) => e.mode === 'PILOT');
+  const opened = w.phaseEvents.some((e) => e.eventType === 'FORMAL_OPENED');
+  const closed = w.phaseEvents.some((e) =>
+    ['FORMAL_CLOSED_COMPLETE', 'FORMAL_CLOSED_INCOMPLETE'].includes(e.eventType),
+  );
   const checks: PreparationCheck[] = [
     {
       id: 'design',
@@ -83,16 +87,22 @@ export function formalPreparation(w: Mu7InvestigatorWorkspace) {
     {
       id: 'opening',
       label: 'Formal opening',
-      state: 'pending',
-      status: 'Disabled in this build',
+      state: opened || closed ? 'recorded' : 'pending',
+      status: closed
+        ? 'Closed'
+        : opened
+          ? 'Open for assigned reviewers'
+          : 'Requires explicit investigator release',
       detail:
-        'No preparation status enables formal review. A verified sample, required approvals and a separately authorized release must precede opening.',
+        opened || closed
+          ? 'This status reflects the recorded review phase. It does not change assignments, responses or permissions.'
+          : 'No preparation status enables formal review. A verified sample, required approvals and a separately authorized release must precede opening.',
     },
   ];
   return {
     report_format: 'civicsample-preparation-status-1.0' as const,
     purpose: 'Status only; no approval or authorization' as const,
-    formal_operations_enabled: false as const,
+    formal_operations_enabled: opened && !closed,
     source_build: /^[a-f0-9]{40}$/.test(w.appGitSha) ? w.appGitSha : null,
     checks,
     decisions: w.gates.map((g) => ({

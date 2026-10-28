@@ -12,6 +12,7 @@ import type {
 } from '../lib/mu7-types';
 import * as core from './mu7-core';
 import * as intake from './formal-intake';
+import * as release from './formal-release';
 import { ServiceError } from './service';
 import { supabaseRuntime, type SessionActor } from './session';
 import { appGitSha } from './tlv5';
@@ -63,7 +64,7 @@ function context(actor: SessionActor): core.Mu7Context {
     role: actor.role as core.Mu7Context['role'],
     withData: (operation) => operation(data),
     appGitSha: appGitSha(),
-    syntheticDatabase: true,
+    syntheticDatabase: false,
   };
 }
 
@@ -71,6 +72,10 @@ export const getMu7Workspace = (actor: SessionActor) => core.getMu7Workspace(con
 export const getFormalIntakePlan = (actor: SessionActor) => intake.formalIntakePlan(context(actor));
 export const stageFormalSample = (actor: SessionActor, request: unknown) =>
   intake.stageFormalSample(context(actor), request);
+export const getFormalReleaseStatus = (actor: SessionActor) =>
+  release.formalReleaseStatus(context(actor));
+export const recordFormalReleaseAction = (actor: SessionActor, request: unknown) =>
+  release.formalReleaseAction(context(actor), request);
 export const getMu7ReviewerUnit = (actor: SessionActor, assignmentId: string) =>
   core.getMu7ReviewerUnit(context(actor), assignmentId);
 export const submitMu7 = (actor: SessionActor, assignmentId: string, input: Mu7SubmissionInput) =>
