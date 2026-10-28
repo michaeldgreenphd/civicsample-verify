@@ -45,11 +45,14 @@ const sqlInputs = new Set([
   'migrations/0037_v81_reviewer_profile.sql',
   'migrations/0038_v81_reviewer_guide_r4.sql',
   'migrations/0039_v81_prepared_sample_intake.sql',
+  'migrations/0040_v84_reviewer_completion.sql',
+  'migrations/0041_v84_pilot_export_inventory.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 const guideInputs = [
   'docs/reviewer/REVIEWER_GUIDE_v81_r3.md',
   'docs/reviewer/REVIEWER_GUIDE_v81_r4.md',
+  'docs/reviewer/REVIEWER_GUIDE_v81_r5.md',
 ];
 function traces(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {

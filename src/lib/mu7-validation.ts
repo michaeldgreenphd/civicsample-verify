@@ -35,6 +35,7 @@ const account = z.enum(['reviewer-a', 'reviewer-b', 'adjudicator']);
 export const mu7AdminSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('record-design'), attestation }).strict(),
   z.object({ action: z.literal('record-profile-design'), attestation }).strict(),
+  z.object({ action: z.literal('enable-completion-pilot'), attestation }).strict(),
   z.object({ action: z.literal('import-pilot') }).strict(),
   z.object({ action: z.literal('import-training') }).strict(),
   z.object({ action: z.literal('assign-pilot') }).strict(),

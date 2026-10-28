@@ -1,3 +1,6 @@
+import { MU84_RECEIPT_COLUMNS, MU84_FLAG_COLUMNS } from '../lib/mu84-completion';
+import { readCompletionProtocols, readOwnCompletions } from './mu84-completion';
+import { MU84_PROTOCOL_ID, MU84_GUIDE_SHA256 } from '../lib/mu84-completion';
 import { HISTORY_COLUMNS } from '../lib/mu7-history';
 import { reviewReasonOptions } from '../lib/mu7-review-options';
 import { readReviewerProfile } from './mu81-reviewer-profile';
@@ -85,7 +88,7 @@ export interface Mu7Context {
 // Public errors. Every v7 refusal starts with its guard tag; that authored text is shown as is
 // (APP_MAPPING_v7.md, "Error messages"). Anything else becomes a fixed message; SQL never leaks.
 // ---------------------------------------------------------------------------------------------
-const ROLE_TAGS = new Set(['MU7-G01', 'MU7-G37', 'MU7-G42', 'MU7-G58', 'MU7-G59']);
+const ROLE_TAGS = new Set(['MU7-G01', 'MU7-G37', 'MU7-G42', 'MU7-G58', 'MU7-G59', 'MU84-G05']);
 const NOT_YOURS_TAGS = new Set(['MU7-G54', 'MU7-G57']);
 const INPUT_TAGS = new Set([
   'MU81-G02',
@@ -111,7 +114,7 @@ const INPUT_TAGS = new Set([
   'MU7-G63',
 ]);
 export function mu7PublicError(message: string): ServiceError | null {
-  const tagged = /\b((?:(?:MU7X?|MU7C|MU81)-G|MU81-P)\d{2}): ([^\n]{1,400})/.exec(message);
+  const tagged = /\b((?:(?:MU7X?|MU7C|MU81|MU84)-G|MU81-P)\d{2}): ([^\n]{1,400})/.exec(message);
   if (tagged) {
     const [, tag, text] = tagged;
     if (NOT_YOURS_TAGS.has(tag)) return new ServiceError(404, 'Resource not available.');
@@ -188,6 +191,8 @@ export async function getMu7Workspace(ctx: Mu7Context): Promise<Mu7Workspace> {
     });
     return {
       kind: 'reviewer',
+      completionProtocols: await readCompletionProtocols(d),
+      completions: await readOwnCompletions(d),
       reviewerProfile: await readReviewerProfile(d),
       designRecorded: design.length > 0,
       enrolled: queue.length > 0,
@@ -254,6 +259,7 @@ async function adjudicatorWorkspace(ctx: Mu7Context): Promise<Mu7AdjudicatorWork
       .sort((a, b) => (a.unitId < b.unitId ? -1 : a.unitId > b.unitId ? 1 : 0));
     return {
       kind: 'adjudicator',
+      completionProtocols: await readCompletionProtocols(d),
       reviewerProfile: await readReviewerProfile(d),
       designRecorded: design.length > 0,
       queue,
@@ -332,8 +338,10 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
         satisfied: bool(g.satisfied),
       }),
     );
+    const completionProtocols = await readCompletionProtocols(d);
     return {
       kind: 'investigator',
+      completionProtocols,
       reviewerProfile: await readReviewerProfile(d),
       canCreateProfilePilot:
         ctx.syntheticDatabase &&
@@ -362,7 +370,12 @@ async function investigatorWorkspace(ctx: Mu7Context): Promise<Mu7InvestigatorWo
       completion,
       pilotRouting: finals
         .map((f) => {
-          const expected = MU7_PILOT_EXPECTED_ROUTING[String(f.unit_id)] ?? null;
+          const legacyExpected = MU7_PILOT_EXPECTED_ROUTING[String(f.unit_id)] ?? null;
+          const expected =
+            legacyExpected === 'BOTH_CANNOT_TELL' &&
+            completionProtocols.some((p) => p.mode === 'PILOT')
+              ? 'ROUTED'
+              : legacyExpected;
           return {
             unitId: String(f.unit_id),
             family: f.family as Mu7InvestigatorWorkspace['pilotRouting'][number]['family'],
@@ -596,6 +609,24 @@ export async function mu7AdminAction(
 ): Promise<Mu7InvestigatorWorkspace> {
   requireRole(ctx, 'INVESTIGATOR');
   switch (input.action) {
+    case 'enable-completion-pilot':
+      if (!ctx.syntheticDatabase || !ctx.localTools)
+        throw new ServiceError(403, 'Enable this rehearsal only in a local synthetic database.');
+      await ctx.withData((d) =>
+        d.rpc(
+          'rpc_mu84_bind_protocol',
+          {
+            p: {
+              mode: 'PILOT',
+              protocol_id: MU84_PROTOCOL_ID,
+              guide_sha256: MU84_GUIDE_SHA256,
+              attestation: input.attestation,
+            },
+          },
+          'value',
+        ),
+      );
+      break;
     case 'record-profile-design':
       if (!ctx.syntheticDatabase || !ctx.localTools)
         throw new ServiceError(
@@ -917,7 +948,26 @@ export async function readMu7Bundle(
         order: ['unit_id', 'reviewer_slot', 'revision_number'],
       })
     : undefined;
+  const protocol = (await readCompletionProtocols(d)).find((p) => p.mode === mode);
+  const completion = protocol
+    ? {
+        protocol,
+        receipts: await d.select<Mu7Row>('mu7_review_completions_v84', {
+          columns: MU84_RECEIPT_COLUMNS,
+          eq: { mode },
+        }),
+        flags: await d.select<Mu7Row>('v_mu84_both_cannot_tell', {
+          columns: MU84_FLAG_COLUMNS,
+          eq: { mode },
+        }),
+      }
+    : null;
+  if (protocol && freeze)
+    freeze.completion_protocol_sha256 = (
+      await d.select<Mu7Row>('mu7_freeze', { columns: ['completion_protocol_sha256'] })
+    )[0]?.completion_protocol_sha256;
   return buildMu7Bundle({
+    completion,
     reviewerProfile,
     history,
     probability,

@@ -1,5 +1,7 @@
 'use client';
 
+import type { Mu84Completion } from '@/lib/mu84-completion';
+
 import { MU81_SUBTYPE_TEXT, type Mu81Subtype } from '../lib/mu7-types';
 
 // Review design v7 (mapping units). Reviewers answer one question per unit: is our displayed
@@ -404,6 +406,8 @@ function Reviewer({
   onRefresh: () => Promise<Mu7Workspace>;
   user: Actor;
 }) {
+  const [confirmedAnswerSet, setConfirmedAnswerSet] = useState<string | null>(null);
+  const [finishedReceipt, setFinishedReceipt] = useState<Mu84Completion | null>(null);
   const [detail, setDetail] = useState<Mu7ReviewerUnit | null>(null);
   const [subtype, setSubtype] = useState<Mu81Subtype | ''>('');
   const [answer, setAnswer] = useState<Mu7Answer | ''>('');
@@ -472,6 +476,15 @@ function Reviewer({
   }, [error]);
   const reviewMode = workspace.queue.some((q) => q.mode === 'FORMAL');
   const profileId = shown?.reviewerProfile?.profileId ?? workspace.reviewerProfile?.profileId;
+  const mode = shown?.mode ?? (reviewMode ? 'FORMAL' : 'PILOT');
+  const protocol = workspace.completionProtocols?.find((p) => p.mode === mode);
+  const completion =
+    finishedReceipt?.mode === mode
+      ? finishedReceipt
+      : workspace.completions?.find((c) => c.mode === mode);
+  const finished = !!completion?.finishedAt;
+  const answerSet = completion ? `${mode}|${completion.answersSha256}` : null;
+  const finishConfirmed = answerSet !== null && confirmedAnswerSet === answerSet;
   const primaryLeft = workspace.queue.filter((q) => q.unitRole === 'PRIMARY' && !q.answered).length;
   function selectCase(id: string | null) {
     if (submitting.current || id === selected) return;
@@ -502,9 +515,11 @@ function Reviewer({
         onSelect(next.assignmentId);
       } else if (refreshed.queue.every((q) => q.answered)) {
         setSaved(
-          refreshed.queue.length === 1
-            ? 'Your answer is saved. You can return to revise it until review closes.'
-            : `All ${refreshed.queue.length} answers are saved. You can return to revise them until review closes.`,
+          protocol
+            ? `All ${refreshed.queue.length} answers are saved. Check them, then select Finish my review.`
+            : refreshed.queue.length === 1
+              ? 'Your answer is saved. You can return to revise it until review closes.'
+              : `All ${refreshed.queue.length} answers are saved. You can return to revise them until review closes.`,
         );
       } else if (receipt.advance && !next) {
         setSaved('Answer saved. No other cases are available yet. You can return later.');
@@ -528,7 +543,7 @@ function Reviewer({
     }
   }
   async function submit(advance = false) {
-    if (!shown || !answer || submitting.current || refreshNeeded) return;
+    if (!shown || !answer || submitting.current || refreshNeeded || finished) return;
     submitting.current = true;
     setBusy(true);
     setSaved('');
@@ -577,6 +592,34 @@ function Reviewer({
     }
   }
   const last = shown?.ownAnswers.at(-1);
+  const unsaved =
+    !!shown &&
+    !!last &&
+    (answer !== last.answer ||
+      (answer === 'DISAGREE' ? reasonCode : '') !== (last.reasonCode ?? '') ||
+      note.trim() !== (last.note ?? '') ||
+      uncertain !== last.uncertain ||
+      (shown.subtypeRequired && subtype !== last.diabetesSubtype));
+  async function finish() {
+    if (!completion || !finishConfirmed || unsaved || finished || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setError('');
+    try {
+      const receipt = await api<Mu84Completion>('/api/mu7/finish', {
+        method: 'POST',
+        body: JSON.stringify({ mode, answersSha256: completion.answersSha256, confirm: true }),
+      });
+      setFinishedReceipt(receipt);
+      setSaved('Your complete review is submitted and locked. Thank you.');
+      await onRefresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  }
   const hasMore =
     shown && workspace.queue.some((q) => q.assignmentId !== shown.assignmentId && !q.answered);
   return (
@@ -585,7 +628,7 @@ function Reviewer({
       reviewMode={reviewMode}
       guide={
         workspace.reviewerProfile?.guideText ? (
-          <ReviewGuide text={workspace.reviewerProfile.guideText} />
+          <ReviewGuide text={protocol?.guideText ?? workspace.reviewerProfile.guideText} />
         ) : undefined
       }
       description="Read the trial evidence, choose an answer, then save it. Consult the worked examples whenever you need them."
@@ -610,6 +653,60 @@ function Reviewer({
         </>
       }
     >
+      {protocol && completion && (
+        <section className={`panel ${styles.completionPanel}`} aria-label="Finish your review">
+          <div className="panel-header">
+            <h2>{finished ? 'Review submitted' : 'Finish your review'}</h2>
+          </div>
+          <div className={styles.completionBody}>
+            {finished ? (
+              <p role="status">
+                All {completion.assigned} answers were submitted and locked{' '}
+                {when(completion.finishedAt!)}. You can reread your answers. Contact the
+                investigator if a recorded amendment is needed.
+              </p>
+            ) : (
+              <>
+                <p>
+                  {completion.answered} of {completion.assigned} answers saved. You can revise them
+                  until you finish. Finishing submits and locks your complete set.
+                </p>
+                {unsaved && (
+                  <p className="notice">Save the changes on this case before finishing.</p>
+                )}
+                {completion.answered === completion.assigned && (
+                  <>
+                    <label className={styles.completionConfirm}>
+                      <input
+                        type="checkbox"
+                        checked={finishConfirmed}
+                        disabled={busy || unsaved || completion.answered !== completion.assigned}
+                        onChange={(e) => setConfirmedAnswerSet(e.target.checked ? answerSet : null)}
+                      />
+                      <span>
+                        I have checked my saved answers and am ready to submit my complete review.
+                      </span>
+                    </label>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={
+                        busy ||
+                        unsaved ||
+                        !finishConfirmed ||
+                        completion.answered !== completion.assigned
+                      }
+                      onClick={finish}
+                    >
+                      {busy ? 'Please wait…' : 'Finish my review'}
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+      )}
       <div className="workspace-grid">
         <aside className={`panel ${styles.reviewQueue}`} aria-label="Unit queue">
           <div className="panel-header">
@@ -703,7 +800,11 @@ function Reviewer({
                       {last.uncertain ? ' (uncertain)' : ''}, saved {when(last.submittedAt)}.
                       {shown.ownAnswers.length > 1
                         ? ` Revision ${last.revisionNumber}; your first answer (${answerLabel(shown.ownAnswers[0].answer)}) is kept as well.`
-                        : ' You can revise it until the review closes.'}
+                        : finished
+                          ? ' This answer is locked in your finished review.'
+                          : protocol
+                            ? ' You can revise it until you finish your review.'
+                            : ' You can revise it until the review closes.'}
                       {last.diabetesSubtype && (
                         <span className={styles.recordedSubtype}>
                           Registry stated-type answer: {MU81_SUBTYPE_TEXT[last.diabetesSubtype]}.
@@ -718,7 +819,7 @@ function Reviewer({
                   />
                   <fieldset
                     className={styles.answerControls}
-                    disabled={busy || !!refreshNeeded}
+                    disabled={busy || !!refreshNeeded || finished}
                     aria-label="Record your answer"
                   >
                     <div
@@ -991,7 +1092,16 @@ function Adjudicator({
       }
       guide={
         workspace.reviewerProfile?.guideText ? (
-          <ReviewGuide text={workspace.reviewerProfile.guideText} />
+          <ReviewGuide
+            text={
+              (
+                workspace.completionProtocols?.find((p) => p.mode === shown?.mode) ??
+                (workspace.completionProtocols?.length === 1
+                  ? workspace.completionProtocols[0]
+                  : undefined)
+              )?.guideText ?? workspace.reviewerProfile.guideText
+            }
+          />
         ) : undefined
       }
     >
@@ -1381,6 +1491,29 @@ function Investigator({
                 </div>
               </div>
             )}
+            {w.design &&
+              w.localTools &&
+              w.reviewerProfile?.profileId === 'mu81-plain-language-r4' &&
+              !w.pilotLock &&
+              !w.completionProtocols?.some((p) => p.mode === 'PILOT') &&
+              w.completion.every((r) => r.answered === 0) && (
+                <div className="step">
+                  <h3>Rehearse final submission</h3>
+                  <p>
+                    Use guide revision 5 for this fresh synthetic pilot. Each reviewer finishes and
+                    locks their complete answer set; every Cannot tell goes to adjudication. This
+                    does not approve or open formal review.
+                  </p>
+                  {AttestationField}
+                  <button
+                    className="button secondary"
+                    disabled={busy || !attested}
+                    onClick={() => act({ action: 'enable-completion-pilot', attestation })}
+                  >
+                    Enable Finish my review for this pilot
+                  </button>
+                </div>
+              )}
             {w.design && !w.pilotLock && (
               <div className="step">
                 <h3>Prepare the pilot</h3>

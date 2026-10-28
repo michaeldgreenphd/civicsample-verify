@@ -266,6 +266,41 @@
 .savedInline {
   color: var(--teal-dark);
 }
+.completionPanel {
+  margin-bottom: 24px;
+}
+.completionBody {
+  display: grid;
+  gap: 16px;
+  padding: 20px 24px;
+}
+.completionBody > p {
+  margin: 0;
+  max-width: 75ch;
+  overflow-wrap: anywhere;
+}
+.completionConfirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 48px;
+  max-width: 75ch;
+  font-size: 14px;
+  line-height: 1.6;
+  cursor: pointer;
+}
+.completionConfirm input {
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
+  margin: 2px 0 0;
+  accent-color: var(--teal);
+}
+.workspace .completionBody :global(.button) {
+  justify-self: start;
+  min-height: 48px;
+  white-space: normal;
+}
 @media (max-width: 600px) {
   .saveActions {
     display: grid;
@@ -273,6 +308,12 @@
     align-items: stretch;
   }
   .saveActions :global(.button) {
+    width: 100%;
+  }
+  .completionBody {
+    padding: 20px;
+  }
+  .completionBody :global(.button) {
     width: 100%;
   }
 }

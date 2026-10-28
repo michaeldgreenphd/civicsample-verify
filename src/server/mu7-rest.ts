@@ -1,3 +1,4 @@
+import { finishReview as finishCompletion } from './mu84-completion';
 // Review design v7 over PostgREST with the signed-in user's own token (Supabase mode). The same
 // service core as the local path (src/server/mu7-core.ts); reads go to the mu7_ tables and views
 // under the caller's row-level security and writes to the rpc_mu7_* functions. No service-role key
@@ -84,3 +85,6 @@ export const mu7AdminAction = (actor: SessionActor, input: Mu7AdminAction) =>
   core.mu7AdminAction(context(actor), input);
 export const exportMu7Bundle = (actor: SessionActor, mode: Mu7Mode) =>
   core.exportMu7Bundle(context(actor), mode);
+
+export const finishMu7Review = (actor: SessionActor, input: unknown) =>
+  finishCompletion(context(actor), input);

@@ -1,3 +1,5 @@
+import { completionPilot, completeAnswers } from './mu84-fixture';
+import { finishReview } from '../src/server/mu84-completion';
 // SYNTHETIC ENGINEERING ONLY. The Supabase path of review design v7 (src/server/mu7-rest.ts) against
 // a minimal PostgREST emulator backed by the full migration chain on PGlite: every request runs as
 // the `authenticated` role with the bearer token's claims, so row-level security and the rpc_mu7_*
@@ -212,5 +214,47 @@ test('v7 over the PostgREST path: the synthetic pilot under each caller’s own 
     assert.match(bundle.files[2].content, /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
   } finally {
     await db.close();
+  }
+});
+
+test('completion protocol over PostgREST-shaped requests keeps tokens and receipts isolated', async () => {
+  const f = await completionPilot();
+  try {
+    const a = context(f.db, 'pt1'),
+      b = context(f.db, 'pt2');
+    await completeAnswers(f, 'pt1');
+    const before = (await core.getMu7Workspace(a)) as Mu7ReviewerWorkspace;
+    const own = before.completions![0];
+    assert.equal(own.answered, 12);
+    await finishReview(a, { mode: 'PILOT', answersSha256: own.answersSha256, confirm: true });
+    const other = (await core.getMu7Workspace(b)) as Mu7ReviewerWorkspace;
+    assert.equal(other.completions![0].answered, 0);
+    assert.equal(other.completions![0].finishedAt, null);
+    const after = (await core.getMu7Workspace(a)) as Mu7ReviewerWorkspace;
+    assert.ok(after.completions![0].finishedAt);
+    const inv = context(f.db, 'inv');
+    assert.equal(
+      (
+        await status(
+          finishReview(inv, { mode: 'PILOT', answersSha256: own.answersSha256, confirm: true }),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (await status(core.submitMu7(a, before.queue[0].assignmentId, { answer: 'AGREE' }))).status,
+      409,
+    );
+    // Local-only rehearsal action cannot mutate a remote-style database.
+    assert.equal(
+      (
+        await status(
+          core.mu7AdminAction(inv, { action: 'enable-completion-pilot', attestation: ATT }),
+        )
+      ).status,
+      403,
+    );
+  } finally {
+    await f.db.close();
   }
 });

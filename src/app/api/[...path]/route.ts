@@ -111,6 +111,10 @@ async function mu7Route(
     requireRole('REVIEWER', 'a reviewer account');
     return respond(await api.acknowledgeMu7Training(actor));
   }
+  if (path === '/api/mu7/finish' && request.method === 'POST') {
+    requireRole('REVIEWER', 'a reviewer account');
+    return respond(await api.finishMu7Review(actor, await body(request)));
+  }
   const assignment = /^\/api\/mu7\/assignments\/([0-9a-f-]{36})(?:\/(submit))?$/.exec(path);
   if (assignment) {
     requireRole('REVIEWER', 'a reviewer account');
@@ -142,9 +146,8 @@ async function mu7Route(
     return respond(await getSamplePreview(actor, preview[1] ? Number(preview[1]) : undefined));
   if (path === '/api/mu7/admin/action' && request.method === 'POST')
     return respond(await api.mu7AdminAction(actor, mu7AdminSchema.parse(await body(request))));
-  const exported = /^\/api\/mu7\/admin\/export\/(PILOT|FORMAL)(?:\/([a-z_]+\.(?:csv|json)))?$/.exec(
-    path,
-  );
+  const exported =
+    /^\/api\/mu7\/admin\/export\/(PILOT|FORMAL)(?:\/([a-z_]+\.(?:csv|json|md)))?$/.exec(path);
   if (exported && request.method === 'GET') {
     const bundle = await api.exportMu7Bundle(actor, exported[1] as 'PILOT' | 'FORMAL');
     if (!exported[2])
@@ -164,7 +167,15 @@ async function mu7Route(
         ? { name: bundle.manifestName, content: bundle.manifestText, type: 'application/json' }
         : bundle.files
             .filter((f) => f.name === exported[2])
-            .map((f) => ({ name: f.name, content: f.content, type: 'text/csv' }))[0];
+            .map((f) => ({
+              name: f.name,
+              content: f.content,
+              type: f.name.endsWith('.md')
+                ? 'text/markdown'
+                : f.name.endsWith('.json')
+                  ? 'application/json'
+                  : 'text/csv',
+            }))[0];
     if (!file) throw new HttpError(404, 'Resource not available.');
     return new Response(file.content, {
       status: 200,

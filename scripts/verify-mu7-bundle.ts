@@ -1,4 +1,6 @@
-// Checks downloaded bundle 7.0, 8.1, 8.2 or 8.3 files without a database or network connection:
+import { MU84_RECEIPT_COLUMNS, MU84_FLAG_COLUMNS } from '../src/lib/mu84-completion';
+import { verifyCompletionExport } from '../src/lib/mu84-export';
+// Checks downloaded bundle 7.0, 8.1, 8.2, 8.3 or 8.4 files without a database or network connection:
 //
 //   node --import tsx scripts/verify-mu7-bundle.ts --bundle /abs/folder [--expect-manifest-sha256 <hash>]
 //
@@ -19,7 +21,7 @@ import { isMu81Design, mu7ReasonCodes } from '../src/lib/mu7-types';
 import { matchesMu81ReviewerProfile } from '../src/lib/mu81-reviewer-profile';
 
 /** LF-delimited exporter CSV. A bare CR is field data in legacy exports, not a row separator. */
-function csvRecords(text: string): string[][] {
+export function csvRecords(text: string): string[][] {
   const records: string[][] = [];
   let field = '',
     record: string[] = [];
@@ -147,7 +149,8 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
     (m.bundle_format_version !== '7.0' &&
       m.bundle_format_version !== '8.1' &&
       m.bundle_format_version !== '8.2' &&
-      m.bundle_format_version !== '8.3') ||
+      m.bundle_format_version !== '8.3' &&
+      m.bundle_format_version !== '8.4') ||
     (m.mode !== 'PILOT' && m.mode !== 'FORMAL') ||
     !object(m.files) ||
     !object(m.row_counts)
@@ -173,13 +176,13 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       MU7_EXPORT_COLUMNS[r],
     ]),
   );
-  if (format === '8.2' || format === '8.3') {
+  if (format === '8.2' || format === '8.3' || format === '8.4') {
     columns['judgment_history.csv'] = HISTORY_COLUMNS;
     if (m.history_contract_version !== 'mu81-history-1')
       problems.push('unknown judgment history contract');
   }
   let needsProbabilities = false;
-  if (format === '8.1' || format === '8.2' || format === '8.3') {
+  if (format === '8.1' || format === '8.2' || format === '8.3' || format === '8.4') {
     if (
       !object(m.design) ||
       !isMu81Design(m.design.design_version) ||
@@ -201,10 +204,20 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       problems.push('this bundle must not carry a probability binding');
   } else if (object(m.design) && isMu81Design(m.design.design_version))
     problems.push('v8.1 design requires bundle format 8.1 or 8.2');
-  const inventory = [...Object.keys(columns), ...(format === '8.3' ? ['reviewer_guide.md'] : [])];
+  if (format !== '8.4' && object(m.freeze) && m.freeze.completion_protocol_sha256 != null)
+    problems.push('a frozen completion protocol requires bundle format 8.4');
+  if (format === '8.4') {
+    columns['review_completions.csv'] = MU84_RECEIPT_COLUMNS;
+    columns['final_answer_flags.csv'] = MU84_FLAG_COLUMNS;
+  }
+  const inventory = [
+    ...Object.keys(columns),
+    ...(format === '8.3' || format === '8.4' ? ['reviewer_guide.md'] : []),
+    ...(format === '8.4' ? ['completion_protocol.json', 'reviewer_guide_current.md'] : []),
+  ];
   if (!sameKeys(m.files, inventory) || !sameKeys(m.row_counts, inventory))
     problems.push('file inventory differs from the versioned bundle contract');
-  if (format === '8.3') {
+  if (format === '8.3' || format === '8.4') {
     const guide = read('reviewer_guide.md');
     const p = m.reviewer_profile;
     if (
@@ -254,7 +267,7 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       problems.push(`${name}: invalid UTF-8 or CSV serialization`);
     }
   }
-  if (format !== '8.3' && problems.length === 0) {
+  if (format !== '8.3' && format !== '8.4' && problems.length === 0) {
     // This reason was introduced by the bound guide. Older formats retain their original
     // vocabulary even when they omit full history (7.0/8.1). Inspect reason fields only;
     // notes remain verbatim free text and can mention a code without adopting its meaning.
@@ -336,7 +349,7 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       problems.push('probability files or binding differ from the frozen contract');
     }
   }
-  if ((format === '8.2' || format === '8.3') && problems.length === 0) {
+  if ((format === '8.2' || format === '8.3' || format === '8.4') && problems.length === 0) {
     try {
       const records = (name: string) =>
         tables[name].map((row) => Object.fromEntries(columns[name].map((k, i) => [k, row[i]])));
@@ -346,11 +359,11 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
         records('subtype_observations.csv'),
         mode,
         m.snapshot,
-        format === '8.3' && object(m.reviewer_profile)
+        (format === '8.3' || format === '8.4') && object(m.reviewer_profile)
           ? String(m.reviewer_profile.profile_id)
           : undefined,
       );
-      if (format === '8.3') {
+      if (format === '8.3' || format === '8.4') {
         const byId = new Map(records('units.csv').map((u) => [u.unit_id, u]));
         const allowed = (id: string, answer: string, reason: string) => {
           if (answer !== 'DISAGREE') return reason === '';
@@ -388,6 +401,36 @@ export function verifyMu7Bundle(dir: string, expectManifestSha?: string) {
       }
     } catch {
       problems.push('judgment history differs from its locked snapshot or export contract');
+    }
+  }
+  if (format === '8.4' && problems.length === 0) {
+    try {
+      const extra = (name: string) => {
+        const bytes = read(name);
+        if (
+          !bytes ||
+          hash(bytes) !== (m.files as Record<string, unknown>)[name] ||
+          (m.row_counts as Record<string, unknown>)[name] !== 1
+        )
+          throw new Error('completion file mismatch');
+        rows[name] = 1;
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      };
+      const records = (name: string) =>
+        tables[name].map((row) => Object.fromEntries(columns[name].map((k, i) => [k, row[i]])));
+      verifyCompletionExport(
+        m,
+        JSON.parse(extra('completion_protocol.json')),
+        extra('reviewer_guide_current.md'),
+        records('review_completions.csv'),
+        records('judgment_history.csv'),
+        records('final_reference.csv'),
+        records('final_answer_flags.csv'),
+      );
+    } catch {
+      problems.push(
+        'completion receipts, final-answer flags or protocol differ from the frozen contract',
+      );
     }
   }
   return result();

@@ -139,3 +139,12 @@ Migration 0008 (`0008_trial_packet_and_concurrency_guards.sql`, version `4.0.5-t
 The local credentials are not committed. See `docs/LOCAL_PILOT.md` for same-computer testing in independent browser profiles. The investigator's approval record is awaited; local testing does not activate formal data import or authorize deployment.
 
 The additional investigator-screen accessibility check found progress labels on generic elements. They now expose a progressbar role, named assignment, numerical range, and textual count. The case-authoring browser scenario includes the investigator screen in the automated Axe checks.
+
+## Final-submission protocol — development increment, October 27
+
+Migration 0040 and guide revision 5 implement the investigator's complete-review lock and
+all-Cannot-tell adjudication decisions as an explicit opt-in. Existing practice and guide-4
+records are preserved. See [the protocol](docs/REVIEW_COMPLETION_PROTOCOL.md) and
+[the verification record](docs/test_runs/REVIEW_COMPLETION_20261027.md). No remote application,
+protocol binding, formal freeze or opening is implied. The population estimator remains pending;
+the new verified bundle report contains sample counts only.

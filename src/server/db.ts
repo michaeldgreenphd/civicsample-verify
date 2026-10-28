@@ -262,6 +262,14 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     path.join(process.cwd(), 'migrations/0039_v81_prepared_sample_intake.sql'),
     'utf8',
   );
+  const v84ReviewerCompletion = await readFile(
+    path.join(process.cwd(), 'migrations/0040_v84_reviewer_completion.sql'),
+    'utf8',
+  );
+  const v84PilotExportInventory = await readFile(
+    path.join(process.cwd(), 'migrations/0041_v84_pilot_export_inventory.sql'),
+    'utf8',
+  );
   for (const [version, migration] of [
     ['5.0.0', trialLabelVerification],
     ['5.1.0', trainingExamples],
@@ -292,6 +300,8 @@ async function applyTrialLabelVerification(db: MigrationDatabase): Promise<void>
     ['8.1.2-reviewer-profile', v81ReviewerProfile],
     ['8.1.3-reviewer-guide-r4', v81ReviewerGuideR4],
     ['8.1.4-prepared-sample-intake', v81PreparedSampleIntake],
+    ['8.4.0-reviewer-completion', v84ReviewerCompletion],
+    ['8.4.1-pilot-export-inventory', v84PilotExportInventory],
   ] as const) {
     const present = await db.query<{ present: boolean }>(
       `select exists(select 1 from public.app_schema_version where version='${version}') as present`,
