@@ -90,7 +90,7 @@ jobs:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test
       - name: Database role boundaries and concurrency
-        run: node --import tsx --test tests/tlv5-postgres.test.ts tests/mapconf-postgres.test.ts tests/mu7-postgres.test.ts tests/mu84-postgres.test.ts tests/formal-release.test.ts tests/mu7-gates-upgrade.test.ts tests/mu8-foundation.test.ts tests/mu8-roundtrip.test.ts tests/mu81-reviewer-profile.test.ts tests/formal-intake.test.ts
+        run: node --import tsx --test tests/tlv5-postgres.test.ts tests/mapconf-postgres.test.ts tests/mu7-postgres.test.ts tests/mu84-postgres.test.ts tests/formal-release.test.ts tests/release-gate-specifications.test.ts tests/mu7-gates-upgrade.test.ts tests/mu8-foundation.test.ts tests/mu8-roundtrip.test.ts tests/mu81-reviewer-profile.test.ts tests/formal-intake.test.ts
         env:
           VERIFY_PG_REQUIRE: '1'
           VERIFY_PG_TEST_URL: postgres://postgres:synthetic_ci_password@127.0.0.1:5432/verify_test

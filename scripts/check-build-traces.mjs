@@ -48,6 +48,7 @@ const sqlInputs = new Set([
   'migrations/0040_v84_reviewer_completion.sql',
   'migrations/0041_v84_pilot_export_inventory.sql',
   'migrations/0042_v84_formal_release_controls.sql',
+  'migrations/0043_v84_release_gate_specifications.sql',
   'migrations/preflight_frozen_trial_compatibility.sql',
 ]);
 const guideInputs = [
