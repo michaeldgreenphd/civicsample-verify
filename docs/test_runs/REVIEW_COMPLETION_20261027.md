@@ -64,3 +64,20 @@ the new protocol table; permission/query failures are still surfaced rather than
   explicit protocol binding and a separately authorized synthetic environment.
 - **Population estimator and interval coverage: NOT TESTED / awaiting scientific decision.**
   The new report deliberately produces counts only and preserves the fields needed later.
+
+## PR #43 inventory finding
+
+Reproduced the review finding before the fix: a direct bundle-8.4 registration with the
+`units` inventory removed was accepted. Additive migration 0041 extends the existing pilot
+inventory trigger to 8.4; no existing migration, lock, export or judgment is edited.
+
+- `VERIFY_ANALYSIS_PYTHON="$TEST_PYTHON" npm run check`: PASS, 414 passed, 0 failed,
+  43 skipped and the existing coexistence TODO. Typecheck, lint and all leakage scans pass.
+  The first run exposed a fixed-length version-list expectation; the rerun checks from the
+  original v5 marker and includes the new migration.
+- Direct-RPC regression: missing, zero, smaller, larger and noncanonical unit counts are
+  refused; none is registered, and the genuine 12-unit bundle registers successfully.
+- `npm run test:handoff`: PASS with the same documented differences; full chain through 0041
+  is 360/362 (schema inventory and intentionally stricter adjudicator access).
+- Added a native PostgreSQL pilot-export regression to CI. Locally it is **BLOCKED**, not a pass.
+- `git diff --check`: PASS. No remote database operation was part of this fix.

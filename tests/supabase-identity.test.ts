@@ -310,7 +310,7 @@ test('bootstrap plan: exact target, hashed SQL lineage without the auth shim, no
     planSha256(buildBootstrapPlan(spaceName, root)),
     'the exact applied name is bound even when Unicode compatibility normalization matches',
   );
-  assert.equal(plan.schema.expectedFinalVersion, '8.4.0-reviewer-completion');
+  assert.equal(plan.schema.expectedFinalVersion, '8.4.1-pilot-export-inventory');
   assert.equal(plan.database, null);
   const withDb = config({
     databaseUrl: `postgresql://postgres:p@db.${APPROVED}.supabase.co:5432/postgres`,

@@ -5,7 +5,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from 'pg';
 import { withDisposableHandoffDatabase } from '../scripts/test-handoff-postgres-helpers.mjs';
 import { completionPilot, completeAnswers } from './mu84-fixture';
-import { P, one, assignmentOf, type FixtureDb } from './mu7-fixture';
+import { P, one, as, assignmentOf, adjudicateSql, ATT, type FixtureDb } from './mu7-fixture';
+import { readMu7Bundle } from '../src/server/mu7-core';
+import { mu7SqlData } from '../src/server/mu7';
+import { mu7RegistrationPayload } from '../src/lib/mu7-export';
 const baseUrl = process.env.VERIFY_PG_TEST_URL;
 const opts = {
   skip:
@@ -99,3 +102,67 @@ for (const order of ['finish-first', 'revision-first'] as const)
       }
     });
   });
+
+test(
+  'native PostgreSQL: bundle 8.4 registration requires the immutable pilot unit count',
+  opts,
+  async () => {
+    assert.ok(baseUrl, 'VERIFY_PG_TEST_URL is required');
+    await withDisposableHandoffDatabase(baseUrl, async (url: string) => {
+      const owner = new Client({ connectionString: url });
+      try {
+        await owner.connect();
+        const f = await completionPilot(wrap(owner));
+        for (const who of ['pt1', 'pt2'] as const) {
+          await completeAnswers(f, who);
+          const summary = (await one(
+            f.db,
+            who,
+            "select public.rpc_mu84_my_completion('PILOT')",
+          )) as { answers_sha256: string };
+          await one(f.db, who, "select public.rpc_mu84_finish_review('PILOT',$1)", [
+            summary.answers_sha256,
+          ]);
+        }
+        await one(
+          f.db,
+          'adj',
+          adjudicateSql({
+            unit_id: f.order[0],
+            decision: 'AGREE',
+            status: 'DISCORDANT_RESOLVED',
+            basis: 'NEITHER',
+            rationale: 'Synthetic pilot resolution for inventory regression.',
+          }),
+        );
+        await one(f.db, 'inv', "select public.rpc_mu7_lock_reference('PILOT',$1)", [ATT]);
+        const bundle = await as(f.db, 'inv', () =>
+          readMu7Bundle(mu7SqlData(f.db), 'PILOT', 'b'.repeat(40), true),
+        );
+        const payload = mu7RegistrationPayload(bundle, 'b'.repeat(40));
+        assert.equal(payload.bundle_format_version, '8.4');
+        for (const units of [undefined, 0, 11, 13]) {
+          const rowCounts = { ...payload.row_counts } as Record<string, unknown>;
+          if (units === undefined) delete rowCounts.units;
+          else rowCounts.units = units;
+          await assert.rejects(
+            one(f.db, 'inv', 'select public.rpc_mu7_register_export($1::jsonb)', [
+              JSON.stringify({ ...payload, row_counts: rowCounts }),
+            ]),
+            /MU7X-G03/,
+          );
+        }
+        assert.equal(await one(f.db, 'inv', 'select count(*)::int from public.mu7_exports'), 0);
+        await one(f.db, 'inv', 'select public.rpc_mu7_register_export($1::jsonb)', [
+          JSON.stringify(payload),
+        ]);
+        assert.equal(
+          await one(f.db, 'inv', "select (row_counts->>'units')::int from public.mu7_exports"),
+          12,
+        );
+      } finally {
+        await owner.end();
+      }
+    });
+  },
+);

@@ -1,7 +1,8 @@
 // Fresh in-memory application database, fictional records, no network or study configuration.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEMO_ACTORS } from '../src/server/db';
+import { DEMO_ACTORS, getDb, withActor } from '../src/server/db';
+import { mu7RegistrationPayload } from '../src/lib/mu7-export';
 import {
   finishMu7Review,
   getMu7Workspace,
@@ -87,5 +88,30 @@ test('application service: explicit pilot opt-in, each own final set, two Cannot
     bundle.files.find((f) => f.name === 'final_answer_flags.csv')?.content.includes(',true'),
   );
   assert.equal(bundle.files.find((f) => f.name === 'review_completions.csv')?.rows, 2);
+  // Bypass the writer: the database must validate the inventory on a direct RPC too.
+  const payload = mu7RegistrationPayload(bundle, 'b'.repeat(40));
+  for (const units of [undefined, 0, 11, 13, '12.0']) {
+    const rowCounts = { ...payload.row_counts } as Record<string, unknown>;
+    if (units === undefined) delete rowCounts.units;
+    else rowCounts.units = units;
+    await assert.rejects(
+      withActor(inv, (tx) =>
+        tx.query('select public.rpc_mu7_register_export($1::jsonb)', [
+          JSON.stringify({ ...payload, row_counts: rowCounts }),
+        ]),
+      ),
+      /MU7X-G03/,
+    );
+  }
+  const db = await getDb();
+  assert.equal(
+    (await db.query<{ n: number }>('select count(*)::int as n from public.mu7_exports')).rows[0].n,
+    0,
+  );
   await mu7AdminAction(inv, { action: 'register-pilot-export' });
+  assert.equal(
+    (await db.query<{ row_counts: { units: number } }>('select row_counts from public.mu7_exports'))
+      .rows[0].row_counts.units,
+    12,
+  );
 });
